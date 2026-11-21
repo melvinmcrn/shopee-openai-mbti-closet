@@ -1,3 +1,4 @@
+import { ProfilePhotoError } from "./planner/preview.mjs";
 import { dispatchPlanner } from "./planner/api.mjs";
 import { BriefValidationError } from "./planner/brief.mjs";
 import { ShoppingDecisionUnavailableError } from "./planner/shopping.mjs";
@@ -130,7 +131,9 @@ async function servePlanner(request, env) {
   } catch (error) {
     const status = error.status ?? (error instanceof BriefValidationError || error instanceof TypeError ? 400 : 503);
     const safeMessage = status < 500 || error instanceof ShoppingDecisionUnavailableError;
-    return json({ message: safeMessage ? error.message : "The planner is temporarily unavailable." }, status);
+    return json({ message: safeMessage ? error.message : "The planner is temporarily unavailable.",
+      ...(error instanceof ProfilePhotoError ? { code: error.code } : {}),
+    }, status);
   }
 }
 
