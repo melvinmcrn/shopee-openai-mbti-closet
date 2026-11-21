@@ -22,7 +22,7 @@ export async function getGarments(env, accountId) {
   const { results } = await env.DB.prepare(`
     SELECT id, name, category, color, image_file_id AS imageRef FROM wardrobe_items
     WHERE user_id = ? AND confirmed_at IS NOT NULL AND archived_at IS NULL
-    AND category IN ('top','bottom','shoes','dress','outerwear','accessory')
+    AND image_file_id IS NOT NULL
     ORDER BY id
   `).bind(accountId).all();
   return results.map(row => ({ ...row, id: String(row.id), accountId: String(accountId),
@@ -51,9 +51,14 @@ export async function dispatchPlanner(env, accountId, action, input = {}, depend
     case "shopping": case "hide": return shoppingAction(env, accountId, action, input, dependencies.shoppingFetch);
     case "preview": {
       const source = await option(db, accountId, input.optionId);
-      const final = snapshotSlots(input.slots, await wardrobe());
-      return generatePreview(env, accountId, Object.values(final), input.useProfilePhoto,
-        dependencies.preview ?? previewFiles(env, accountId, source.id, input.slots));
+      const profileOnly = input.useProfilePhoto === true && Object.keys(source.slots ?? {}).length === 0
+        && input.slots && Object.keys(input.slots).length === 0;
+      const final = profileOnly ? {} : snapshotSlots(input.slots, await wardrobe());
+      const files = dependencies.preview ?? previewFiles(env, accountId, source.id, input.slots, input.useProfilePhoto === true);
+      const cached = await files.cachedImage?.();
+      if (cached) return { imageRef: cached };
+      const brief = await getBrief(db, accountId, source.briefId);
+      return generatePreview(env, accountId, Object.values(final), input.useProfilePhoto, files, brief);
     }
     case "save": return saveLook(db, accountId, await option(db, accountId, input.optionId), input.slots, await wardrobe());
     case "list": return listLooks(db, accountId);

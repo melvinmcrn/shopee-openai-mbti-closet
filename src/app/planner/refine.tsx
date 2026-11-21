@@ -14,12 +14,13 @@ type RefineProps = {
   onBack: () => void;
 };
 
-const slotOrder = ["top", "bottom", "dress", "shoes", "outerwear", "accessory"];
+const slotOrder = ["other", "top", "bottom", "dress", "shoes", "outerwear", "accessory"];
 const optionalSlots = ["outerwear", "accessory"];
 const controlClass =
   "min-h-11 rounded-xl px-4 py-2 text-sm font-semibold transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:cursor-not-allowed disabled:opacity-60";
 
 function slotLabel(slot: string) {
+  if (slot === "other") return "Original photo";
   return slot.charAt(0).toUpperCase() + slot.slice(1);
 }
 

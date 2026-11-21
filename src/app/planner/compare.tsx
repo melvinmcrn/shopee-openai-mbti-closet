@@ -24,7 +24,7 @@ const secondaryButton =
 function GarmentTile({ garment, slot }: { garment?: Garment; slot: string }) {
   const [imageFailed, setImageFailed] = useState(false);
   const src = garment?.imageRef ? imageUrl(garment.imageRef) : "";
-  const slotLabel = slot.replace(/[-_]/g, " ");
+  const slotLabel = slot === "other" ? "Original photo" : slot.replace(/[-_]/g, " ");
 
   return (
     <li className="min-w-0">
@@ -54,6 +54,49 @@ function GarmentTile({ garment, slot }: { garment?: Garment; slot: string }) {
   );
 }
 
+function StyledImage({ look, garments }: { look: Look; garments: Map<string, Garment> }) {
+  const [useProfilePhoto, setUseProfilePhoto] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const [generated, setGenerated] = useState("");
+  const [error, setError] = useState(false);
+  const request = useRef<Promise<{ imageRef: string }> | null>(null);
+  const original = look.profileRef || garments.get(look.slots.other ?? Object.values(look.slots)[0])?.imageRef;
+  useEffect(() => {
+    let active = true;
+    if (look.profileRef && !useProfilePhoto) return;
+    request.current ??= api<{ imageRef: string }>("preview", {
+      optionId: look.id, slots: look.slots, useProfilePhoto,
+    });
+    request.current.then(({ imageRef }) => {
+      if (active) setGenerated(imageRef);
+    }).catch(() => { if (active) setError(true); });
+    return () => { active = false; };
+  }, [look, attempt, useProfilePhoto]);
+  const ref = generated || original;
+  return (
+    <div className="mt-4">
+      {ref && <Image src={imageUrl(ref)} alt={generated ? "AI-styled outfit" : "Original wardrobe photo"} width={512} height={640} unoptimized className="max-h-[32rem] w-full rounded-xl bg-selected object-contain" />}
+      <p role="status" className="mt-2 text-sm text-supporting">
+        {generated ? "AI-styled outfit" : error ? "Couldn’t generate the styled image." : look.profileRef && !useProfilePhoto ? "Original profile photo" : "Styling your outfit…"}
+      </p>
+      <label className="mt-2 flex items-center gap-2 text-sm text-supporting">
+        <input type="checkbox" checked={useProfilePhoto} onChange={event => {
+          request.current = null;
+          setGenerated("");
+          setError(false);
+          setUseProfilePhoto(event.target.checked);
+        }} />
+        Use my profile photo as the main image and send it to OpenAI for styling
+      </label>
+      {error && <button type="button" className={secondaryButton} onClick={() => {
+        request.current = null;
+        setError(false);
+        setAttempt(count => count + 1);
+      }}>Retry styled image</button>}
+    </div>
+  );
+}
+
 function LookCard({
   look,
   index,
@@ -71,6 +114,7 @@ function LookCard({
       {look.occasion && (
         <p className="mt-1 text-sm text-supporting">{look.occasion}</p>
       )}
+      <StyledImage look={look} garments={garments} />
       <ul className="mt-4 grid grid-cols-2 gap-x-3 gap-y-4">
         {Object.entries(look.slots).map(([slot, garmentId]) => (
           <GarmentTile
@@ -83,14 +127,14 @@ function LookCard({
       <p className="mb-4 mt-5 flex-1 text-sm leading-relaxed text-supporting">
         {look.explanation}
       </p>
-      <button
+      {!look.profileRef && <button
         type="button"
         aria-label={`Choose look ${index + 1}`}
         onClick={() => onChoose(look)}
         className="min-h-11 w-full rounded-full bg-primary px-4 py-2 text-sm font-semibold text-on-primary transition hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary"
       >
         Choose this look
-      </button>
+      </button>}
     </article>
   );
 }

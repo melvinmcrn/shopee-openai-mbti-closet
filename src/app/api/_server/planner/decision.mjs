@@ -17,7 +17,7 @@ export async function requestDecision(env, payload, request = fetch) {
   if (!response.ok) throw new Error("The Decisions request failed.");
   return response.json();
 }
-const categories = ["top", "bottom", "dress", "shoes", "outerwear", "accessory"];
+const categories = ["top", "bottom", "dress", "shoes", "outerwear", "accessory", "other"];
 const candidateLimit = 64;
 const wardrobeBatchSize = 200;
 
@@ -94,6 +94,9 @@ function outfitCandidates(garments) {
   if (!shapes.length) shapes.push([]);
 
   for (const shape of shapes) {
+    if (!shape.some(([slot]) => slot === "dress") && separates.length < 2) {
+      shape.push(...available(["other"]));
+    }
     shape.push(...available(["shoes"]));
     for (const [name, ids] of available(["outerwear", "accessory"])) {
       // With no base garment, anchor the look on the first available layer.
@@ -214,12 +217,8 @@ export async function generateLooks(env, brief, garments, priorLooks = [], reque
   if (!candidates.length) {
     return {
       status: "insufficient",
-      message: "Looks need a confirmed item with a clothing category. If your items are listed as Other, edit one in your closet and choose its category, such as Top or Dress.",
+      message: "Add and confirm a wardrobe photo to start a look. A photo of your original outfit works too.",
     };
-  }
-
-  if (typeof env?.OPENAI_API_KEY !== "string" || !env.OPENAI_API_KEY.trim()) {
-    return { status: "failed", message: "Outfit generation is unavailable right now." };
   }
 
   const previous = Array.isArray(priorLooks) ? priorLooks : [];
@@ -229,6 +228,20 @@ export async function generateLooks(env, brief, garments, priorLooks = [], reque
     const usedSlots = Object.fromEntries(Object.entries(slots).filter(([, id]) => id != null));
     return validSlots(usedSlots, eligible) ? [combinationKey(usedSlots)] : [];
   }));
+  const photoCandidates = candidates.filter(slots => !slots.dress && (!slots.top || !slots.bottom))
+    .sort((a, b) => Number(priorKeys.has(combinationKey(a))) - Number(priorKeys.has(combinationKey(b))));
+  const photoLooks = () => ({
+    status: "ready",
+    looks: photoCandidates.slice(0, 2).map(slots => ({
+      slots,
+      explanation: "Start with the original photo and keep its clothing wherever no replacement is selected.",
+    })),
+  });
+  if (photoCandidates.length && [...eligible.values()].every(item => item.category === "other")) return photoLooks();
+  if (typeof env?.OPENAI_API_KEY !== "string" || !env.OPENAI_API_KEY.trim()) {
+    return photoCandidates.length ? photoLooks() : { status: "failed", message: "Outfit generation is unavailable right now." };
+  }
+
   const wardrobe = [...eligible.values()].map(({ id, category, name, color }) => ({
     id,
     category,
@@ -252,11 +265,12 @@ export async function generateLooks(env, brief, garments, priorLooks = [], reque
     const decision = await requestDecision(env, payload, request);
     ranked = rankLooks(decision?.answers, candidates, eligible, priorKeys);
   } catch {
-    return failure;
+    return photoCandidates.length ? photoLooks() : failure;
   }
 
-  if (!ranked) return failure;
+  if (!ranked) return photoCandidates.length ? photoLooks() : failure;
   if (ranked.length === 0) {
+    if (photoCandidates.length) return photoLooks();
     return {
       status: "insufficient",
       message: "No look matched this brief. Try updating the brief or confirming more wardrobe pieces.",
