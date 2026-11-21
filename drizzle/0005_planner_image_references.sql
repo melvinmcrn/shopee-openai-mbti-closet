@@ -18,11 +18,13 @@ CREATE VIEW private_file_references AS
     UNION ALL
     SELECT user_id, preview_file_id FROM outfit_options WHERE preview_file_id IS NOT NULL
     UNION ALL
-    SELECT user_id, image_file_id_snapshot FROM outfit_option_items WHERE image_file_id_snapshot IS NOT NULL
-    UNION ALL
-    SELECT user_id, image_file_id_snapshot FROM saved_look_items WHERE image_file_id_snapshot IS NOT NULL
-    UNION ALL
-    SELECT user_id, file_id FROM planner_previews;
+    SELECT user_id, file_id FROM (
+        SELECT user_id, image_file_id_snapshot AS file_id FROM outfit_option_items WHERE image_file_id_snapshot IS NOT NULL
+        UNION ALL
+        SELECT user_id, image_file_id_snapshot FROM saved_look_items WHERE image_file_id_snapshot IS NOT NULL
+        UNION ALL
+        SELECT user_id, file_id FROM planner_previews
+    );
 --> statement-breakpoint
 
 CREATE INDEX outfit_option_items_snapshot_files ON outfit_option_items(image_file_id_snapshot) WHERE image_file_id_snapshot IS NOT NULL;
