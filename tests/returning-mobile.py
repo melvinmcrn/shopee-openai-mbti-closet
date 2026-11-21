@@ -368,6 +368,74 @@ def check_outfit_upload(browser, device, base):
     context.close()
 
 
+def check_occasion_look(browser, device, base, session):
+    context, page = mobile_session(browser, device, base, session)
+    product_photo = Path(__file__).resolve().parents[1] / "Shopee Database/clothes_image_database/b6326a099e743eebc194.jpg"
+    page.route("https://down-th.img.susercontent.com/file/**", lambda route: route.fulfill(path=product_photo))
+    page.goto(f"{base}/planner/")
+    page.get_by_role("button", name="Plan a new outfit").tap()
+    page.get_by_role("textbox", name="Occasion", exact=True).fill("Charity gala")
+    page.get_by_role("button", name="Continue").tap()
+    expect_heading(page, "Today’s style")
+    page.get_by_role("button", name="Continue").tap()
+    expect_heading(page, "Compare looks")
+    heading = "Styled for your occasion"
+    card = page.get_by_role("article").filter(has=page.get_by_role("heading", name=heading, exact=True))
+    expect(card).to_have_count(1)
+    if session == "returning-session":
+        expect(page.get_by_role("heading", name="Look 1", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="Look 2", exact=True)).to_be_visible()
+        expect(card.get_by_role("img", name="Silk blouse")).to_be_visible()
+    else:
+        expect(page.get_by_role("article")).to_have_count(1)
+        expect(card.get_by_role("group", name="Selected wardrobe photos")).to_have_count(0)
+    links = card.get_by_role("link", name=re.compile("Buy on Shopee"))
+    expected_listing_count = 1 if session == "returning-session" else 2
+    expect(links).to_have_count(expected_listing_count)
+    purchase_urls = sorted(links.evaluate_all("links => links.map(link => link.href)"))
+    photo = card.get_by_role("img", name="Full-body virtual try-on of this outfit")
+    photo.scroll_into_view_if_needed()
+    expect(photo).to_have_js_property("naturalWidth", 1)
+    image_url = photo.get_attribute("src")
+
+    # More wardrobe looks must preserve the initial cards and this exact catalog outfit.
+    def is_generation(response):
+        return response.url.endswith("/api/planner") and response.request.post_data_json["action"] == "generate"
+
+    if session == "returning-session":
+        with page.expect_response(is_generation):
+            page.get_by_role("button", name="Show more looks").tap()
+    else:
+        expect(page.get_by_role("button", name="Show more looks")).to_have_count(0)
+    expect(card).to_have_count(1)
+    expect(photo).to_have_attribute("src", image_url)
+    card.get_by_role("button", name="Choose occasion look").tap()
+    expect_heading(page, "Review your outfit")
+    expect(page.get_by_text(heading, exact=True)).to_be_visible()
+    page.get_by_role("button", name="Back to outfits").tap()
+    expect_heading(page, "Compare looks")
+    expect(photo).to_have_attribute("src", image_url)
+    card.get_by_role("button", name="Choose occasion look").tap()
+    page.get_by_role("button", name="Preview outfit").tap()
+    expect_heading(page, "Virtual try-on")
+    expect(page.get_by_role("img", name="Generated try-on of the selected outfit")).to_have_attribute("src", image_url)
+    page.get_by_role("button", name="Back to review and save").tap()
+    page.get_by_role("button", name="Save outfit").tap()
+    expect_heading(page, "Charity gala")
+    page.reload()
+    expect_heading(page, "Charity gala")
+    expect(page.get_by_text(heading, exact=True)).to_be_visible()
+    expect(page.get_by_role("img", name="Full-body AI try-on for Charity gala")).to_have_attribute("src", image_url)
+    if session == "returning-session":
+        expect(page.get_by_role("img", name="Silk blouse")).to_be_visible()
+    else:
+        expect(page.get_by_role("group", name="Selected wardrobe photos")).to_have_count(0)
+    saved_links = page.get_by_role("link", name=re.compile("Buy on Shopee"))
+    expect(saved_links).to_have_count(expected_listing_count)
+    assert sorted(saved_links.evaluate_all("links => links.map(link => link.href)")) == purchase_urls
+    context.close()
+
+
 def main():
     root = Path(__file__).resolve().parent.parent
     output = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root / "out"
@@ -393,6 +461,8 @@ def main():
                     check_two_catalog_basics(browser, device, base, "profile-only")
                     check_wardrobe_deletion(browser, device, base)
                     check_outfit_upload(browser, device, base)
+                    check_occasion_look(browser, device, base, "returning-session")
+                    check_occasion_look(browser, device, base, "empty-closet")
                 finally:
                     browser.close()
         finally:

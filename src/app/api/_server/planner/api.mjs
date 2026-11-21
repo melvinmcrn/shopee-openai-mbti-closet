@@ -34,6 +34,16 @@ async function option(db, accountId, id) {
   return found(await readOption(db, accountId, id));
 }
 
+function requestedSlots(source, input) {
+  const slots = input.slots ?? source.slots;
+  if (source.kind === "occasion" && (
+    !slots || typeof slots !== "object" || Array.isArray(slots) ||
+    Object.keys(slots).length !== Object.keys(source.slots).length ||
+    Object.entries(source.slots).some(([slot, id]) => slots[slot] !== id)
+  )) throw new PlannerError(400, "The selected items have changed. Reopen this look.");
+  return slots;
+}
+
 function matchesRequestedProducts(input, products) {
   const expected = input.catalogItemIds ?? (input.catalogItemId === undefined ? undefined :
     input.catalogItemId == null ? [] : [input.catalogItemId]);
@@ -66,23 +76,25 @@ export async function dispatchPlanner(env, accountId, action, input = {}, depend
     case "option": return option(db, accountId, input.id);
     case "generate": {
       const brief = found(await getBrief(db, accountId, input.briefId));
-      return generateOptions(env, accountId, brief, await wardrobe(), input.priorLooks, dependencies.generateLooks);
+      return generateOptions(env, accountId, brief, await wardrobe(), input.priorLooks, dependencies.generateLooks, dependencies.generateOccasionLook);
     }
     case "wearList": case "wearAdd": case "wearGet": case "wearUpdate":
       return wearAction(db, accountId, action, input);
     case "enhancements": case "enhancement": case "preview": {
       const source = await option(db, accountId, input.optionId);
       const garments = await wardrobe();
-      const requested = input.slots ?? source.slots;
-      const profileOnly = !Object.keys(source.slots).length && requested && typeof requested === "object" &&
+      const requested = requestedSlots(source, input);
+      const noWardrobePieces = !Object.keys(source.slots).length && requested && typeof requested === "object" &&
         !Array.isArray(requested) && !Object.keys(requested).length;
-      const slots = profileOnly ? {} : snapshotSlots(requested, garments);
+      const slots = noWardrobePieces ? {} : snapshotSlots(requested, garments);
       const products = await evaluateEnhancements(env, accountId, source, slots, garments, dependencies.shoppingFetch);
       if (action === "enhancements") return products;
       if (action === "enhancement") return products[0] ?? null;
       if (!matchesRequestedProducts(input, products)) return { imageRef: null };
       const ref = input.useProfilePhoto === false ? null : await photo();
-      if (!ref && (input.useProfilePhoto === true || profileOnly)) throw new PlannerError(400, "Add a profile photo to generate this try-on.");
+      if (!ref && (input.useProfilePhoto === true || (noWardrobePieces && source.kind !== "occasion"))) {
+        throw new PlannerError(400, "Add a profile photo to generate this try-on.");
+      }
       return renderPreview(env, accountId, source.id, slots, Boolean(ref), ref, products, dependencies.preview);
     }
     case "shopping": case "hide":
@@ -112,7 +124,7 @@ export async function dispatchPlanner(env, accountId, action, input = {}, depend
     case "save": {
       const source = await option(db, accountId, input.optionId);
       const personal = input.useProfilePhoto ?? Boolean(await profilePhotoRef(db, accountId));
-      return saveLook(db, accountId, source, input.slots, await wardrobe(), personal);
+      return saveLook(db, accountId, source, requestedSlots(source, input), await wardrobe(), personal);
     }
     case "list": return listLooks(db, accountId);
     case "detail": return found(await getLook(db, accountId, input.id));

@@ -190,6 +190,24 @@ test("Postgres supports owner-scoped profiles, wardrobe items, and the planner",
       }
     });
 
+    const shirt = await DB.prepare("SELECT item_id FROM clothes_catalog WHERE search_term='men shirt' ORDER BY item_id LIMIT 1").first();
+    const extraBatch = await dispatchPlanner(env, owner.id, "generate", { briefId: brief.id }, {
+      generateLooks: async () => ({ status: "insufficient" }),
+      generateOccasionLook: async () => ({
+        slots: { bottom: garments.bottom }, catalogSlots: { top: shirt.item_id, accessory: listing.item_id },
+        explanation: "Styled for dinner.",
+      }),
+    });
+    const [occasionLook] = extraBatch.looks;
+    assert.equal(occasionLook.kind, "occasion");
+    const occasionSave = await dispatchPlanner(env, owner.id, "save", { optionId: occasionLook.id, slots: occasionLook.slots });
+    const sourced = await dispatchPlanner(env, owner.id, "shopping", { lookId: occasionSave.id });
+    assert.deepEqual(sourced.map(item => item.catalogItemId).sort(), [shirt.item_id, listing.item_id].sort());
+    const necklace = sourced.find(item => item.catalogItemId === listing.item_id);
+    await dispatchPlanner(env, owner.id, "hide", { lookId: occasionSave.id, id: necklace.id });
+    const reopened = await dispatchPlanner(env, owner.id, "detail", { id: occasionSave.id });
+    assert.deepEqual(reopened.enhancements.map(item => item.id), [shirt.item_id]);
+
     const retiredSampleRoute = await wardrobeApi(
       new Request("https://example.test/api/wardrobe/sample", { method: "POST" }), env, owner.id,
     );

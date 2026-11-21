@@ -6,11 +6,13 @@ import type { LoadTryOn } from "./try-on";
 import { WardrobePhotos } from "./wardrobe-photos";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { api, type Garment, type Look } from "./shared";
+import { api, occasionLookLabel, type Garment, type Look } from "./shared";
 
 type CompareProps = {
   loadTryOn: LoadTryOn;
   briefId: string;
+  comparison?: Comparison;
+  onComparison: (comparison: Comparison) => void;
   garments: Garment[];
   onChoose: (look: Look) => void;
   onEdit: () => void;
@@ -21,6 +23,8 @@ type Generation = {
   looks?: Look[];
   message?: string;
 };
+
+export type Comparison = { looks: Look[]; result: Generation };
 
 const secondaryButton =
   "inline-flex min-h-11 items-center justify-center rounded-full border border-divider px-5 py-2 text-sm font-semibold text-secondary transition hover:bg-selected focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:cursor-wait disabled:opacity-60";
@@ -39,9 +43,10 @@ function LookCard({
   onChoose: (look: Look) => void;
 }) {
   const enhancement = useLookEnhancement(look.id, look.slots);
+  const occasionLed = look.kind === "occasion";
   return (
     <article className="flex min-w-0 flex-col rounded-2xl border border-divider bg-surface p-2 sm:p-3">
-      <h2 className="mb-3 px-1 font-heading text-lg text-text sm:text-2xl">Look {index + 1}</h2>
+      <h2 className="mb-3 px-1 font-heading text-lg text-text sm:text-2xl">{occasionLed ? occasionLookLabel : `Look ${index + 1}`}</h2>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,15rem),1fr))] items-start gap-3">
         {enhancement.products && (
           <TryOnPhoto look={look} products={enhancement.products} loadTryOn={loadTryOn}
@@ -54,9 +59,9 @@ function LookCard({
       </div>
       {look.explanation && <p className="mt-2 text-sm text-supporting">{look.explanation}</p>}
       <div className="flex-1" />
-      {!look.profileRef && <button
+      {(occasionLed || !look.profileRef) && <button
         type="button"
-        aria-label={`Choose look ${index + 1}`}
+        aria-label={occasionLed ? "Choose occasion look" : `Choose look ${index + 1}`}
         onClick={() => onChoose(look)}
         className="mt-3 min-h-11 w-full rounded-full bg-primary px-4 py-2 text-sm font-semibold text-on-primary transition hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary"
       >
@@ -77,53 +82,41 @@ async function generate(briefId: string, priorLooks: Look[]) {
   }
 }
 
-function CompareBrief({ briefId, garments, onChoose, onEdit, loadTryOn }: CompareProps) {
-  const [result, setResult] = useState<Generation>();
-  const [looks, setLooks] = useState<Look[]>([]);
-  const [busy, setBusy] = useState(true);
-  const priorLooks = useRef<Look[]>([]);
+function CompareBrief({ briefId, comparison, onComparison, garments, onChoose, onEdit, loadTryOn }: CompareProps) {
+  const [moreRequest, setMoreRequest] = useState<Promise<Generation>>();
   const initialRequest = useRef<Promise<Generation> | null>(null);
+  const busy = !comparison || Boolean(moreRequest);
 
   useEffect(() => {
+    if (comparison && !moreRequest) return;
     let active = true;
-    initialRequest.current ??= generate(briefId, []);
-    void initialRequest.current.then((response) => {
+    const earlier = comparison?.looks ?? [];
+    const request = moreRequest ?? (initialRequest.current ??= generate(briefId, []));
+    void request.then(result => {
       if (!active) return;
-      const generated = response.status === "ready" ? response.looks || [] : [];
-      priorLooks.current = generated;
-      setLooks(generated);
-      setResult(response);
-      setBusy(false);
+      const batch = result.status === "ready" ? result.looks ?? [] : [];
+      onComparison({ result, looks: [...earlier, ...batch] });
+      setMoreRequest(undefined);
     });
+    return () => { active = false; };
+  }, [briefId, comparison, onComparison, moreRequest]);
 
-    return () => {
-      active = false;
-    };
-  }, [briefId]);
-
-  async function requestOptions() {
-    setBusy(true);
-    const response = await generate(briefId, priorLooks.current);
-    if (response.status === "ready" && response.looks?.length) {
-      priorLooks.current = [...priorLooks.current, ...response.looks];
-      setLooks(priorLooks.current);
-    }
-    setResult(response);
-    setBusy(false);
-  }
-
+  const looks = comparison?.looks ?? [];
+  const result = comparison?.result;
+  const regular = looks.filter(look => look.kind !== "occasion");
+  const occasion = looks.find(look => look.kind === "occasion");
+  const ordered = occasion ? [...regular, occasion] : regular;
   const garmentById = new Map(garments.map((garment) => [garment.id, garment]));
   const insufficient = result?.status === "insufficient";
   const failed = result?.status === "failed";
   const empty = result?.status === "ready" && !result.looks?.length;
   const needsCloset = insufficient && !looks.length && !garments.length;
   const needsRetry = failed || empty || (insufficient && !looks.length);
-  let message = "We couldn’t build any looks this time. Try again.";
-  if (insufficient) {
-    message = looks.length
-      ? "There aren’t any more combinations for this brief."
-      : "There aren’t enough matching pieces to build a look for this brief.";
-  }
+  const canRequestMore = garments.length > 0 && looks.length > 0 && !insufficient;
+  const message = insufficient && looks.length > 0
+    ? "There aren’t any more combinations for this brief."
+    : result?.message || (insufficient ? "There aren’t enough matching pieces to build a look for this brief."
+      : "We couldn’t build any looks this time. Try again.");
 
   return (
     <section aria-labelledby="compare-heading" className="text-text">
@@ -143,7 +136,7 @@ function CompareBrief({ briefId, garments, onChoose, onEdit, loadTryOn }: Compar
 
       {looks.length > 0 && (
         <div className="grid gap-4 xl:grid-cols-2">
-          {looks.map((look, index) => (
+          {ordered.map((look, index) => (
             <LookCard
               key={look.id}
               look={look}
@@ -165,7 +158,7 @@ function CompareBrief({ briefId, garments, onChoose, onEdit, loadTryOn }: Compar
         )}
         {!busy && (insufficient || failed || empty) && (
           <p className="rounded-2xl border border-divider bg-canvas p-5 text-sm leading-relaxed text-supporting">
-            {result?.message || message}
+            {message}
           </p>
         )}
       </div>
@@ -173,12 +166,12 @@ function CompareBrief({ briefId, garments, onChoose, onEdit, loadTryOn }: Compar
       {needsCloset && (
         <Link href="/closet" className={`mt-5 inline-flex items-center ${secondaryButton}`}>Open closet</Link>
       )}
-      {!needsCloset && (needsRetry || (looks.length > 0 && !insufficient)) && (
+      {!needsCloset && (needsRetry || canRequestMore) && (
         <div className="mt-5 flex flex-wrap gap-3">
           <button
             type="button"
             disabled={busy}
-            onClick={requestOptions}
+            onClick={() => setMoreRequest(generate(briefId, looks))}
             className={secondaryButton}
           >
             {needsRetry ? "Try again" : "Show more looks"}

@@ -4,7 +4,7 @@ import { SavedPhoto, type FindTryOn } from "./saved-photo";
 import { WardrobePhotos } from "./wardrobe-photos";
 import { EnhancementProduct, type CatalogProduct } from "./enhancement";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { api, type SavedLook } from "./shared";
+import { api, occasionLookLabel, type SavedLook } from "./shared";
 
 type DetailProps = {
   findTryOn: FindTryOn;
@@ -278,6 +278,7 @@ function SavedDetail({ id, onWear, onBack, findTryOn }: DetailProps) {
         <h1 id="saved-detail-title" className="mt-4 font-heading text-4xl tracking-tight sm:text-5xl">
           {look?.occasion || "Saved look"}
         </h1>
+        {look?.kind === "occasion" && <p className="mt-2 text-sm text-supporting">{occasionLookLabel}</p>}
       </header>
 
       {!result && <p role="status" className="text-sm text-supporting">Opening your saved look…</p>}

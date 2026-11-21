@@ -106,6 +106,15 @@ test("a multi-product look is withheld when any one of its real pieces is absent
   assert.equal(deps.storeImage.mock.callCount(), 0);
 });
 
+test("a matched occasion garment uses its verified slot even when the listing search term is a style", async t => {
+  const deps = setup(t, ["item_1", "item_2"]);
+  const result = await generatePreview(env, 1, [], false, deps, [
+    { ...top, category: "linen blouses", catalogSlot: "top" },
+    { ...pants, category: "tailored slacks", catalogSlot: "bottom" },
+  ]);
+  assert.deepEqual(result, { imageRef: "verified-photo" });
+});
+
 test("an unavailable or untrusted catalog image cannot be replaced by an invented reference", async t => {
   const deps = setup(t, ["item_1", "item_2"]);
   await assert.rejects(generatePreview(env, 1, [dress], false, deps,

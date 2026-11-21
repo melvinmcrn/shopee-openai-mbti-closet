@@ -52,7 +52,11 @@ function hasTryOnBase(garments, products) {
   const categories = new Set(garments.map(item => item.category));
   if (categories.has("other")) return false;
   // Catalog categories are the search terms of the imported product data.
-  for (const { category: term } of products) {
+  for (const { category: term, catalogSlot } of products) {
+    if (catalogSlot) {
+      categories.add(catalogSlot);
+      continue;
+    }
     if (/\b(pants|shorts|skirt|trousers|bottom)$/.test(term)) categories.add("bottom");
     if (/\b(top|shirt|sweater)$/.test(term)) categories.add("top");
     if (/\bdress$/.test(term)) categories.add("dress");

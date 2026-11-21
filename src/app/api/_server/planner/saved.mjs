@@ -1,4 +1,4 @@
-import { enhancementSelection, readSavedProducts } from "./catalog-product.mjs";
+import { enhancementSelection, readOptionProducts, readSavedCatalog } from "./catalog-product.mjs";
 import { previewSelection } from "./preview-files.mjs";
 
 const slotNames = new Set(["top", "bottom", "dress", "shoes", "outerwear", "accessory", "other"]);
@@ -78,7 +78,7 @@ async function readLooks(db, accountId, id) {
 
   if (!results.length) return [];
   const selections = results.map(row => JSON.parse(row.slots));
-  const products = await readSavedProducts(db, accountId, Object.fromEntries(
+  const { products, occasion } = await readSavedCatalog(db, accountId, Object.fromEntries(
     results.map((row, i) => [row.id, enhancementSelection(selections[i])])
   ));
   return results.map((row, i) => {
@@ -91,6 +91,7 @@ async function readLooks(db, accountId, id) {
     return {
       id: String(row.id),
       optionId: String(row.source_option_id),
+      ...(occasion.has(String(row.id)) ? { kind: "occasion" } : {}),
       useProfilePhoto: personal,
       previewRef: previews[selection] ?? null,
       enhancements,
@@ -110,7 +111,18 @@ export async function saveLook(db, accountId, sourceOption, slots, garments, use
     throw new TypeError("A saved look must have a generated option");
   }
 
-  const snapshot = snapshotSlots(slots, garments);
+  let snapshot;
+  if (sourceOption.kind === "occasion" && Object.keys(sourceOption.slots).length === 0 &&
+      slots && typeof slots === "object" && !Array.isArray(slots) && Object.keys(slots).length === 0) {
+    const products = await readOptionProducts(db, accountId, optionId);
+    const base = new Set(products.map(product => product.catalogSlot));
+    if (!base.has("dress") && !(base.has("top") && base.has("bottom"))) {
+      throw new TypeError("The catalog pieces for this outfit are unavailable.");
+    }
+    snapshot = {};
+  } else {
+    snapshot = snapshotSlots(slots, garments);
+  }
   const [insert] = await db.batch([
     db.prepare(`
       INSERT INTO saved_looks (id, user_id, source_option_id, name, saved_at, use_profile_photo)

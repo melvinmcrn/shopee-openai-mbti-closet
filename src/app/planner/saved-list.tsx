@@ -2,7 +2,7 @@ import { EnhancementProduct } from "./enhancement";
 import { SavedPhoto, type FindTryOn } from "./saved-photo";
 import { WardrobePhotos } from "./wardrobe-photos";
 import { useEffect, useState } from "react";
-import { api, type SavedLook } from "./shared";
+import { api, occasionLookLabel, type SavedLook } from "./shared";
 
 type SavedListProps = {
   findTryOn: FindTryOn;
@@ -97,7 +97,7 @@ export function SavedList({ onOpen, onNew, findTryOn }: SavedListProps) {
                   ))}
                 </div>
                 <p className="mt-5 flex-1 text-sm leading-relaxed text-supporting">
-                  <strong>Original suggestion</strong> · {look.explanation}
+                  <strong>{look.kind === "occasion" ? occasionLookLabel : "Original suggestion"}</strong> · {look.explanation}
                 </p>
                 <button
                   type="button"

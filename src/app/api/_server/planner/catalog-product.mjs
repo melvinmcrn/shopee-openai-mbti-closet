@@ -47,7 +47,7 @@ export function missingBasics(slots, garments) {
 
 // One lookup for the saved list. A hidden or retired saved listing suppresses
 // that gap only, leaving other approved pieces visible.
-export async function readSavedProducts(db, accountId, selectionsByLook) {
+async function readLegacyProducts(db, accountId, selectionsByLook) {
   const { results: owned } = await db.prepare(`
     SELECT DISTINCT category FROM wardrobe_items WHERE user_id = ? AND confirmed_at IS NOT NULL
       AND archived_at IS NULL AND image_file_id IS NOT NULL AND category IN ('top','bottom')
@@ -103,4 +103,64 @@ export async function readSavedProducts(db, accountId, selectionsByLook) {
     products.set(id, selected);
   }
   return products;
+}
+
+function selectedProduct(row) {
+  const product = catalogProduct(row);
+  return product ? { ...product, catalogSlot: row.slot } : null;
+}
+
+export async function readOptionProducts(db, accountId, optionId) {
+  const { results } = await db.prepare(`
+    SELECT chosen.slot, ${productColumns}
+    FROM outfit_option_catalog_items chosen
+    JOIN outfit_options o ON o.user_id = chosen.user_id AND o.id = chosen.option_id AND o.look_kind = 'occasion'
+    JOIN clothes_image_database product ON product.item_id = chosen.item_id AND ${searchableProduct}
+    WHERE chosen.user_id = ? AND chosen.option_id = ?
+    ORDER BY chosen.slot
+  `).bind(accountId, optionId).all();
+  return results.map(selectedProduct).filter(Boolean);
+}
+
+async function readOccasionSavedProducts(db, accountId, selectionsByLook) {
+  const products = new Map();
+  let rows;
+  try {
+    ({ results: rows } = await db.prepare(`
+      SELECT look.id AS look_id, chosen.slot, hidden.item_id AS hidden_item, ${productColumns}
+      FROM json_each(?) AS slot
+      JOIN saved_looks look ON look.id = CAST(slot.key AS BIGINT) AND look.user_id = ?
+      JOIN outfit_options o ON o.user_id = look.user_id AND o.id = look.source_option_id AND o.look_kind = 'occasion'
+      LEFT JOIN outfit_option_catalog_items chosen ON chosen.user_id = o.user_id AND chosen.option_id = o.id
+      LEFT JOIN clothes_image_database product ON product.item_id = chosen.item_id AND ${searchableProduct}
+      LEFT JOIN saved_look_hidden_catalog_items hidden ON hidden.saved_look_id = look.id AND hidden.item_id = chosen.item_id
+      ORDER BY look.id, chosen.slot
+    `).bind(JSON.stringify(selectionsByLook), accountId).all());
+  } catch (error) {
+    // Existing saved looks remain readable while the occasion migration rolls out.
+    if (/no such (?:table: (?:outfit_option_catalog_items|saved_look_hidden_catalog_items)|column: o\.look_kind)|(?:relation "(?:outfit_option_catalog_items|saved_look_hidden_catalog_items)"|column o\.look_kind) does not exist/i.test(error.message)) {
+      return products;
+    }
+    throw error;
+  }
+
+  for (const row of rows) {
+    const id = String(row.look_id);
+    if (!products.has(id)) products.set(id, []);
+    const product = !row.hidden_item && selectedProduct(row);
+    if (product) products.get(id).push(product);
+  }
+  return products;
+}
+
+export async function readSavedCatalog(db, accountId, selectionsByLook) {
+  const occasion = await readOccasionSavedProducts(db, accountId, selectionsByLook);
+  const legacy = Object.fromEntries(Object.entries(selectionsByLook).filter(([id]) => !occasion.has(id)));
+  const products = Object.keys(legacy).length ? await readLegacyProducts(db, accountId, legacy) : new Map();
+  for (const [id, selected] of occasion) products.set(id, selected);
+  return { products, occasion };
+}
+
+export async function readSavedProducts(db, accountId, selectionsByLook) {
+  return (await readSavedCatalog(db, accountId, selectionsByLook)).products;
 }

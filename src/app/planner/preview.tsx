@@ -4,7 +4,7 @@ import { TryOnPhoto } from "./try-on-photo";
 import { EnhancementCard, useLookEnhancement } from "./enhancement";
 import type { LoadTryOn } from "./try-on";
 import { WardrobePhotos } from "./wardrobe-photos";
-import type { Garment, Look } from "./shared";
+import { occasionLookLabel, type Garment, type Look } from "./shared";
 
 type PreviewProps = {
   look: Look;
@@ -28,7 +28,7 @@ export function Preview({ look, loadTryOn, garments, onBack }: PreviewProps) {
       <header>
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Virtual try-on</h1>
         <p className="mt-2 text-sm text-supporting">
-          Generate a virtual try-on of your outfit. Details and fit may vary.
+          {look.kind === "occasion" ? occasionLookLabel + "." : "Generate a virtual try-on of your outfit."} Details and fit may vary.
         </p>
       </header>
 

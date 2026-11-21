@@ -74,6 +74,70 @@ const originalSlots = { top: blouse.id, bottom: trousers.id, shoes: heels.id };
 const refinedSlots = { ...originalSlots, shoes: flats.id };
 const explanation = "The silk blouse and wool trousers fit the dinner dress code.";
 
+test("generation adds one occasion option and keeps its sourced pieces through saving and reopening", async t => {
+  await withDatabase(":memory:", async database => {
+    migrate(database);
+    database.exec("INSERT INTO users (id,auth_provider,auth_subject) VALUES (1,'google','owner')");
+    database.prepare("INSERT INTO private_files(file_id,user_id,state) VALUES (?,1,'ready')").run(blouse.imageRef);
+    database.prepare(`INSERT INTO wardrobe_items(id,user_id,name,category,color,image_file_id,confirmed_at)
+      VALUES (?,1,?,?,?,?,CURRENT_TIMESTAMP)`).run(blouse.id, blouse.name, blouse.category, blouse.color, blouse.imageRef);
+    const pick = database.prepare("SELECT item_id, url FROM clothes_catalog WHERE search_term='women pants' LIMIT 1").get();
+    const env = { DB: d1Binding(database) };
+    const planned = { slots: { top: blouse.id }, catalogSlots: { bottom: pick.item_id }, explanation: "Styled for a gallery opening." };
+    const dependencies = {
+      generateLooks: async () => ({ status: "ready", looks: [{ slots: { top: blouse.id }, explanation: "Closet option" }] }),
+      generateOccasionLook: t.mock.fn(async () => planned),
+    };
+    const dispatch = (action, input) => dispatchPlanner(env, 1, action, input, dependencies);
+    const brief = await dispatch("saveBrief", { occasion: "Evening gallery opening" });
+    const result = await dispatch("generate", { briefId: brief.id });
+    assert.equal(result.looks.length, 2);
+    const [regular, extra] = result.looks;
+    assert.equal(regular.explanation, "Closet option");
+    assert.equal(extra.kind, "occasion");
+    assert.deepEqual(extra.slots, { top: blouse.id });
+    assert.equal((await dispatch("option", { id: extra.id })).kind, "occasion");
+    const [product] = await dispatch("enhancements", { optionId: extra.id, slots: extra.slots });
+    assert.equal(product.id, pick.item_id);
+    assert.equal(product.url, new URL(pick.url).href);
+    const saved = await dispatch("save", { optionId: extra.id, slots: extra.slots });
+    assert.deepEqual(saved.enhancements.map(item => item.id), [pick.item_id]);
+    const more = await dispatch("generate", { briefId: brief.id, priorLooks: result.looks });
+    assert.ok(more.looks.every(look => look.kind !== "occasion"));
+    assert.equal(dependencies.generateOccasionLook.mock.callCount(), 1);
+
+    // If the listing disappears before the writes, the ordinary option still succeeds.
+    planned.catalogSlots = { bottom: "retired-listing" };
+    const stale = await dispatch("generate", { briefId: brief.id });
+    assert.deepEqual(stale.looks.map(look => look.explanation), ["Closet option"]);
+  });
+});
+
+test("a catalog-only occasion look works with an empty closet and a studio try-on", async () => {
+  await withDatabase(":memory:", async database => {
+    migrate(database);
+    database.exec("INSERT INTO users (id,auth_provider,auth_subject) VALUES (1,'google','owner')");
+    const listing = term => database.prepare("SELECT item_id FROM clothes_catalog WHERE search_term=? LIMIT 1").get(term).item_id;
+    const catalogSlots = { top: listing("women tank top"), bottom: listing("women pants") };
+    const env = { DB: d1Binding(database) };
+    const dependencies = {
+      generateOccasionLook: async () => ({ slots: {}, catalogSlots, explanation: "Styled for summer." }),
+      preview: { cachedImage: async () => "studio-photo" },
+    };
+    const dispatch = (action, input) => dispatchPlanner(env, 1, action, input, dependencies);
+    const brief = await dispatch("saveBrief", { occasion: "Summer lunch" });
+    const result = await dispatch("generate", { briefId: brief.id });
+    assert.equal(result.status, "ready");
+    assert.equal(result.looks.length, 1);
+    const [look] = result.looks;
+    const catalogItemIds = Object.values(catalogSlots);
+    assert.deepEqual(await dispatch("preview", { optionId: look.id, catalogItemIds }), { imageRef: "studio-photo" });
+    const saved = await dispatch("save", { optionId: look.id, slots: {} });
+    assert.deepEqual(saved.slots, {});
+    assert.deepEqual(saved.enhancements.map(item => item.id).sort(), [...catalogItemIds].sort());
+  });
+});
+
 test("a shoe swap survives a reopened planner session and stays private to its account", async (t) => {
   const directory = mkdtempSync(join(tmpdir(), "planner-demo-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));

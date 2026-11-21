@@ -8,7 +8,7 @@ import { PlannerHome } from "./home";
 import { Occasion } from "./occasion";
 import { Style } from "./style";
 import { createTryOnLoader } from "./try-on";
-import { Compare } from "./compare";
+import { Compare, type Comparison } from "./compare";
 import { Refine } from "./refine";
 import { Preview } from "./preview";
 import { SavedList } from "./saved-list";
@@ -21,6 +21,7 @@ export default function PlannerPage() {
   const screen = usePlannerScreen();
   const [brief, setBrief] = useState<Brief>(emptyBrief);
   const [loadTryOn] = useState(createTryOnLoader);
+  const [comparison, setComparison] = useState<Comparison>();
   const [look, setLook] = useState<Look>();
   const [garments, setGarments] = useState<Garment[]>();
   const [loadError, setLoadError] = useState("");
@@ -47,6 +48,7 @@ export default function PlannerPage() {
   }
   function start() {
     setBrief({ ...emptyBrief, preferences: [] });
+    setComparison(undefined);
     setLook(undefined);
     go("occasion");
   }
@@ -60,8 +62,8 @@ export default function PlannerPage() {
     ? <div className="text-danger" role="alert">{loadError} <Link className="underline" href="/account">Account</Link> · <button onClick={() => {setLoadError(""); setReload(n => n + 1);}}>Retry</button></div>
     : <p role="status">Opening your closet…</p>;
   else if (screen === "occasion") content = <Occasion key={brief.id || "new"} brief={brief} onBack={() => go("home")} onNext={saved => { setBrief(saved); go("style"); }} />;
-  else if (screen === "style" && brief.id) content = <Style brief={brief} onBack={() => go("occasion")} onNext={saved => { setBrief(saved); go("compare"); }} />;
-  else if (screen === "compare" && brief.id) content = <Compare loadTryOn={loadTryOn} briefId={brief.id} garments={garments} onEdit={() => go("style")} onChoose={chosen => { setLook(chosen); go("refine"); }} />;
+  else if (screen === "style" && brief.id) content = <Style brief={brief} onBack={() => go("occasion")} onNext={saved => { setBrief(saved); setComparison(undefined); go("compare"); }} />;
+  else if (screen === "compare" && brief.id) content = <Compare comparison={comparison} onComparison={setComparison} loadTryOn={loadTryOn} briefId={brief.id} garments={garments} onEdit={() => go("style")} onChoose={chosen => { setLook(chosen); go("refine"); }} />;
   else if (screen === "refine" && look) content = <Refine look={look} garments={garments} onBack={() => go("compare")} onPreview={() => go("preview")} onSaved={id => { loadTryOn.rememberSaved(look, id); go("saved/" + id); }} />;
   else if (screen === "preview" && look) content = <Preview loadTryOn={loadTryOn} look={look} garments={garments} onBack={() => go("refine")} />;
   else content = <PlannerHome garments={garments} onNew={start} />;

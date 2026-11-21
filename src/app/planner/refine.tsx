@@ -3,7 +3,7 @@
 import { WardrobePhotos } from "./wardrobe-photos";
 import { LookEnhancement } from "./enhancement";
 import { useRef, useState } from "react";
-import { api, type Garment, type Look } from "./shared";
+import { api, occasionLookLabel, type Garment, type Look } from "./shared";
 
 type RefineProps = {
   look: Look;
@@ -53,6 +53,7 @@ export function Refine({ look, garments, onSaved, onPreview, onBack }: RefinePro
           <span aria-hidden="true">← </span>Back to outfits
         </button>
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Review your outfit</h1>
+        {look.kind === "occasion" && <p className="mt-2 text-sm text-supporting">{occasionLookLabel}</p>}
       </header>
 
       <section className="rounded-2xl border border-divider bg-surface p-4 sm:p-6">

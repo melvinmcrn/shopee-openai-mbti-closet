@@ -1,4 +1,4 @@
-import { basicTerms, missingBasics, catalogProduct, enhancementSelection, listingUrl, productColumns, searchableProduct } from "./catalog-product.mjs";
+import { basicTerms, missingBasics, catalogProduct, enhancementSelection, listingUrl, readOptionProducts, productColumns, searchableProduct } from "./catalog-product.mjs";
 import { requestDecision } from "./decision.mjs";
 import { getBrief } from "./brief.mjs";
 import { readOption } from "./options.mjs";
@@ -115,6 +115,7 @@ async function evaluateGap(env, accountId, option, slots, garments, request, gap
 }
 
 export async function evaluateEnhancements(env, accountId, option, slots, garments, request) {
+  if (option.kind === "occasion") return readOptionProducts(env.DB, accountId, option.id);
   const gaps = missingBasics(slots, garments);
   const products = await Promise.all((gaps.length ? gaps : [null]).map(gap =>
     evaluateGap(env, accountId, option, slots, garments, request, gap)));
@@ -164,6 +165,9 @@ function visibleSuggestions(rows) {
 }
 
 export async function suggestionsForLook(env, accountId, look, wardrobe, request) {
+  if (look.kind === "occasion") {
+    return look.enhancements.map(product => ({ ...product, catalogItemId: product.id, sponsored: false }));
+  }
   const db = env.DB;
   let rows = await loadSuggestions(db, accountId, look.id);
   const garments = await wardrobe();
@@ -193,6 +197,18 @@ export async function shoppingAction(env, accountId, action, input, request, war
   if (action === "hide") {
     if (typeof input.id !== "string" || !input.id) {
       throw new TypeError("A shopping suggestion is required.");
+    }
+    if (look.kind === "occasion") {
+      const hidden = await db.prepare(`
+        INSERT INTO saved_look_hidden_catalog_items(saved_look_id, item_id)
+        SELECT look.id, chosen.item_id FROM saved_looks look
+        JOIN outfit_option_catalog_items chosen ON chosen.user_id = look.user_id AND chosen.option_id = look.source_option_id
+        WHERE look.user_id = ? AND look.id = ? AND chosen.item_id = ?
+        ON CONFLICT(saved_look_id, item_id) DO UPDATE SET item_id = excluded.item_id
+        RETURNING item_id
+      `).bind(accountId, look.id, input.id).first();
+      if (!hidden) throw Object.assign(new Error("This suggestion could not be found."), { status: 404 });
+      return { hidden: true };
     }
     const hidden = await db.prepare(`
       UPDATE shopping_suggestions

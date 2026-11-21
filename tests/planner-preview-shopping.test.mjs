@@ -80,6 +80,7 @@ async function startPlanner(t, preview, optionSlots = original, shoppingFetch, s
   const makeSession = (user = accountId, key = "mock-provider-key") => {
     const env = { readSampleImage, DB: d1Binding(database), OPENAI_API_KEY: key };
     const dependencies = {
+      generateOccasionLook: async () => null,
       generateLooks: async () => ({
         status: "ready",
         looks: [{ slots: optionSlots, explanation: "The dress works for dinner." }],
@@ -686,4 +687,68 @@ test("a saved personal look switches to studio only after rendering succeeds if 
   const body = edit.arguments[1].body;
   const [first] = body.getAll("image[]");
   assert.deepEqual(Buffer.from(await first.arrayBuffer()), await readSampleImage("studio-model"));
+});
+
+test("occasion looks keep their exact catalog choices across preview, save, individual hide and listing retirement", async t => {
+  const shoppingFetch = t.mock.fn(() => { throw new Error("An occasion look must not reselect products"); });
+  const preview = {
+    fetch: t.mock.fn(previewReply),
+    readImage: async ref => new Blob([ref], { type: "image/jpeg" }),
+    storeImage: async () => "occasion-preview.jpg",
+  };
+  const { dispatch, makeSession, optionId, database } = await startPlanner(t, preview, original, shoppingFetch);
+  const runId = database.prepare("SELECT run_id FROM outfit_options WHERE id=?").get(optionId).run_id;
+  const option = database.prepare(`INSERT INTO outfit_options (user_id,run_id,position,title,look_kind)
+    VALUES (1,?,10,'Beach day','occasion') RETURNING CAST(id AS TEXT) AS id`).get(runId);
+  const pick = database.prepare("INSERT INTO outfit_option_catalog_items (user_id,option_id,slot,item_id) VALUES (1,?,?,?)");
+  for (const [slot, term] of [["top", "men shirt"], ["bottom", "men pants"], ["accessory", "women necklace"]]) {
+    const row = database.prepare("SELECT item_id FROM clothes_image_database WHERE search_term=? ORDER BY item_id LIMIT 1").get(term);
+    pick.run(option.id, slot, row.item_id);
+  }
+  const products = await dispatch("enhancements", { optionId: option.id, slots: {} });
+  assert.deepEqual(products.map(product => product.catalogSlot).sort(), ["accessory", "bottom", "top"]);
+  assert.equal(new Set(products.map(product => product.id)).size, 3);
+  for (const product of products) {
+    const { url } = database.prepare("SELECT url FROM clothes_image_database WHERE item_id=?").get(product.id);
+    assert.equal(product.url, new URL(url).href);
+  }
+  const catalogItemIds = products.map(product => product.id);
+  assert.deepEqual(await dispatch("preview", { optionId: option.id, catalogItemIds: catalogItemIds.slice(1) }), { imageRef: null });
+  assert.equal(preview.fetch.mock.callCount(), 0);
+  assert.deepEqual(await dispatch("preview", { optionId: option.id, catalogItemIds }), { imageRef: "occasion-preview.jpg" });
+  for (const product of products) assert.ok(preview.fetch.mock.calls.some(call => call.arguments[0] === product.imageUrl));
+  const saved = await dispatch("save", { optionId: option.id, slots: {} });
+  assert.equal(saved.kind, "occasion");
+  assert.deepEqual(saved.enhancements, products);
+  assert.deepEqual(saved.slots, {});
+  assert.deepEqual((await dispatch("list", {})).find(look => look.id === saved.id), saved);
+  const otherSave = await dispatch("save", { optionId: option.id, slots: {} });
+  const suggestions = await dispatch("shopping", { lookId: saved.id });
+  const accessory = suggestions.find(item => item.catalogSlot === "accessory");
+  const bottom = suggestions.find(item => item.catalogSlot === "bottom");
+  assert.deepEqual(suggestions.map(item => item.catalogItemId), products.map(product => product.id));
+  await assert.rejects(makeSession(2)("hide", { lookId: saved.id, id: accessory.id }), { status: 404 });
+  await assert.rejects(dispatch("hide", { lookId: saved.id, id: "not-selected" }), { status: 404 });
+  await Promise.all([1, 2].map(() => dispatch("hide", { lookId: saved.id, id: accessory.id })));
+  assert.deepEqual((await dispatch("detail", { id: saved.id })).enhancements, products.filter(item => item.id !== accessory.catalogItemId));
+  assert.deepEqual((await dispatch("detail", { id: otherSave.id })).enhancements, products);
+  database.prepare("UPDATE clothes_image_database SET url='https://shopee.co.th/product/1/999' WHERE item_id=?").run(bottom.catalogItemId);
+  assert.deepEqual((await dispatch("shopping", { lookId: saved.id })).map(item => item.catalogSlot), ["top"]);
+  assert.deepEqual((await dispatch("enhancements", { optionId: option.id })).map(p => p.catalogSlot).sort(), ["accessory", "top"]);
+  assert.equal(shoppingFetch.mock.callCount(), 0);
+});
+
+test("a wardrobe-only occasion look and an unavailable catalog-only look never receive extra suggestions", async t => {
+  const shoppingFetch = t.mock.fn(() => { throw new Error("Do not search for substitutions"); });
+  const { dispatch, optionId, database } = await startPlanner(t, undefined, original, shoppingFetch);
+  database.prepare("UPDATE outfit_options SET look_kind='occasion' WHERE id=?").run(optionId);
+  assert.deepEqual(await dispatch("enhancements", { optionId }), []);
+  const saved = await dispatch("save", { optionId, slots: original });
+  assert.deepEqual(await dispatch("shopping", { lookId: saved.id }), []);
+  assert.equal(saved.kind, "occasion");
+  const runId = database.prepare("SELECT run_id FROM outfit_options WHERE id=?").get(optionId).run_id;
+  const empty = database.prepare(`INSERT INTO outfit_options (user_id,run_id,position,title,look_kind)
+    VALUES (1,?,11,'Beach day','occasion') RETURNING CAST(id AS TEXT) AS id`).get(runId);
+  await assert.rejects(dispatch("save", { optionId: empty.id, slots: {} }));
+  assert.equal(shoppingFetch.mock.callCount(), 0);
 });

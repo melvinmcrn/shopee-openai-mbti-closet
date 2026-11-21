@@ -17,7 +17,7 @@ database.exec(await readFile(new URL("0000_stylist.sql", schema), "utf8"));
 database.exec(`
   INSERT INTO users (id, auth_provider, auth_subject) VALUES
     (1, 'google', 'fixture-returning-user'), (2, 'google', 'fixture-other-account'),
-    (3, 'google', 'fixture-profile-only');
+    (3, 'google', 'fixture-profile-only'), (4, 'google', 'fixture-empty-closet');
   INSERT INTO profiles (user_id, face_photo_file_id) VALUES (1, 'fixture-face'), (3, 'fixture-face');
   INSERT INTO wardrobe_items (id, user_id, name, category, color, image_file_id, confirmed_at, archived_at) VALUES
     (11, 1, 'Silk blouse', 'top', 'Cream', 'blouse', 'confirmed', NULL),
@@ -102,12 +102,12 @@ const env = {
 const origin = "https://mbti-closet.stonyimpala.chatgpt.site";
 const cookieName = "__Secure-authjs.session-token";
 const sessions = new Map();
-for (const name of ["first-session", "returning-session", "rating-session", "other-account", "profile-only"]) {
+for (const name of ["first-session", "returning-session", "rating-session", "other-account", "profile-only", "empty-closet"]) {
   sessions.set(name, await encode({
     secret: env.AUTH_SECRET,
     salt: cookieName,
     token: {
-      googleSubject: name === "profile-only" ? "fixture-profile-only" : name === "other-account" ? "fixture-other-account" : "fixture-returning-user",
+      googleSubject: ["profile-only", "other-account", "empty-closet"].includes(name) ? "fixture-" + name : "fixture-returning-user",
     },
   }));
 }
@@ -149,13 +149,16 @@ async function decisionsFixture(url, options) {
     assert.equal(options.body.get("output_format"), "jpeg");
     const prompt = options.body.get("prompt");
     const references = options.body.getAll("image[]");
-    const expectedPerson = prompt.includes("Private scarf") ? await readSampleImage("studio-model") : face;
-    assert.deepEqual(Buffer.from(await references[0].arrayBuffer()), Buffer.from(expectedPerson));
+
     const labels = [...prompt.matchAll(/^Image (\d+): (\{.*\})$/gmu)].map(([, index, json]) => ({
       index: Number(index) - 1, ...JSON.parse(json),
     }));
     assert.equal(labels.length, references.length - 1);
     const listings = labels.filter(piece => piece.source === "catalog");
+    const usesStudioModel = prompt.includes("Private scarf") ||
+      (listings.length === labels.length && !prompt.includes("Preserve the face"));
+    const expectedPerson = usesStudioModel ? await readSampleImage("studio-model") : face;
+    assert.deepEqual(Buffer.from(await references[0].arrayBuffer()), Buffer.from(expectedPerson));
     for (const { index, selectedItem } of listings) {
       const product = database.prepare("SELECT item_id FROM clothes_image_database WHERE name=?").get(selectedItem);
       assert.ok(product);
@@ -167,6 +170,15 @@ async function decisionsFixture(url, options) {
   if (url === "https://api.openai.com/v1/responses") {
     const { input, text } = JSON.parse(options.body);
     if (text?.format?.name === "wardrobe_extraction") return outfitExtractionFixture();
+    if (text?.format?.name === "occasion_outfit") {
+      const brief = JSON.parse(input[0].content[0].text);
+      const pieces = brief.occasion === "Charity gala" ? [
+        { category: "top", description: "An elegant cream top for an evening gala" },
+        { category: "bottom", description: "Dressy full-length trousers for the evening gala" },
+      ] : [];
+      return Response.json({ status: "completed", output: [{ type: "message", role: "assistant", status: "completed",
+        content: [{ type: "output_text", text: JSON.stringify({ priority: "polished", pieces }) }] }] });
+    }
     const pieces = input[0].content.filter(part => part.type === "input_text" && part.text.startsWith("{"))
       .map(part => JSON.parse(part.text));
     for (const [i, part] of input[0].content.entries()) {
@@ -184,6 +196,17 @@ async function decisionsFixture(url, options) {
   }
   assert.equal(url, "https://api.openai.com/v1/decisions");
   const { input, questions } = JSON.parse(options.body);
+  const match = input[1].content[0].data;
+  if (match.groups) {
+    const answers = match.groups.map(({ question, category, candidates }) => {
+      const term = category === "top" ? "women sweater" : "women pants";
+      const pick = match.source === "wardrobe"
+        ? candidates.find(candidate => candidate.name === "Silk blouse")
+        : candidates.find(candidate => candidate.searchTerm === term);
+      return { name: question, type: "choice", choice: pick?.value ?? "none" };
+    });
+    return Response.json({ answers });
+  }
   if (questions.length === 1 && questions[0].name === "catalog_search") {
     const question = questions[0];
     const missing = input[1].content[0].data.missingGarment;

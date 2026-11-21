@@ -31,7 +31,7 @@ export function PlannerHome({ garments, onNew }: PlannerHomeProps) {
           Outfit planner
         </h1>
         <p className="mt-4 max-w-md leading-relaxed text-selected">
-          Tell us what you’re dressing for. Compare outfits from your closet and save the looks you want to wear again.
+          Tell us what you’re dressing for. Compare looks with pieces from your closet and Shopee, then save your favorites.
         </p>
         <div className="mt-7 flex flex-wrap gap-3">
           <button

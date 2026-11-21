@@ -12,6 +12,7 @@ export type CatalogProduct = {
   price: number;
   currency: string;
   wardrobeGap?: "top" | "bottom";
+  catalogSlot?: string;
 };
 
 export function EnhancementProduct({ product, sponsored = false }: { product: CatalogProduct; sponsored?: boolean }) {
@@ -34,6 +35,7 @@ export function EnhancementProduct({ product, sponsored = false }: { product: Ca
           <span aria-hidden="true">✨</span>
           <span>Elevate your look</span>
           {product.wardrobeGap && <span>· {product.wardrobeGap === "top" ? "Suggested top" : "Suggested pants"}</span>}
+          {product.catalogSlot && <span>· <span className="capitalize">{product.catalogSlot}</span></span>}
           {sponsored && <span>· Sponsored</span>}
         </p>
         <p className="wrap-break-word text-sm font-semibold">{product.title}</p>
