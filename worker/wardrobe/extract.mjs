@@ -91,7 +91,7 @@ export async function extract(request, env, userId, id) {
     png = cutout(photo, extracted.regions);
   } catch (error) {
     if (error instanceof LunaExtractionError) return failure(error.message, error.code, error.status);
-    if (error instanceof ExtractionImageError) return failure(error.message, "unsupported_photo", error.status);
+    if (error instanceof ExtractionImageError) return failure(error.message, error.status === 422 ? "invalid_extraction" : "unsupported_photo", error.status);
     throw error;
   }
 

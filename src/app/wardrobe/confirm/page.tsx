@@ -21,11 +21,12 @@ type DraftItem = {
   name: string;
   category: Category;
   color: string | null;
+  garmentType: string | null;
   imageUrl: string | null;
   extractionSource?: "fixture" | "luna";
 };
 
-type ItemEdits = Pick<DraftItem, "name" | "category" | "color">;
+type ItemEdits = Pick<DraftItem, "name" | "category" | "garmentType" | "color">;
 
 const primaryButton = "inline-flex min-h-11 items-center justify-center rounded-full bg-[#25201c] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#463a32] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9c3c24] disabled:opacity-50";
 const secondaryButton = "inline-flex min-h-11 items-center justify-center rounded-full border border-[#c9bcb0] bg-white px-5 py-2.5 text-sm font-semibold text-[#25201c] hover:border-[#25201c] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9c3c24]";
@@ -34,6 +35,7 @@ const fieldClass = "mt-1 block min-h-11 w-full rounded-lg border border-[#c9bcb0
 export default function ConfirmWardrobeItemsPage() {
   const [items, setItems] = useState<DraftItem[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "signed-out" | "error">("loading");
+  const [manualItemId, setManualItemId] = useState<string | null>(null);
   const [reloads, setReloads] = useState(0);
   const [saving, setSaving] = useState(false);
   const [savedCount, setSavedCount] = useState(0);
@@ -59,7 +61,9 @@ export default function ConfirmWardrobeItemsPage() {
 
         const data: { items: DraftItem[] } = await response.json();
         if (controller.signal.aborted) return;
-        const requestedId = new URLSearchParams(window.location.search).get("item");
+        const params = new URLSearchParams(window.location.search);
+        const requestedId = params.get("item");
+        setManualItemId(params.get("review") === "manual" ? requestedId : null);
         const requestedItem = data.items.find((item) => String(item.id) === requestedId);
         setItems(requestedItem
           ? [requestedItem, ...data.items.filter((item) => item.id !== requestedItem.id)]
@@ -88,6 +92,7 @@ export default function ConfirmWardrobeItemsPage() {
     for (const item of drafts) {
       const name = item.name.trim();
       const color = item.color?.trim() || null;
+      const garmentType = item.garmentType?.trim() || null;
       if (!name) {
         setErrors((current) => ({ ...current, [item.id]: "Enter a name for this item." }));
         continue;
@@ -97,7 +102,7 @@ export default function ConfirmWardrobeItemsPage() {
         const response = await fetch(`/api/wardrobe/items/${item.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, category: item.category, color, confirm: true }),
+          body: JSON.stringify({ name, category: item.category, garmentType, color, confirm: true }),
         });
 
         if (response.status === 401) {
@@ -194,7 +199,7 @@ export default function ConfirmWardrobeItemsPage() {
                           unoptimized
                           fill
                           src={item.imageUrl}
-                          alt={item.name || "Wardrobe item"}
+                          alt={item.extractionSource ? `Garment cutout: ${item.name}` : item.name || "Wardrobe item"}
                           className="object-contain p-4"
                         />
                       ) : (
@@ -203,6 +208,12 @@ export default function ConfirmWardrobeItemsPage() {
                     </div>
                     <fieldset className="space-y-4 p-4" disabled={saving}>
                       <legend className="sr-only">{item.name || "Wardrobe item"} details</legend>
+                      {!item.extractionSource && String(item.id) === manualItemId && (
+                        <p className="text-sm text-[#65574d]">Original photo · Automatic extraction did not complete.</p>
+                      )}
+                      {item.extractionSource === "luna" && (
+                        <p className="text-sm text-[#65574d]">Garment cutout and AI-suggested details. You can edit them before saving.</p>
+                      )}
                       {item.extractionSource === "fixture" && <p className="text-sm">Demo fixture cutout</p>}
                       <label className="block text-sm font-semibold">
                         Name
@@ -222,6 +233,15 @@ export default function ConfirmWardrobeItemsPage() {
                         >
                           {categories.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                         </select>
+                      </label>
+                      <label className="block text-sm font-semibold">
+                        Garment type
+                        <input
+                          className={fieldClass}
+                          value={item.garmentType ?? ""}
+                          maxLength={80}
+                          onChange={(event) => editItem(item.id, { garmentType: event.target.value })}
+                        />
                       </label>
                       <label className="block text-sm font-semibold">
                         Color

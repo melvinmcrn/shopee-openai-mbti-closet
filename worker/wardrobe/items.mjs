@@ -1,7 +1,7 @@
 import { fileUrl } from "../wardrobe-files.mjs";
 
 const categories = new Set(["top", "bottom", "dress", "shoes", "outerwear", "accessory", "other"]);
-const itemColumns = "id, name, category, color, image_file_id, extraction_source";
+const itemColumns = "id, name, category, garment_type, color, image_file_id, extraction_source";
 
 function itemView(row) {
   return {
@@ -9,6 +9,7 @@ function itemView(row) {
     name: row.name,
     ...(row.extraction_source ? { extractionSource: row.extraction_source } : {}),
     category: row.category,
+    garmentType: row.garment_type,
     color: row.color,
     imageFileId: row.image_file_id,
     imageUrl: fileUrl(row.image_file_id),
@@ -46,12 +47,16 @@ async function updateItem(request, db, userId, itemId) {
     return error("Expected a JSON object.", 400);
   }
 
-  const { name, category, color, confirm } = data;
+  const { name, category, garmentType, color, confirm } = data;
   if (name !== undefined && (typeof name !== "string" || !name.trim())) {
     return error("Enter an item name.", 400);
   }
   if (category !== undefined && !categories.has(category)) {
     return error("Choose a valid item category.", 400);
+  }
+  if (garmentType !== undefined && garmentType !== null &&
+      (typeof garmentType !== "string" || garmentType.trim().length > 80)) {
+    return error("Enter a garment type up to 80 characters or leave it blank.", 400);
   }
   if (color !== undefined && color !== null && typeof color !== "string") {
     return error("Enter a color or leave it blank.", 400);
@@ -59,7 +64,7 @@ async function updateItem(request, db, userId, itemId) {
   if (confirm !== undefined && confirm !== true) {
     return error("Set confirm to true to confirm an item.", 400);
   }
-  if (name === undefined && category === undefined && color === undefined && !confirm) {
+  if (name === undefined && category === undefined && garmentType === undefined && color === undefined && !confirm) {
     return error("Supply at least one item change.", 400);
   }
 
@@ -67,6 +72,7 @@ async function updateItem(request, db, userId, itemId) {
     UPDATE wardrobe_items
     SET name = COALESCE(?, name),
         category = COALESCE(?, category),
+        garment_type = CASE WHEN ? THEN ? ELSE garment_type END,
         color = CASE WHEN ? THEN ? ELSE color END,
         confirmed_at = CASE WHEN ? THEN COALESCE(confirmed_at, CURRENT_TIMESTAMP) ELSE confirmed_at END
     WHERE user_id = ? AND id = ? AND archived_at IS NULL
@@ -74,6 +80,8 @@ async function updateItem(request, db, userId, itemId) {
   `).bind(
     name?.trim() ?? null,
     category ?? null,
+    garmentType === undefined ? 0 : 1,
+    garmentType?.trim() || null,
     color === undefined ? 0 : 1,
     color?.trim() || null,
     confirm ? 1 : 0,

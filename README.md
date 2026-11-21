@@ -22,6 +22,12 @@ AUTH_SECRET=<random value from openssl rand -base64 32>
 
 Add `http://localhost:3000/api/auth/callback/google` under **Authorized redirect URIs** in the local Google OAuth web client. Use `localhost` in the browser so the origin matches exactly.
 
+## Wardrobe photo extraction
+
+Set `OPENAI_API_KEY` as a server-only Sites runtime secret (or in the ignored `.dev.vars` for local Worker development). The key must have API access to `gpt-6-luna` and Fast mode. The upload page converts WebP photos to PNG before uploading; the Worker isolates the garment and saves the cutout and editable metadata on a private draft. The user must confirm the item to add it to the closet. If extraction fails, review explicitly uses the original photo and does not claim AI success.
+
+`WARDROBE_EXTRACTION_FIXTURES=1` is only for explicit fixture tests/demo images; it is not a substitute for production API access.
+
 ## Production build
 
 ```bash
