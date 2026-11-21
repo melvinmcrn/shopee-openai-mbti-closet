@@ -58,8 +58,9 @@ function selectSlots(table, lookKey, lookId) {
 }
 
 async function readLooks(db, accountId, id) {
+  // The optional photo mode is absent before migration 0109; the mapping treats it as null.
   const { results } = await db.prepare(`
-    SELECT look.id, look.source_option_id, look.use_profile_photo,
+    SELECT look.*,
       CASE WHEN profile.face_photo_file_id IS NULL THEN 0 ELSE 1 END AS has_profile_photo,
       (SELECT json_group_object(preview.selection, preview.file_id) FROM planner_previews AS preview
        WHERE preview.user_id = look.user_id AND preview.option_id = look.source_option_id) AS previews, option.preview_file_id, look.name AS occasion, option.explanation,
