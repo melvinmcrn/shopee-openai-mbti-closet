@@ -4,6 +4,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { readSampleImage } from "../src/app/api/_server/read-sample-image.mjs";
 import { handleApi } from "../src/app/api/_server/handle-api.mjs";
 
 const output = resolve(process.argv[2] ?? "out");
@@ -63,10 +64,20 @@ const image = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/f6kAAAAASUVORK5CYII=",
   "base64",
 );
+const photos = new Map(["blouse", "trousers", "heels", "flats", "dress"].map(id => [id, image]));
 const env = {
+  readSampleImage,
   DB: db,
   BUCKET: {
-    get: async () => ({ body: image, size: image.length, httpMetadata: { contentType: "image/png" } }),
+    get: async id => {
+      const body = photos.get(id);
+      return body && {
+        body, size: body.byteLength, httpMetadata: { contentType: "image/png" },
+        arrayBuffer: () => new Blob([body]).arrayBuffer(),
+      };
+    },
+    put: async (id, body) => { photos.set(id, Buffer.from(body)); },
+    delete: async id => { photos.delete(id); },
   },
   AUTH_SECRET: crypto.randomUUID(),
   GOOGLE_CLIENT_ID: "fixture-google-client",
@@ -87,20 +98,32 @@ for (const name of ["first-session", "returning-session", "rating-session", "oth
 }
 
 // Keep candidate construction, Decisions parsing and ranking in the production code.
-let shoppingRequests = 0;
+let enhancementRequests = 0;
 async function decisionsFixture(url, options) {
+  if (url === "https://api.openai.com/v1/responses") {
+    return Response.json({
+      status: "completed",
+      output: [{ type: "image_generation_call", status: "completed", result: image.toString("base64") }],
+    });
+  }
   assert.equal(url, "https://api.openai.com/v1/decisions");
   const { input, questions } = JSON.parse(options.body);
-  if (questions.length === 1 && questions[0].name === "shopee_accessory") {
-    if (shoppingRequests++ === 0) return new Response(null, { status: 503 });
-    return Response.json({ answers: [{ name: "shopee_accessory", type: "choice", choice: "clutch" }] });
+  if (questions.length === 1 && questions[0].name === "shopee_product") {
+    const { outfit } = input[1].content[0].data;
+    if (outfit.some(item => item.category === "dress")) {
+      return Response.json({ answers: [{ name: "shopee_product", type: "choice", choice: "none" }] });
+    }
+    if (outfit.some(item => item.name === "Walking flats") && enhancementRequests++ === 0) {
+      return new Response(null, { status: 503 });
+    }
+    return Response.json({ answers: [{ name: "shopee_product", type: "choice", choice: questions[0].choices[0].value }] });
   }
   const brief = input.find(({ role }) => role === "user").content[0].data.brief;
   assert.deepEqual(brief.preferences, []);
   return Response.json({
     answers: questions.map((question) => {
       const slots = JSON.parse(question.instructions.match(/\{[^{}]+\}/u)[0]);
-      const unsuitable = slots.shoes === "14" ? 0.8 : slots.dress ? 0.2 : 0.1;
+      const unsuitable = slots.shoes === "13" ? 0.8 : slots.dress ? 0.2 : 0.1;
       return {
         name: question.name,
         type: "choice",

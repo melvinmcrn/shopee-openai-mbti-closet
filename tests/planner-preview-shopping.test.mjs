@@ -66,6 +66,15 @@ async function startPlanner(t, preview, optionSlots = original, shoppingFetch) {
   for (const file of readdirSync(migrations).filter((name) => name.endsWith(".sql") && name !== "0000_stylist.sql").sort()) {
     database.exec(readFileSync(new URL(file, migrations), "utf8"));
   }
+  if (shoppingFetch) {
+    database.exec(`
+      INSERT INTO clothes_image_database (item_id, shop_id, search_group, search_term, name, url, image_url, price, currency)
+      VALUES ('123', '1', 'unisex', 'evening layer', 'Linen jacket', 'https://shopee.co.th/product/1/123',
+        'https://down-th.img.susercontent.com/file/jacket', 350, 'THB');
+      INSERT INTO clothes_listing_details (item_id, search_group, search_term, image_url, ocr_image, is_mall)
+      VALUES ('123', 'unisex', 'evening layer', 'https://down-th.img.susercontent.com/file/jacket', 'jacket.jpg', 0)
+    `);
+  }
   const makeSession = (user = accountId, key = "mock-provider-key") => {
     const env = { readSampleImage, DB: d1Binding(database), OPENAI_API_KEY: key };
     const dependencies = {
@@ -168,14 +177,12 @@ test("an image provider failure still allows the refined outfit to be saved", as
 
 function decision(choice, extra = {}) {
   return Response.json({
-    answers: [{ name: "shopee_accessory", type: "choice", choice, ...extra }],
+    answers: [{ name: "shopee_product", type: "choice", choice, ...extra }],
   });
 }
 
-test("Decisions selects a local Shopee search from the final outfit and the owner can hide it", async (t) => {
-  // The old occasion rule selected earrings. A different choice proves the model
-  // controls the selection without controlling the rendered title or URL.
-  const shoppingFetch = t.mock.fn(async () => decision("clutch", {
+test("Decisions selects a Shopee catalog product from the final outfit and the owner can hide it", async (t) => {
+  const shoppingFetch = t.mock.fn(async () => decision("item_123", {
     title: "Invented product", url: "https://example.invalid/listing/123", price: 99,
   }));
   const { dispatch, makeSession, optionId } = await startPlanner(t, undefined, original, shoppingFetch);
@@ -199,12 +206,14 @@ test("Decisions selects a local Shopee search from the final outfit and the owne
   ]);
   assert.equal(payload.questions.length, 1);
   assert.equal(payload.questions[0].type, "choice");
-  assert.ok(payload.questions[0].choices.some(({ value }) => value === "clutch"));
+  assert.ok(payload.questions[0].choices.some(({ value }) => value === "item_123"));
   const [suggestion] = initial;
   assert.deepEqual(initial, [{
     id: suggestion.id,
-    title: "Black clutch bag",
-    url: "https://shopee.sg/search?keyword=black+clutch+bag",
+    title: "Linen jacket",
+    url: "https://shopee.co.th/product/1/123",
+    imageUrl: "https://down-th.img.susercontent.com/file/jacket",
+    price: 350, currency: "THB",
     sponsored: false,
   }]);
 
@@ -217,8 +226,8 @@ test("Decisions selects a local Shopee search from the final outfit and the owne
   assert.equal(shoppingFetch.mock.callCount(), 1);
 });
 
-test("existing suggestions and a saved accessory do not send a Decisions request", async (t) => {
-  const shoppingFetch = t.mock.fn();
+test("existing suggestions are reused and accessorized looks can get a clothing recommendation", async (t) => {
+  const shoppingFetch = t.mock.fn(async () => decision("item_123"));
   const { dispatch, optionId, database } = await startPlanner(t, undefined, original, shoppingFetch);
   const { id: lookId } = await dispatch("save", { optionId, slots: refined });
   database.prepare(`
@@ -231,8 +240,8 @@ test("existing suggestions and a saved accessory do not send a Decisions request
   const { id: accessorizedId } = await dispatch("save", {
     optionId, slots: { ...refined, accessory: necklace.id },
   });
-  assert.deepEqual(await dispatch("shopping", { lookId: accessorizedId }), []);
-  assert.equal(shoppingFetch.mock.callCount(), 0);
+  assert.equal((await dispatch("shopping", { lookId: accessorizedId }))[0].title, "Linen jacket");
+  assert.equal(shoppingFetch.mock.callCount(), 1);
 });
 
 test("an unavailable, refused, or invalid decision leaves no fallback row and can be retried", async (t) => {
@@ -240,9 +249,9 @@ test("an unavailable, refused, or invalid decision leaves no fallback row and ca
     new Response("provider unavailable", { status: 503 }),
     new Response("invalid JSON"),
     decision("https://example.invalid/injected"),
-    decision("studs", { name: "wrong_question" }),
+    decision("item_123", { name: "wrong_question" }),
     decision(undefined, { type: "refusal" }),
-    decision("studs"),
+    decision("item_123"),
   ];
   const shoppingFetch = t.mock.fn(async () => responses.shift());
   const { dispatch, makeSession, optionId, database } = await startPlanner(t, undefined, original, shoppingFetch);
@@ -255,7 +264,7 @@ test("an unavailable, refused, or invalid decision leaves no fallback row and ca
     assert.equal(database.prepare("SELECT count(*) AS count FROM shopping_suggestions").get().count, 0);
   }
   const [suggestion] = await dispatch("shopping", { lookId });
-  assert.equal(suggestion.title, "Simple stud earrings");
+  assert.equal(suggestion.title, "Linen jacket");
   assert.equal(shoppingFetch.mock.callCount(), 6);
 });
 
@@ -267,4 +276,48 @@ test("Decisions can explicitly opt out for a single-item outfit without creating
   assert.deepEqual(await dispatch("shopping", { lookId }), []);
   assert.equal(database.prepare("SELECT count(*) AS count FROM shopping_suggestions").get().count, 0);
   assert.equal(shoppingFetch.mock.callCount(), 1);
+});
+
+test("a catalog item replaces a generic search and stays unique across concurrent requests", async (t) => {
+  const shoppingFetch = async () => decision("item_123");
+  const { dispatch, optionId, database } = await startPlanner(t, undefined, original, shoppingFetch);
+  const { id: lookId } = await dispatch("save", { optionId, slots: refined });
+  database.prepare(`
+    INSERT INTO shopping_suggestions (saved_look_id, product_name, merchant, product_url)
+    VALUES (?, 'Black clutch bag', 'Shopee', 'https://shopee.sg/search?keyword=black+clutch+bag')
+  `).run(Number(lookId));
+  const [first, second] = await Promise.all([dispatch("shopping", { lookId }), dispatch("shopping", { lookId })]);
+  assert.equal(first.length, 1);
+  assert.equal(first[0].title, "Linen jacket");
+  assert.deepEqual(first, second);
+});
+
+test("an empty catalog or an exact match in the owner's closet skips the provider", async (t) => {
+  const shoppingFetch = t.mock.fn();
+  const { dispatch, optionId, database } = await startPlanner(t, undefined, original, shoppingFetch);
+  const { id: lookId } = await dispatch("save", { optionId, slots: refined });
+  database.exec("DELETE FROM clothes_image_database WHERE item_id <> '123'");
+  database.exec("UPDATE wardrobe_items SET name = 'LINEN JACKET' WHERE id = 12");
+  assert.deepEqual(await dispatch("shopping", { lookId }), []);
+  database.exec("DELETE FROM clothes_image_database");
+  assert.deepEqual(await dispatch("shopping", { lookId }), []);
+  assert.equal(shoppingFetch.mock.callCount(), 0);
+});
+
+test("planning evaluates enhancements before saving, remembers complete looks and reassesses swaps", async (t) => {
+  const shoppingFetch = t.mock.fn(async (_url, request) => {
+    const { outfit } = JSON.parse(request.body).input[1].content[0].data;
+    return decision(outfit.some(item => item.name === "Walking flats") ? "item_123" : "none");
+  });
+  const { dispatch, makeSession, optionId } = await startPlanner(t, undefined, original, shoppingFetch);
+  await assert.rejects(makeSession(2)("enhancement", { optionId, slots: original }), { status: 404 });
+  assert.equal(await dispatch("enhancement", { optionId, slots: original }), null);
+  const complete = await dispatch("save", { optionId, slots: original });
+  assert.deepEqual(await dispatch("shopping", { lookId: complete.id }), []);
+  const enhanced = await dispatch("enhancement", { optionId, slots: refined });
+  assert.equal(enhanced.title, "Linen jacket");
+  assert.equal(enhanced.url, "https://shopee.co.th/product/1/123");
+  const saved = await dispatch("save", { optionId, slots: refined });
+  assert.equal((await dispatch("shopping", { lookId: saved.id }))[0].url, enhanced.url);
+  assert.equal(shoppingFetch.mock.callCount(), 2);
 });

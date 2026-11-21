@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { EnhancementProduct } from "./enhancement";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, imageUrl, type Garment, type SavedLook } from "./shared";
 
@@ -12,7 +13,15 @@ type DetailProps = {
 
 type DetailResult = { look: SavedLook } | { error: string };
 type Wear = { id: string; date: string; rating: number | null; note: string | null };
-type Suggestion = { id: string; title: string; url: string; sponsored: boolean };
+type Suggestion = {
+  id: string;
+  title: string;
+  url: string;
+  sponsored: boolean;
+  imageUrl?: string;
+  price?: number;
+  currency?: string;
+};
 type ItemsResult<T> = { items: T[] } | { error: string };
 
 const slotOrder = ["other", "top", "bottom", "dress", "shoes", "outerwear", "accessory"];
@@ -212,7 +221,9 @@ function ShoppingSuggestion({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const link = shoppingHref(item.url);
-  const isShopeeSearch = link?.origin === "https://shopee.sg" && link.pathname === "/search";
+  const product = link && item.imageUrl && item.price != null && item.currency
+    ? { ...item, url: link.href, imageUrl: item.imageUrl, price: item.price, currency: item.currency }
+    : null;
 
   async function hide() {
     setPending(true);
@@ -230,20 +241,26 @@ function ShoppingSuggestion({
   return (
     <li className="space-y-2 py-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          {item.sponsored && <p className="text-xs font-semibold text-supporting">Sponsored</p>}
-          {link ? (
-            <a
-              className="wrap-break-word text-sm font-semibold text-secondary underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary"
-              href={link.href}
-              target="_blank"
-              rel={item.sponsored ? "sponsored noopener noreferrer" : "noopener noreferrer"}
-            >
-              {isShopeeSearch ? `Search Shopee for ${item.title.toLowerCase()}` : item.title}
-              <span className="sr-only"> (opens in a new tab)</span>
-            </a>
+        <div className="min-w-0 flex-1 basis-40 space-y-1">
+          {product ? (
+            <EnhancementProduct product={product} sponsored={item.sponsored} />
           ) : (
-            <p className="wrap-break-word text-sm font-semibold">{item.title}</p>
+            <>
+              {item.sponsored && <p className="text-xs font-semibold text-supporting">Sponsored</p>}
+              {link ? (
+                <a
+                  className="wrap-break-word text-sm font-semibold text-secondary underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary"
+                  href={link.href}
+                  target="_blank"
+                  rel={item.sponsored ? "sponsored noopener noreferrer" : "noopener noreferrer"}
+                >
+                  {item.title}
+                  <span className="sr-only"> (opens in a new tab)</span>
+                </a>
+              ) : (
+                <p className="wrap-break-word text-sm font-semibold">{item.title}</p>
+              )}
+            </>
           )}
         </div>
         <button
@@ -268,14 +285,14 @@ function ShoppingSuggestions({ lookId }: { lookId: string }) {
     ? result.items.filter((item) => !hidden.includes(item.id))
     : undefined;
 
+  if (!result || suggestions?.length === 0) return null;
   return (
     <section aria-labelledby="saved-shopping-title" className="space-y-4 rounded-2xl border border-divider bg-surface p-4 sm:p-6">
-      <h2 id="saved-shopping-title" className="text-lg font-semibold">Shopping suggestions</h2>
-      {!result && <p role="status" className="text-sm text-supporting">Loading shopping suggestions…</p>}
+      <h2 id="saved-shopping-title" className="text-lg font-semibold">Shop this look</h2>
       {result && "error" in result && (
         <SectionError error={result.error} retry={retry} label="Retry shopping suggestions" />
       )}
-      {suggestions && (suggestions.length ? (
+      {suggestions && (
         <ul className="divide-y divide-divider">
           {suggestions.map((item) => (
             <ShoppingSuggestion
@@ -286,9 +303,7 @@ function ShoppingSuggestions({ lookId }: { lookId: string }) {
             />
           ))}
         </ul>
-      ) : (
-        <p role="status" className="text-sm text-supporting">No shopping suggestions for this look.</p>
-      ))}
+      )}
     </section>
   );
 }

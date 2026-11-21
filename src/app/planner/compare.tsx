@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { LookEnhancement } from "./enhancement";
 import type { LoadTryOn } from "./try-on";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
@@ -88,6 +89,7 @@ function LookCard({
             <p className="mt-2 text-supporting">{look.explanation}</p>
           </details>
         )}
+        <LookEnhancement optionId={look.id} slots={look.slots} />
         <div className="flex-1" />
         {!look.profileRef && <button
           type="button"
