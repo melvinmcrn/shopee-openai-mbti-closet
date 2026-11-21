@@ -79,6 +79,7 @@ test("Postgres supports owner-scoped profiles, wardrobe items, and the planner",
           arrayBuffer: () => file.blob.arrayBuffer(), httpMetadata: file.httpMetadata,
         } : null;
       },
+      async head(key) { return objects.has(key) ? { size: objects.get(key).blob.size } : null; },
       async delete(key) { objects.delete(key); },
     },
   };
@@ -231,7 +232,10 @@ test("Postgres supports owner-scoped profiles, wardrobe items, and the planner",
 
     await t.test("a saved try-on retains the exact file and product snapshots after cache eviction", async () => {
       const products = await dispatchPlanner(env, owner.id, "enhancements", { optionId: occasionLook.id });
-      const files = previewFiles(env, owner.id, occasionLook.id, occasionSave.slots, false, products, null);
+      const profileRef = await writePrivateFile(env, owner, original, "image/png");
+      await DB.prepare(`INSERT INTO profiles (user_id,face_photo_file_id) VALUES (?,?)
+        ON CONFLICT(user_id) DO UPDATE SET face_photo_file_id=excluded.face_photo_file_id`).bind(owner.id, profileRef).run();
+      const files = previewFiles(env, owner.id, occasionLook.id, occasionSave.slots, true, products, profileRef);
       const jpeg = new Blob([Uint8Array.of(255, 216, 255, 224)], { type: "image/jpeg" });
       const previewRef = await files.storeImage(jpeg);
       const catalogItemIds = products.map(item => item.id);

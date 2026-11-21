@@ -94,6 +94,10 @@ export default function ProfileReadyPage() {
   const [attempt, setAttempt] = useState(0);
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState(false);
+  const [photoMissing, setPhotoMissing] = useState(false);
+  const photoRequired = setup.status === "loaded" && (
+    photoMissing || (!setup.data.profile.setupCompletedAt && !setup.data.profile.facePhotoUrl)
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -125,6 +129,7 @@ export default function ProfileReadyPage() {
   }, [attempt]);
 
   async function openPlanner() {
+    if (finishing || photoRequired) return;
     setFinishing(true);
     setFinishError(false);
     try {
@@ -133,6 +138,14 @@ export default function ProfileReadyPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ complete: true }),
       });
+      if (response.status === 409) {
+        const problem = await response.json();
+        if (problem.code === "profile_photo_required") {
+          setPhotoMissing(true);
+          setFinishing(false);
+          return;
+        }
+      }
       if (!response.ok) throw new Error("Unable to complete setup");
       const profile: Profile = await response.json();
       if (!profile.setupCompletedAt) throw new Error("Setup completion was not saved");
@@ -167,10 +180,16 @@ export default function ProfileReadyPage() {
         <>
           <SetupSummary {...setup.data} />
           <div className="flex flex-col items-start gap-2">
+            {photoRequired && (
+              <p className="text-sm" role="status">
+                Add a profile photo to finish setup.{" "}
+                <Link href="/profile/details" className={linkClass}>Upload or take a photo</Link>
+              </p>
+            )}
             <button
               type="button"
               onClick={openPlanner}
-              disabled={finishing}
+              disabled={finishing || photoRequired}
               className="min-h-11 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-on-primary hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-secondary disabled:opacity-60"
             >
               {finishing ? "Opening planner…" : "Open planner"}

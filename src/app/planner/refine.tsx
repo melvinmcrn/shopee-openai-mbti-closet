@@ -77,7 +77,6 @@ export function Refine({ look, garments, onSaved, onStale, onBack }: RefineProps
           <Image src={imageUrl(look.imageRef)} alt="Full-body try-on of your selected look"
             width={512} height={768} unoptimized loading="eager"
             className="aspect-[2/3] w-full rounded-2xl bg-selected object-contain" />
-          {look.useProfilePhoto === false && !look.slots.other && <figcaption className="mt-2 text-xs text-supporting">Studio model</figcaption>}
         </figure>
         <div className="min-w-0 space-y-5">
           <WardrobePhotos garments={visibleSlots.flatMap(slot => garmentsById.get(renderedSlots[slot]) ?? [])} />

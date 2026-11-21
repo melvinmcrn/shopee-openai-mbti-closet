@@ -1,5 +1,6 @@
 import Image from "next/image";
-import { useState } from "react";
+import Link from "next/link";
+import { useRef, useState } from "react";
 import { imageUrl, type SavedLook } from "./shared";
 import { requestTryOn } from "./try-on";
 
@@ -17,8 +18,11 @@ function SavedPhotoForSelection({ look, catalogItemIds }: SavedPhotoProps) {
   const [error, setError] = useState("");
   const [checked, setChecked] = useState(false);
   const [reload, setReload] = useState(0);
+  const pending = useRef(false);
 
   async function generate() {
+    if (pending.current) return;
+    pending.current = true;
     setLoading(true);
     setError("");
     try {
@@ -28,6 +32,7 @@ function SavedPhotoForSelection({ look, catalogItemIds }: SavedPhotoProps) {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The try-on could not be created.");
     } finally {
+      pending.current = false;
       setLoading(false);
     }
   }
@@ -46,7 +51,14 @@ function SavedPhotoForSelection({ look, catalogItemIds }: SavedPhotoProps) {
           onClick={() => { setReload(value => value + 1); setError(""); }}>Reload photo</button>
       ) : loading ? <p role="status">Creating your try-on…</p> : (!checked || error) && (
         <button type="button" className="min-h-11 rounded-full border border-divider bg-surface px-4 font-semibold"
-          onClick={generate}>{error ? "Retry try-on" : "Create try-on photo"}</button>
+          aria-describedby={`saved-photo-use-${look.id}`}
+          onClick={generate}>{error ? "Retry try-on" : "Create try-on with my profile photo"}</button>
+      )}
+      {!loading && (
+        <p id={`saved-photo-use-${look.id}`} className="text-supporting">
+          OpenAI uses your photo to create the try-on.{" "}
+          <Link href="/profile/settings" className="font-semibold underline">Add or update your profile photo</Link>
+        </p>
       )}
     </div>
   );

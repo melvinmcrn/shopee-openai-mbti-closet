@@ -1,7 +1,8 @@
+import { isOwnedPrivateFileId } from "../private-files.mjs";
 import { approvedPreviewProducts, enhancementSelection, readOptionProducts, readSavedCatalog } from "./catalog-product.mjs";
 import { getGarments } from "./garments.mjs";
 import { combineBaseCoverage, effectiveWardrobeSlots } from "./wardrobe-completion.mjs";
-import { currentInventoryVersion, previewSelection } from "./preview-files.mjs";
+import { currentInventoryVersion, previewSelection, profilePhotoRef } from "./preview-files.mjs";
 
 const slotNames = new Set(["top", "bottom", "dress", "shoes", "outerwear", "accessory", "other"]);
 
@@ -63,7 +64,7 @@ function selectSlots(table, lookKey, lookId) {
 async function readLooks(db, accountId, id, knownCoverage) {
   // The optional photo mode is absent before migration 0109; the mapping treats it as null.
   const { results } = await db.prepare(`
-    SELECT look.*, profile.face_photo_file_id AS profile_ref,
+    SELECT look.*, photo.file_id AS profile_ref,
       (SELECT json_group_object(preview.selection, preview.file_id) FROM planner_previews AS preview
        WHERE preview.user_id = look.user_id AND preview.option_id = look.source_option_id) AS previews, look.name AS occasion, option.explanation,
       strftime('%Y-%m-%dT%H:%M:%fZ', look.saved_at) AS created_at,
@@ -71,6 +72,8 @@ async function readLooks(db, accountId, id, knownCoverage) {
       ${selectSlots("outfit_option_items", "option_id", "look.source_option_id")} AS original_slots
     FROM saved_looks AS look
     LEFT JOIN profiles profile ON profile.user_id = look.user_id
+    LEFT JOIN private_files photo ON photo.file_id = profile.face_photo_file_id
+      AND photo.user_id = look.user_id AND photo.state = 'ready'
     JOIN outfit_options AS option ON option.user_id = look.user_id AND option.id = look.source_option_id
     JOIN generation_runs AS run ON run.user_id = look.user_id AND run.id = option.run_id
     JOIN outfit_requests AS request ON request.user_id = look.user_id AND request.id = run.request_id
@@ -80,7 +83,7 @@ async function readLooks(db, accountId, id, knownCoverage) {
 
   if (!results.length) return [];
   const selections = results.map(row => JSON.parse(row.slots));
-  const usesProfile = row => row.use_profile_photo == null ? Boolean(row.profile_ref) : row.use_profile_photo === 1;
+  const usesProfile = row => isOwnedPrivateFileId({ id: accountId }, row.profile_ref);
   const photoRefs = new Set();
   for (const [index, row] of results.entries()) {
     if (usesProfile(row) && row.profile_ref) photoRefs.add(row.profile_ref);
@@ -119,25 +122,16 @@ async function readLooks(db, accountId, id, knownCoverage) {
     const frozen = pinned || occasion.has(String(row.id));
     const coverage = coverageByLook[row.id];
     const effective = frozen ? slots : effectiveWardrobeSlots(slots, wardrobe, coverage);
-    const renderMode = pinned ? personal && Boolean(row.profile_ref) : personal;
     const evidence = pinned ? JSON.parse(row.pinned_preview_selection) : null;
     const retainProfileClothes = !evidence || evidence[2] === row.profile_ref;
-    const identityOnly = Boolean(renderMode && row.profile_ref && !retainProfileClothes);
-    const selection = previewSelection(slots, renderMode, enhancements, row.profile_ref, effective, currentInventoryVersion, identityOnly);
-    let previewRef = previews[selection] ?? null;
-    if (pinned) {
+    const identityOnly = personal && !retainProfileClothes;
+    const selection = previewSelection(slots, personal, enhancements, row.profile_ref, effective, currentInventoryVersion, identityOnly);
+    let previewRef = personal ? previews[selection] ?? null : null;
+    if (pinned && personal && evidence[0] === currentInventoryVersion && evidence[2] === row.profile_ref) {
       const [version, , originalProfile, requested] = evidence;
       const explicit = Object.fromEntries(requested.map(([slot]) => [slot, slots[slot]]));
       if (previewSelection(explicit, personal, enhancements, originalProfile, slots, version) === row.pinned_preview_selection) {
         previewRef = pinned;
-      }
-    } else if (!previewRef) {
-      previewRef = previews[previewSelection(slots, personal, enhancements, row.profile_ref, effective, "photo-v4")] ?? null;
-      if (!previewRef && !Object.values(coverage ?? {}).some(Boolean) && Object.keys(effective).length === Object.keys(slots).length) {
-        for (const version of ["inventory-v4", "inventory-v3"]) {
-          const legacy = previewSelection(slots, personal, enhancements, row.profile_ref, slots, version);
-          if (previews[legacy]) { previewRef = previews[legacy]; break; }
-        }
       }
     }
     return {
@@ -178,7 +172,7 @@ async function verifyPreview(db, accountId, option, slots, garments, rendered) {
   try { recorded = JSON.parse(row.selection); } catch { throw stalePreview(); }
   if (!Array.isArray(recorded)) throw stalePreview();
   const [version, personal, profileRef, , effectiveRefs, listings] = recorded;
-  if (version !== currentInventoryVersion || typeof personal !== "boolean" || (personal && !profileRef) ||
+  if (version !== currentInventoryVersion || personal !== true || !profileRef || profileRef !== await profilePhotoRef(db, accountId) ||
       !Array.isArray(effectiveRefs) || !Array.isArray(listings)) throw stalePreview();
   let effective;
   try {
@@ -195,10 +189,10 @@ async function verifyPreview(db, accountId, option, slots, garments, rendered) {
   if (products.some(product => !product) || row.selection !== previewSelection(slots, personal, products, profileRef, effective)) {
     throw stalePreview();
   }
-  return { file: previewRef, selection: row.selection, personal, products, effective };
+  return { file: previewRef, selection: row.selection, products, effective };
 }
 
-export async function saveLook(db, accountId, sourceOption, slots, garments, useProfilePhoto = false, rendered) {
+export async function saveLook(db, accountId, sourceOption, slots, garments, rendered) {
   const optionId = numericId(sourceOption?.id);
   if (optionId === null) throw new TypeError("A saved look must have a generated option");
 
@@ -221,11 +215,11 @@ export async function saveLook(db, accountId, sourceOption, slots, garments, use
   }
   const writes = [
     db.prepare(`
-      INSERT INTO saved_looks (id, user_id, source_option_id, name, saved_at, use_profile_photo${pin ? ", pinned_preview_file_id, pinned_preview_selection" : ""})
+      INSERT INTO saved_looks (id, user_id, source_option_id, name, saved_at${pin ? ", pinned_preview_file_id, pinned_preview_selection" : ""})
       VALUES ((SELECT id FROM next_saved_look_id), ?1, ?2,
-        (SELECT title FROM outfit_options WHERE user_id = ?1 AND id = ?2), ?3, ?4${pin ? ", ?5, ?6" : ""})
+        (SELECT title FROM outfit_options WHERE user_id = ?1 AND id = ?2), ?3${pin ? ", ?4, ?5" : ""})
       RETURNING id
-    `).bind(accountId, optionId, new Date().toISOString(), (pin?.personal ?? useProfilePhoto) ? 1 : 0,
+    `).bind(accountId, optionId, new Date().toISOString(),
       ...(pin ? [pin.file, pin.selection] : [])),
   ];
   if (pin?.products.length) {

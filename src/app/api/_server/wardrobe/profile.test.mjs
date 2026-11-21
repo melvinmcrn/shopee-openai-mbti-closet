@@ -6,7 +6,8 @@ import { servePrivateFile } from "../private-files.mjs";
 import { profile } from "./profile.mjs";
 
 const testOrigin = "https://wardrobe.example";
-const jpeg = Uint8Array.of(0xff, 0xd8, 0xff, 0xd9);
+const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNwal7/HwAE8wJ0QEPG5gAAAABJRU5ErkJggg==", "base64");
+const truncatedJpeg = Uint8Array.of(0xff, 0xd8, 0xff, 0xd9);
 
 function fixture() {
   const sqlite = new DatabaseSync(":memory:");
@@ -30,7 +31,9 @@ function fixture() {
               if (DB.failAttachment && sql.includes("INSERT INTO profiles (user_id, face_photo_file_id)")) {
                 throw new Error("Profile update failed.");
               }
-              return { meta: statement.run(...args) };
+              return statement.columns().length > 0
+                ? { results: statement.all(...args) }
+                : { meta: statement.run(...args) };
             },
           };
         },
@@ -55,7 +58,7 @@ function fixture() {
     failDelete: false,
     failPut: false,
     async put(key, body, { httpMetadata }) {
-      files.set(key, { body, httpMetadata, size: body.byteLength });
+      files.set(key, { body, httpMetadata, size: body.byteLength, arrayBuffer: () => new Blob([body]).arrayBuffer() });
       if (this.failPut) throw new Error("Block acknowledgement failed.");
     },
     async get(key) {
@@ -89,31 +92,64 @@ async function update(api, patch, userId) {
   }, userId);
 }
 
-function upload(api, bytes = jpeg) {
+function upload(api, bytes = png, userId = 1) {
   const form = new FormData();
-  form.set("image", new Blob([bytes], { type: "image/jpeg" }), "face.jpg");
-  return api.send("/api/profile/photo", { method: "PUT", body: form });
+  form.set("image", new Blob([bytes], { type: "image/png" }), "face.png");
+  return api.send("/api/profile/photo", { method: "PUT", body: form }, userId);
 }
 
-test("profile supports partial updates, optional completion, and private accounts", async (t) => {
+test("new setup requires its own saved photo and can complete with optional details omitted", async (t) => {
   const api = fixture();
   t.after(api.close);
 
   const initial = { heightCm: null, weightKg: null, styles: [], facePhotoUrl: null, setupCompletedAt: null };
   assert.deepEqual(await (await api.send("/api/profile")).json(), initial);
+  assert.equal((await upload(api, png, 2)).status, 200);
+  assert.equal((await upload(api, truncatedJpeg)).status, 415);
+  assert.equal((await upload(api, png.subarray(0, -12))).status, 415);
+  const incomplete = await update(api, { complete: true, heightCm: 180, styles: ["formal"] });
+  assert.equal(incomplete.status, 409);
+  assert.equal((await incomplete.json()).code, "profile_photo_required");
+  assert.deepEqual(await (await api.send("/api/profile")).json(), initial);
+
+  const { facePhotoUrl } = await (await upload(api)).json();
+  assert.ok(facePhotoUrl);
+  const ref = decodeURIComponent(facePhotoUrl.slice("/api/files/".length));
+  const validPhoto = api.files.get(ref);
+  api.files.set(ref, { ...validPhoto, arrayBuffer: () => new Blob([truncatedJpeg]).arrayBuffer() });
+  assert.equal((await update(api, { complete: true })).status, 409);
+  api.files.set(ref, validPhoto);
+  assert.equal((await update(api, { facePhotoUrl: null, complete: true })).status, 400);
   const response = await update(api, { complete: true });
   assert.equal(response.status, 200);
   const { setupCompletedAt } = await response.json();
   assert.ok(Number.isFinite(Date.parse(setupCompletedAt)));
+  const completed = { ...initial, facePhotoUrl, setupCompletedAt };
 
   const updated = await update(api, { heightCm: 160.5, weightKg: 55, styles: [" casual ", "minimal", "casual"] });
-  assert.deepEqual(await updated.json(), { ...initial, setupCompletedAt, heightCm: 160.5, weightKg: 55, styles: ["casual", "minimal"] });
+  assert.deepEqual(await updated.json(), { ...completed, heightCm: 160.5, weightKg: 55, styles: ["casual", "minimal"] });
   assert.equal((await update(api, { heightCm: 0, weightKg: null })).status, 400);
   assert.equal((await update(api, { facePhotoUrl: "https://example.com/fake" })).status, 400);
   assert.equal((await update(api, { styles: [42] })).status, 400);
-  const cleared = await update(api, { weightKg: null, styles: null, complete: true });
-  assert.deepEqual(await cleared.json(), { ...initial, setupCompletedAt, heightCm: 160.5 });
-  assert.deepEqual(await (await api.send("/api/profile", {}, 2)).json(), initial);
+  const cleared = await update(api, { weightKg: null, styles: ["moody"], complete: true });
+  assert.deepEqual(await cleared.json(), { ...completed, styles: ["moody"], heightCm: 160.5 });
+  const other = await (await api.send("/api/profile", {}, 2)).json();
+  assert.notEqual(other.facePhotoUrl, facePhotoUrl);
+  assert.deepEqual(other, { ...initial, facePhotoUrl: other.facePhotoUrl });
+});
+
+test("revoking a photo leaves incomplete setup blocked but does not lock out completed accounts", async (t) => {
+  const api = fixture();
+  t.after(api.close);
+  assert.equal((await upload(api)).status, 200);
+  assert.equal((await api.send("/api/profile/photo", { method: "DELETE" })).status, 200);
+  assert.equal((await update(api, { complete: true })).status, 409);
+
+  const legacyDate = "2026-11-21T00:00:00.000Z";
+  await api.env.DB.prepare("INSERT INTO profiles (user_id, setup_completed_at) VALUES (?, ?)").bind(2, legacyDate).run();
+  const returning = await update(api, { complete: true }, 2);
+  assert.equal(returning.status, 200);
+  assert.equal((await returning.json()).setupCompletedAt, legacyDate);
 });
 
 test("photo uploads replace old bytes and revocation is immediate even when cleanup needs a retry", async (t) => {

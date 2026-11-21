@@ -51,7 +51,6 @@ function LookCard({ look, index, loadTryOn, attempt, onStatus, onChoose }: {
   }, [look, loadTryOn, attempt, onStatus]);
   if (!completed) return null;
   const occasion = look.kind === "occasion";
-  const studio = completed.useProfilePhoto === false && !look.slots.other;
   return (
     <article hidden={!visible} className="min-w-0 rounded-2xl border border-divider bg-surface p-2 sm:p-3">
       <h2 className="mb-2 px-1 font-heading text-lg text-text sm:text-2xl">
@@ -59,7 +58,6 @@ function LookCard({ look, index, loadTryOn, attempt, onStatus, onChoose }: {
       </h2>
       <button
         type="button" aria-label={occasion ? "Choose occasion look" : `Choose look ${index + 1}`}
-        aria-describedby={studio ? `model-${look.id}` : undefined}
         disabled={!visible} onClick={() => onChoose(completed)}
         className="group flex w-full flex-col items-stretch gap-3 rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary"
       >
@@ -67,8 +65,6 @@ function LookCard({ look, index, loadTryOn, attempt, onStatus, onChoose }: {
           width={512} height={768} loading="eager" unoptimized className="aspect-[2/3] w-full rounded-xl bg-selected object-contain"
           onLoad={() => { setVisible(true); onStatus(look.id, { attempt, status: "ready" }); }}
           onError={() => { setVisible(false); onStatus(look.id, { attempt, status: "failed" }); }} />
-        {studio &&
-          <span id={`model-${look.id}`} className="text-xs text-supporting">Studio model</span>}
         <span className="flex min-h-11 items-center justify-center rounded-full bg-primary px-4 py-2 text-sm font-semibold text-on-primary transition group-hover:bg-primary-hover">
           Choose this look
         </span>
@@ -164,6 +160,7 @@ function CompareBrief({ briefId, comparison, notice, onComparison, garments, onC
         {!generating && !pending && failedPhotos.length > 0 && (
           <>
             <p>{ready ? "Some outfit photos couldn’t be completed." : "No completed outfit photos are available for this brief."}</p>
+            {failureMessages.some(message => message?.includes("profile photo")) && <Link className="underline" href="/profile/settings">Add or update your profile photo</Link>}
             {failureMessages.map(message => <p key={message}>{message}</p>)}
           </>
         )}
