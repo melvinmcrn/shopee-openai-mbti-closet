@@ -5,6 +5,7 @@ Optionally pass the path to the static export (defaults to out).
 """
 
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -59,6 +60,8 @@ def open_saved(page, base):
 
 def run_flow(browser, device, base):
     context, page = mobile_session(browser, device, base, "first-session")
+    product_photo = Path(__file__).resolve().parents[1] / "Shopee Database/clothes_image_database/b6326a099e743eebc194.jpg"
+    page.route("https://down-th.img.susercontent.com/file/**", lambda route: route.fulfill(path=product_photo))
     page.goto(f"{base}/planner/")
     expect_heading(page, "Outfit planner")
     expect(page.get_by_text("Tops", exact=True).locator("..").locator("dd")).to_have_text("1")
@@ -81,6 +84,11 @@ def run_flow(browser, device, base):
     expect(page.get_by_role("article")).to_have_count(2)
     expect(page.get_by_role("article").nth(0)).to_contain_text("Silk blouse")
     expect(page.get_by_role("article").nth(1)).to_contain_text("Column dress")
+    expect(page.get_by_role("article").nth(0).get_by_text("Optional enhancement")).to_be_visible()
+    expect(page.get_by_role("article").nth(0).get_by_role("link", name="Buy on Shopee")).to_have_attribute(
+        "href", re.compile(r"^https://shopee\.co\.th/")
+    )
+    expect(page.get_by_role("article").nth(1).get_by_text("Optional enhancement")).to_have_count(0)
     page.get_by_role("button", name="Choose look 1").tap()
     expect_heading(page, "Refine your outfit")
     shoes = page.get_by_role("combobox", name="Shoes")
@@ -89,25 +97,26 @@ def run_flow(browser, device, base):
     expect(shoes).to_have_value("14")
     expect(page.get_by_text("Changed", exact=True)).to_be_visible()
     expect(page.get_by_text("Leather heels", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Retry enhancement check").tap()
+    purchase = page.get_by_role("link", name="Buy on Shopee")
+    expect(purchase).to_be_visible()
+    refined_url = purchase.evaluate("(link) => link.href")
     page.get_by_role("button", name="Save outfit").tap()
     expect_heading(page, OCCASION)
     expect(page.get_by_text("Walking flats", exact=True)).to_be_visible()
-    expect(page.get_by_role("alert").filter(
-        has_text="Shopping suggestions are temporarily unavailable."
-    )).to_be_visible()
-    page.get_by_role("button", name="Retry shopping suggestions").tap()
-    expect(page.get_by_role("link", name="Search Shopee for black clutch bag")).to_have_attribute(
-        "href", "https://shopee.sg/search?keyword=black+clutch+bag"
-    )
-    page.get_by_role("button", name="Hide Black clutch bag").tap()
-    expect(page.get_by_text("No shopping suggestions for this look.")).to_be_visible()
+    shopping = page.get_by_role("region", name="Shop this look")
+    expect(shopping.get_by_role("link", name="Buy on Shopee")).to_have_js_property("href", refined_url)
+    expect(shopping.locator("img")).to_be_visible()
+    expect(shopping.get_by_text(re.compile(r"THB"))).to_be_visible()
+    shopping.get_by_role("button", name=re.compile("^Hide ")).tap()
+    expect(page.get_by_role("region", name="Shop this look")).to_have_count(0)
     saved_url = page.url
     context.close()
 
     context, page = mobile_session(browser, device, base, "returning-session")
     open_saved(page, base)
     assert page.url == saved_url
-    expect(page.get_by_text("No shopping suggestions for this look.")).to_be_visible()
+    expect(page.get_by_role("region", name="Shop this look")).to_have_count(0)
     expect(page.get_by_text("No wears logged yet.")).to_be_visible()
     page.get_by_label("Date worn").fill(WEAR_DATE)
     page.get_by_role("button", name="Log wear").tap()

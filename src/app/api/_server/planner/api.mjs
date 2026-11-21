@@ -1,7 +1,7 @@
 import { saveBrief, getBrief } from "./brief.mjs";
 import { readOption, generateOptions } from "./options.mjs";
 import { wearAction } from "./wear.mjs";
-import { shoppingAction } from "./shopping.mjs";
+import { evaluateEnhancement, shoppingAction } from "./shopping.mjs";
 import { generatePreview } from "./preview.mjs";
 import { previewFiles } from "./preview-files.mjs";
 import { saveLook, listLooks, getLook, snapshotSlots } from "./saved.mjs";
@@ -48,7 +48,15 @@ export async function dispatchPlanner(env, accountId, action, input = {}, depend
     }
     case "wearList": case "wearAdd": case "wearGet": case "wearUpdate":
       return wearAction(db, accountId, action, input);
-    case "shopping": case "hide": return shoppingAction(env, accountId, action, input, dependencies.shoppingFetch);
+    case "enhancement": {
+      const source = await option(db, accountId, input.optionId);
+      if (!Object.keys(source.slots).length) return null;
+      const garments = await wardrobe();
+      const slots = snapshotSlots(input.slots ?? source.slots, garments);
+      return evaluateEnhancement(env, accountId, source, slots, () => garments, dependencies.shoppingFetch);
+    }
+    case "shopping": case "hide":
+      return shoppingAction(env, accountId, action, input, dependencies.shoppingFetch, wardrobe);
     case "preview": {
       const source = await option(db, accountId, input.optionId);
       const profileOnly = input.useProfilePhoto === true && Object.keys(source.slots ?? {}).length === 0

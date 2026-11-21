@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { LookEnhancement } from "./enhancement";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api, imageUrl, type Garment, type Look } from "./shared";
@@ -127,6 +128,7 @@ function LookCard({
       <p className="mb-4 mt-5 flex-1 text-sm leading-relaxed text-supporting">
         {look.explanation}
       </p>
+      <LookEnhancement optionId={look.id} slots={look.slots} />
       {!look.profileRef && <button
         type="button"
         aria-label={`Choose look ${index + 1}`}

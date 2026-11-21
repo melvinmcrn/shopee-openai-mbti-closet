@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { LookEnhancement } from "./enhancement";
 import { useRef, useState } from "react";
 import { api, imageUrl, type Garment, type Look } from "./shared";
 
@@ -164,6 +165,7 @@ export function Refine({ look, garments, slots, onChange, onSaved, onPreview, on
         </section>
       </div>
 
+      <LookEnhancement optionId={look.id} slots={slots} />
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"
