@@ -145,7 +145,7 @@ def run_flow(browser, device, base):
     expect(page.get_by_text("Garment preferences", exact=True)).to_have_count(0)
     expect(page.locator("input[name=preferences]")).to_have_count(0)
     expect(page.get_by_role("checkbox", name=re.compile("profile photo", re.I))).to_have_count(0)
-    page.get_by_role("button", name="Continue").tap()
+    page.get_by_role("button", name="Create looks with my profile photo").tap()
 
     expect_heading(page, "Compare looks")
     expect(page.get_by_role("checkbox", name=re.compile("profile photo", re.I))).to_have_count(0)
@@ -215,7 +215,7 @@ def run_flow(browser, device, base):
     expect_heading(page, "Review your outfit")
     expect(page.get_by_text("Walking flats", exact=True)).to_be_visible()
     expect(page.get_by_role("link", name="Buy on Shopee")).to_have_js_property("href", purchase_url)
-    page.get_by_role("button", name="Preview outfit").tap()
+    page.get_by_role("button", name="Preview on me").tap()
     expect_heading(page, "Virtual try-on")
     expect(page.get_by_role("link", name="Buy on Shopee")).to_have_js_property("href", purchase_url)
     expect(page.get_by_role("checkbox", name=re.compile("profile photo", re.I))).to_have_count(0)
@@ -293,7 +293,7 @@ def check_two_catalog_basics(browser, device, base, session):
     page.get_by_role("textbox", name="Occasion", exact=True).fill("Museum visit")
     page.get_by_role("button", name="Continue").tap()
     expect_heading(page, "Today’s style")
-    page.get_by_role("button", name="Continue").tap()
+    page.get_by_role("button", name="Create looks with my profile photo").tap()
     article = page.get_by_role("article").first
     if session == "other-account":
         expect(article.get_by_role("img", name="Private scarf")).to_be_visible()

@@ -28,7 +28,7 @@ export function Preview({ look, loadTryOn, garments, onBack }: PreviewProps) {
       <header>
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Virtual try-on</h1>
         <p className="mt-2 text-sm text-supporting">
-          Generate a virtual try-on of your outfit. Details and fit may vary.
+          Your profile photo is sent to OpenAI to create the try-on. Details and fit may vary.
         </p>
       </header>
 

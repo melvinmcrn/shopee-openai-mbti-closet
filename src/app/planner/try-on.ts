@@ -42,10 +42,7 @@ export function createTryOnLoader() {
     if (existing) return existing;
     const request = requestTryOn("preview", {
       optionId: look.id, slots: look.slots, catalogItemIds: products.map(product => product.id),
-    }).catch(error => {
-      requests.delete(key);
-      throw error;
-    });
+    }).finally(() => requests.delete(key));
     requests.set(key, request);
     return request;
   }

@@ -75,7 +75,7 @@ export function Refine({ look, garments, onSaved, onPreview, onBack }: RefinePro
           disabled={saving}
           onClick={onPreview}
         >
-          Preview outfit
+          Preview on me
         </button>
       </div>
       {error && <p role="alert" className="text-sm font-medium text-danger">{error}</p>}

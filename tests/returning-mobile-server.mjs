@@ -7,18 +7,19 @@ import { extname, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { encode as encodePng } from "fast-png";
 import jpeg from "jpeg-js";
-import { readSampleImage } from "../src/app/api/_server/read-sample-image.mjs";
 import { handleApi } from "../src/app/api/_server/handle-api.mjs";
 
 const output = resolve(process.argv[2] ?? "out");
 const database = new DatabaseSync(":memory:");
 const schema = new URL("../drizzle/", import.meta.url);
+const portraitRef = accountId => `private/${accountId}/10000000-0000-4000-8000-00000000000${accountId}`;
 database.exec(await readFile(new URL("0000_stylist.sql", schema), "utf8"));
 database.exec(`
   INSERT INTO users (id, auth_provider, auth_subject) VALUES
     (1, 'google', 'fixture-returning-user'), (2, 'google', 'fixture-other-account'),
     (3, 'google', 'fixture-profile-only');
-  INSERT INTO profiles (user_id, face_photo_file_id) VALUES (1, 'fixture-face'), (3, 'fixture-face');
+  INSERT INTO profiles (user_id, face_photo_file_id) VALUES
+    (1, '${portraitRef(1)}'), (2, '${portraitRef(2)}'), (3, '${portraitRef(3)}');
   INSERT INTO wardrobe_items (id, user_id, name, category, color, image_file_id, confirmed_at, archived_at) VALUES
     (11, 1, 'Silk blouse', 'top', 'Cream', 'blouse', 'confirmed', NULL),
     (12, 1, 'Wool trousers', 'bottom', 'Navy', 'trousers', 'confirmed', NULL),
@@ -33,6 +34,10 @@ for (const file of (await readdir(schema)).sort()) {
   if (file !== "0000_stylist.sql" && file.endsWith(".sql")) {
     database.exec(await readFile(new URL(file, schema), "utf8"));
   }
+}
+
+for (const id of [1, 2, 3]) {
+  database.prepare("INSERT INTO private_files (file_id,user_id,state) VALUES (?,?,'ready')").run(portraitRef(id), id);
 }
 
 const db = {
@@ -79,11 +84,11 @@ const photos = new Map(["blouse", "trousers", "heels", "flats", "dress", "scarf"
   id, { body: image, httpMetadata: { contentType: "image/png" } },
 ]));
 const face = jpeg.encode({ data: Buffer.from([120, 140, 160, 255]), width: 1, height: 1 }).data;
-photos.set("fixture-face", { body: face, httpMetadata: { contentType: "image/jpeg" } });
+for (const id of [1, 2, 3]) photos.set(portraitRef(id), { body: face, httpMetadata: { contentType: "image/jpeg" } });
 const env = {
-  readSampleImage,
   DB: db,
   BUCKET: {
+    head: async id => photos.has(id) ? { size: photos.get(id).body.byteLength } : null,
     get: async id => {
       const file = photos.get(id);
       return file && {
@@ -149,8 +154,7 @@ async function decisionsFixture(url, options) {
     assert.equal(options.body.get("output_format"), "jpeg");
     const prompt = options.body.get("prompt");
     const references = options.body.getAll("image[]");
-    const expectedPerson = prompt.includes("Private scarf") ? await readSampleImage("studio-model") : face;
-    assert.deepEqual(Buffer.from(await references[0].arrayBuffer()), Buffer.from(expectedPerson));
+    assert.deepEqual(Buffer.from(await references[0].arrayBuffer()), Buffer.from(face));
     const labels = [...prompt.matchAll(/^Image (\d+): (\{.*\})$/gmu)].map(([, index, json]) => ({
       index: Number(index) - 1, ...JSON.parse(json),
     }));

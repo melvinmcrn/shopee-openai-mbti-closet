@@ -3,7 +3,7 @@ import type { CatalogProduct } from "./enhancement";
 export type Garment = { id: string; name: string; color: string; category: string; imageRef: string };
 export type Look = { id: string; profileRef?: string; occasion: string; explanation: string; slots: Record<string, string> };
 export type Brief = { id?: string; occasion: string; timing: string; location: string; formality: string; comfort: string; preferences: string[] };
-export type SavedLook = { enhancements: CatalogProduct[]; id: string; optionId: string; useProfilePhoto: boolean; previewRef: string | null; occasion: string; explanation: string; createdAt: string; slots: Record<string, Garment>; originalSlots: Record<string, Garment> };
+export type SavedLook = { enhancements: CatalogProduct[]; id: string; optionId: string; previewRef: string | null; occasion: string; explanation: string; createdAt: string; slots: Record<string, Garment>; originalSlots: Record<string, Garment> };
 
 export function imageUrl(imageRef: string) {
   return "/api/files/" + encodeURIComponent(imageRef);

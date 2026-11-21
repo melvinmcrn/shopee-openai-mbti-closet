@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { CatalogProduct } from "./enhancement";
 import { imageUrl, type Look } from "./shared";
@@ -27,6 +28,7 @@ function PhotoForSelection({ look, products, loadTryOn, alt }: PhotoProps) {
   if (error) return (
     <div className="space-y-2 p-3 text-sm">
       <p role="alert">{error}</p>
+      <Link href="/profile/settings" className="font-semibold underline">Add or update your profile photo</Link>
       <button type="button" className="min-h-11 rounded-full border border-divider px-5 font-semibold" onClick={() => {
         setError("");
         setImageRef(undefined);
