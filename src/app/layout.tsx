@@ -34,7 +34,10 @@ export const metadata: Metadata = {
   title,
   description,
   applicationName: title,
-  icons: { icon: { url: "/icon.svg", type: "image/svg+xml", sizes: "any" } },
+  icons: {
+    icon: { url: "/icon.svg", type: "image/svg+xml", sizes: "any" },
+    apple: { url: "/apple-touch-icon.png", type: "image/png", sizes: "180x180" },
+  },
   openGraph: { type: "website", title, description, images: [thumbnail] },
   twitter: { card: "summary_large_image", title, description, images: [thumbnail] },
   manifest: "/manifest.webmanifest",

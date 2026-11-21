@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "closet-public-";
-const CACHE_NAME = `${CACHE_PREFIX}v1`;
+const CACHE_NAME = `${CACHE_PREFIX}v2`;
 const OFFLINE_PAGE = "/offline.html";
 const PUBLIC_FILES = [
   OFFLINE_PAGE,
@@ -7,6 +7,10 @@ const PUBLIC_FILES = [
   "/favicon.ico",
   "/icon.svg",
   "/icon-maskable.svg",
+  "/apple-touch-icon.png",
+  "/icon-192.png",
+  "/icon-512.png",
+  "/icon-maskable-512.png",
   "/closet-logo.svg",
 ];
 
