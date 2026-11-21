@@ -9,6 +9,44 @@ test("JPEG and PNG are preserved", async () => {
   }
 });
 
+test("phone captures become JPEGs for preview and upload, including untyped HEIF files and large Android JPEGs", async (t) => {
+  const bitmap = { width: 3000, height: 4000, close() {} };
+  const canvas = {
+    getContext: () => ({ drawImage() {} }),
+    toBlob: (resolve, type) => resolve(new Blob(["encoded"], { type })),
+  };
+  t.mock.method(globalThis, "createImageBitmap", async () => bitmap);
+  t.mock.method(globalThis.document, "createElement", () => canvas);
+  for (const file of [
+    new File(["capture"], "IMG_1234.HEIC", { type: "image/heic" }),
+    new File(["capture"], "IMG_1234.HEIF"),
+    new File([new Uint8Array(9 * 1024 * 1024)], "IMG_1234.jpg", { type: "image/jpeg" }),
+  ]) {
+    const image = await normalizeUpload(file);
+    assert.equal(image.type, "image/jpeg");
+    assert.equal(image.name, "IMG_1234.jpg");
+    assert.deepEqual([canvas.width, canvas.height], [768, 1024]);
+    assert.ok(image.size < 8 * 1024 * 1024);
+  }
+});
+
+test("a JPEG camera file without a MIME type is uploaded as a JPEG", async () => {
+  const bytes = new Uint8Array([255, 216, 255, 217]);
+  const image = await normalizeUpload(new File([bytes], "capture.JPG"));
+  assert.equal(image.type, "image/jpeg");
+  assert.deepEqual(new Uint8Array(await image.arrayBuffer()), bytes);
+});
+
+test("empty, unsupported and oversized camera selections are rejected", async () => {
+  for (const file of [
+    new File([], "empty.jpg", { type: "image/jpeg" }),
+    new File(["movie"], "video.mp4", { type: "video/mp4" }),
+    new File([new Uint8Array(33 * 1024 * 1024)], "large.heic", { type: "image/heic" }),
+  ]) {
+    await assert.rejects(normalizeUpload(file));
+  }
+});
+
 test("WebP becomes a capped PNG using the browser's canvas and releases the bitmap", async (t) => {
   const bitmap = { width: 2048, height: 1024, close: () => { bitmap.closed = true; } };
   const file = new File(["WebP"], "wardrobe.WEBP", { type: "image/webp" });

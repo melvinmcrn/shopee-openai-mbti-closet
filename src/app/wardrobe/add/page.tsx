@@ -4,11 +4,10 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { normalizeUpload, photoAccept, photoRequirements } from "./normalize-upload.mjs";
 import { maxBatchSize, prepareWardrobeBatch } from "./prepare-batch.mjs";
 import { requestWardrobeUploadBatch, type BatchProgress } from "./request-wardrobe-upload.mjs";
 
-const imageTypes = ["image/jpeg", "image/png", "image/webp"];
-const maxImageBytes = 8 * 1024 * 1024;
 const uploadError = "This photo could not be uploaded. Try again.";
 const extractionError = "The garment details could not be read. Your photo is saved and ready for manual review.";
 const extractionMessages = new Map([
@@ -29,6 +28,7 @@ const photoStatuses = {
 
 type Photo = {
   file: File;
+  name: string;
   preview: string;
   draftKey: string;
   id: number | null;
@@ -52,6 +52,7 @@ const actionButton = "rounded-full bg-primary px-5 py-2.5 font-semibold text-on-
 export default function AddWardrobePhotoPage() {
   const router = useRouter();
   const [photos, setPhotos] = useState<Photo[]>([]);
+  const [preparingSelection, setPreparingSelection] = useState(false);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [addingSample, setAddingSample] = useState(false);
   const [selectionError, setSelectionError] = useState("");
@@ -80,7 +81,7 @@ export default function AddWardrobePhotoPage() {
     return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
   }, [hasActiveUpload]);
 
-  const busy = hasActiveUpload || addingSample;
+  const busy = preparingSelection || hasActiveUpload || addingSample;
   const percent = progress?.phase === "uploading" ? progress.percent : undefined;
   const progressLabel = progress?.phase === "preparing"
     ? "Preparing photos…"
@@ -95,7 +96,7 @@ export default function AddWardrobePhotoPage() {
   const manual = uploaded.filter((photo) => photo.status === "extraction-failed");
   if (manual.length) params.set("manual", manual.map((photo) => photo.id).join(","));
 
-  function choosePhotos(event: ChangeEvent<HTMLInputElement>) {
+  async function choosePhotos(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.currentTarget.files ?? []);
     event.currentTarget.value = "";
     if (activeTask.current || !files.length) return;
@@ -104,19 +105,36 @@ export default function AddWardrobePhotoPage() {
       setSelectionError(`Choose up to ${maxBatchSize} photos at a time. No new photos were added.`);
       return;
     }
-    if (files.some((file) => !imageTypes.includes(file.type) || file.size === 0 || file.size > maxImageBytes)) {
-      setSelectionError("Choose JPEG, PNG, or WebP photos up to 8 MB each. No new photos were added.");
-      return;
-    }
 
-    const nextPhotos = files.map((file): Photo => {
-      const preview = URL.createObjectURL(file);
-      previews.current.add(preview);
-      return { file, preview, draftKey: crypto.randomUUID(), id: null, status: "queued" };
-    });
+    const controller = new AbortController();
+    activeTask.current = controller;
+    setPreparingSelection(true);
     setSelectionError("");
     setBatchError("");
-    setPhotos((current) => [...current, ...nextPhotos]);
+    let currentName = "";
+    try {
+      const prepared = [];
+      // Decode sequentially to limit peak memory and add the selection atomically.
+      for (const original of files) {
+        currentName = original.name;
+        const file = await normalizeUpload(original);
+        if (controller.signal.aborted) return;
+        prepared.push({ file, name: original.name });
+      }
+      const nextPhotos = prepared.map(({ file, name }): Photo => {
+        const preview = URL.createObjectURL(file);
+        previews.current.add(preview);
+        return { file, name, preview, draftKey: crypto.randomUUID(), id: null, status: "queued" };
+      });
+      setPhotos((current) => [...current, ...nextPhotos]);
+    } catch {
+      if (!controller.signal.aborted) {
+        setSelectionError(`Couldn’t prepare “${currentName}”. ${photoRequirements}. No new photos were added.`);
+      }
+    } finally {
+      activeTask.current = null;
+      if (!controller.signal.aborted) setPreparingSelection(false);
+    }
   }
 
   function removePhoto(photo: Photo) {
@@ -251,7 +269,7 @@ export default function AddWardrobePhotoPage() {
               {photos.length ? "Choose more photos" : "Choose photos"}
               <input
                 type="file"
-                accept={imageTypes.join(",")}
+                accept={photoAccept}
                 className="sr-only"
                 multiple
                 disabled={busy || photos.length >= maxBatchSize}
@@ -270,7 +288,8 @@ export default function AddWardrobePhotoPage() {
               />
             </label>
           </div>
-          <p className="mt-3 text-sm text-supporting">Up to {maxBatchSize} photos · JPEG, PNG, or WebP · Up to 8 MB each</p>
+          <p className="mt-3 text-sm text-supporting">Up to {maxBatchSize} photos · {photoRequirements}</p>
+          {preparingSelection && <p className="mt-3 text-sm" role="status">Preparing photos…</p>}
           {selectionError && <p className="mt-3 text-sm text-danger" role="alert">{selectionError}</p>}
           {photos.length > 0 && (
             <ul aria-label="Selected photos" className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -284,14 +303,14 @@ export default function AddWardrobePhotoPage() {
                     unoptimized
                     width={240}
                   />
-                  <p className="mt-2 break-all text-sm font-medium">{photo.file.name}</p>
+                  <p className="mt-2 break-all text-sm font-medium">{photo.name}</p>
                   <p className="mt-1 text-sm">{photoStatuses[photo.status]}</p>
                   {photo.error && <p className="mt-1 text-sm text-danger" role="alert">{photo.error}</p>}
                   {photo.id === null && (
                     <button
                       type="button"
                       className="mt-2 text-sm underline underline-offset-4 disabled:opacity-60"
-                      aria-label={`Remove ${photo.file.name}`}
+                      aria-label={`Remove ${photo.name}`}
                       disabled={busy}
                       onClick={() => removePhoto(photo)}
                     >

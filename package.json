@@ -18,6 +18,7 @@
     "@auth/core": "^0.41.3",
     "@supabase/supabase-js": "^2.119.2",
     "fast-png": "^8.0.0",
+    "heic-to": "^1.6.7",
     "jpeg-js": "^0.4.4",
     "next": "16.4.6",
     "postgres": "^4.1.1",
