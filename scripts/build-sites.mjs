@@ -1,5 +1,5 @@
 import { build } from "esbuild";
-import { readFile, readdir } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { join, relative } from "node:path";
 
 const contentTypes = {
@@ -28,3 +28,14 @@ await build({
   bundle: true,
   define: { SITE_ASSETS: JSON.stringify(assets) },
 });
+
+const hostingManifest = ".openai/hosting.json";
+const { d1 } = JSON.parse(await readFile(hostingManifest, "utf8"));
+await mkdir("dist/.openai", { recursive: true });
+await cp(hostingManifest, "dist/.openai/hosting.json");
+
+const deploymentMigrations = "dist/drizzle";
+await rm(deploymentMigrations, { recursive: true, force: true });
+if (d1) {
+  await cp("drizzle", deploymentMigrations, { recursive: true });
+}
