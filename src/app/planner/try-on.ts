@@ -3,6 +3,25 @@ import { api, type Look, type SavedLook } from "./shared";
 
 export type TryOnResult = { imageRef: string | null };
 
+export async function requestTryOn(action: "preview" | "savedPreview", input: object): Promise<TryOnResult> {
+  const controller = new AbortController();
+  // Allow the server's three-minute render, one-minute inventory check and file transfers.
+  const timer = setTimeout(() => controller.abort(), 270_000);
+  try {
+    const result = await api<unknown>(action, input, controller.signal);
+    if (result && typeof result === "object" && "imageRef" in result) {
+      const { imageRef } = result;
+      if (imageRef === null || (typeof imageRef === "string" && imageRef.trim())) return { imageRef };
+    }
+    throw new Error("We couldn’t open the try-on photo. Please try again.");
+  } catch (cause) {
+    if (controller.signal.aborted) throw new Error("The try-on took too long. Please try again.");
+    throw cause;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function selectionKey(look: Look) {
   return JSON.stringify([look.id, Object.entries(look.slots).sort(([a], [b]) => a.localeCompare(b))]);
 }
@@ -21,7 +40,7 @@ export function createTryOnLoader() {
     const key = JSON.stringify([selectionKey(look), listingKey(products)]);
     const existing = requests.get(key);
     if (existing) return existing;
-    const request = api<TryOnResult>("preview", {
+    const request = requestTryOn("preview", {
       optionId: look.id, slots: look.slots, catalogItemIds: products.map(product => product.id),
     }).catch(error => {
       requests.delete(key);

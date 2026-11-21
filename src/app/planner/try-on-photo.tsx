@@ -31,18 +31,21 @@ function PhotoForSelection({ look, products, loadTryOn, alt }: PhotoProps) {
         setError("");
         setImageRef(undefined);
         setAttempt(count => count + 1);
-      }}>Retry styled image</button>
+      }}>Retry try-on</button>
     </div>
   );
-  if (imageRef === null) return null;
+  if (imageRef === null) return (
+    <p role="status" className="p-3 text-sm text-supporting">No try-on photo is available for this outfit.</p>
+  );
+  if (imageRef === undefined) return (
+    <p role="status" className="rounded-xl bg-selected p-3 text-sm text-supporting">
+      Creating your full-body try-on… This can take a few minutes.
+    </p>
+  );
   return (
     <div className="relative grid aspect-[2/3] place-items-center overflow-hidden rounded-xl bg-selected">
-      {imageRef ? (
-        <Image src={imageUrl(imageRef)} alt={alt} fill unoptimized className="object-contain"
-          onError={() => setError("Couldn’t load the try-on.")} />
-      ) : (
-        <p role="status" className="px-5 text-center text-sm text-supporting">Creating your full-body try-on…</p>
-      )}
+      <Image src={imageUrl(imageRef)} alt={alt} fill unoptimized className="object-contain"
+        onError={() => setError("Couldn’t load the try-on.")} />
     </div>
   );
 }

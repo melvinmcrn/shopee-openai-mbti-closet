@@ -129,6 +129,7 @@ def check_shared_navigation(browser, device, base):
 
 def run_flow(browser, device, base):
     context, page = mobile_session(browser, device, base, "first-session")
+    page.clock.install()
     product_photo = Path(__file__).resolve().parents[1] / "Shopee Database/clothes_image_database/b6326a099e743eebc194.jpg"
     page.route("https://down-th.img.susercontent.com/file/**", lambda route: route.fulfill(path=product_photo))
     page.goto(f"{base}/planner/")
@@ -159,7 +160,31 @@ def run_flow(browser, device, base):
     expect(dress_photo).to_be_visible()
     assert urlparse(dress_photo.evaluate("img => img.src")).path == "/api/files/dress", dress_photo.get_attribute("src")
     expect(page.get_by_role("article").nth(1).get_by_role("img", name="Full-body virtual try-on of this outfit")).to_have_count(0)
-    page.get_by_role("article").nth(0).get_by_role("button", name="Retry enhancement check").tap()
+    expect(page.get_by_text("No try-on photo is available for this outfit.")).to_be_visible()
+
+    stalled_requests = []
+
+    def stall_preview(route):
+        if route.request.post_data_json["action"] == "preview":
+            stalled_requests.append(route)
+        else:
+            route.continue_()
+
+    page.route("**/api/planner", stall_preview)
+    with page.expect_request(lambda req: req.url.endswith("/api/planner") and req.post_data_json["action"] == "preview"):
+        first.get_by_role("button", name="Retry enhancement check").tap()
+    expect(first.get_by_role("status")).to_contain_text("Creating your full-body try-on")
+    expect(first.get_by_role("button", name="Choose look 1")).to_be_enabled()
+    page.clock.fast_forward(5 * 60 * 1000)
+    expect(first.get_by_role("alert")).to_contain_text("took too long")
+    assert len(stalled_requests) == 1
+    stalled_requests.pop().abort()
+    page.unroute("**/api/planner", stall_preview)
+    page.route("**/api/planner", lambda route: route.fulfill(json={"imageRef": ""}), times=1)
+    first.get_by_role("button", name="Retry try-on").tap()
+    expect(first.get_by_role("alert")).to_contain_text("couldn’t open the try-on photo")
+    expect(first.get_by_role("status")).to_have_count(0)
+    first.get_by_role("button", name="Retry try-on").tap()
     generated = first.get_by_role("img", name="Full-body virtual try-on of this outfit")
     expect(generated).to_be_visible()
     expect(generated).to_have_js_property("naturalWidth", 1)

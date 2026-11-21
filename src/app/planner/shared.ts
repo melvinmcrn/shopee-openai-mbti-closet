@@ -9,10 +9,11 @@ export function imageUrl(imageRef: string) {
   return "/api/files/" + encodeURIComponent(imageRef);
 }
 
-export async function api<T>(action: string, input: object = {}): Promise<T> {
+export async function api<T>(action: string, input: object = {}, signal?: AbortSignal): Promise<T> {
   const response = await fetch("/api/planner", {
     method: "POST",
     cache: "no-store",
+    signal,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action, input }),
   });

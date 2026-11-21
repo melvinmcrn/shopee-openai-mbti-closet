@@ -1,7 +1,7 @@
 import Image from "next/image";
 import { useEffect, useState } from "react";
-import { api, imageUrl, type SavedLook } from "./shared";
-import type { LoadTryOn, TryOnResult } from "./try-on";
+import { imageUrl, type SavedLook } from "./shared";
+import { requestTryOn, type LoadTryOn } from "./try-on";
 
 export type FindTryOn = LoadTryOn["find"];
 
@@ -40,7 +40,7 @@ function SavedPhotoForSelection({ look, findTryOn, catalogItemIds }: SavedPhotoP
     setLoading(true);
     setError("");
     try {
-      const result = await api<TryOnResult>("savedPreview", { id: look.id, catalogItemIds });
+      const result = await requestTryOn("savedPreview", { id: look.id, catalogItemIds });
       setImageRef(result.imageRef);
       setChecked(true);
     } catch (cause) {
