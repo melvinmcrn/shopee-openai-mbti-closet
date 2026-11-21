@@ -62,7 +62,7 @@ for (const fixture of fixtures) {
     assert.equal(item.category, fixture.category);
     assert.equal(item.garmentType, fixture.garment_type);
     assert.equal(item.color, fixture.color);
-    assert.equal(item.imageUrl, "/api/wardrobe/image?ref=" + encodeURIComponent(item.imageFileId));
+    assert.equal(item.imageUrl, "/api/files/" + encodeURIComponent(item.imageFileId));
     assert.match(item.imageFileId, /^users\/9\/wardrobe\//);
     assert.equal(files.size, 1);
     assert.equal(files.get(item.imageFileId).type, "image/png");
