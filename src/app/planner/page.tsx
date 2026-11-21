@@ -8,6 +8,7 @@ import { api, type Brief, type Garment, type Look } from "./shared";
 import { PlannerHome } from "./home";
 import { Occasion } from "./occasion";
 import { Style } from "./style";
+import { createTryOnLoader } from "./try-on";
 import { Compare } from "./compare";
 import { Refine } from "./refine";
 import { Preview } from "./preview";
@@ -20,8 +21,9 @@ const emptyBrief: Brief = { occasion: "", timing: "", location: "", formality: "
 export default function PlannerPage() {
   const [screen, setScreen] = useState("home");
   const [brief, setBrief] = useState<Brief>(emptyBrief);
+  const [loadTryOn] = useState(createTryOnLoader);
+  const [useProfilePhoto, setUseProfilePhoto] = useState(false);
   const [look, setLook] = useState<Look>();
-  const [slots, setSlots] = useState<Record<string, string>>({});
   const [garments, setGarments] = useState<Garment[]>();
   const [loadError, setLoadError] = useState("");
   const [reload, setReload] = useState(0);
@@ -53,6 +55,7 @@ export default function PlannerPage() {
   function start() {
     setBrief({ ...emptyBrief, preferences: [] });
     setLook(undefined);
+    setUseProfilePhoto(false);
     go("occasion");
   }
   const [, savedId, wearId] = screen.split("/");
@@ -66,9 +69,9 @@ export default function PlannerPage() {
     : <p role="status">Opening your closet…</p>;
   else if (screen === "occasion") content = <Occasion key={brief.id || "new"} brief={brief} onBack={() => go("home")} onNext={saved => { setBrief(saved); go("style"); }} />;
   else if (screen === "style" && brief.id) content = <Style brief={brief} onBack={() => go("occasion")} onNext={saved => { setBrief(saved); go("compare"); }} />;
-  else if (screen === "compare" && brief.id) content = <Compare briefId={brief.id} garments={garments} onEdit={() => go("style")} onChoose={chosen => { setLook(chosen); setSlots({...chosen.slots}); go("refine"); }} />;
-  else if (screen === "refine" && look) content = <Refine look={look} slots={slots} garments={garments} onChange={setSlots} onBack={() => go("compare")} onPreview={() => go("preview")} onSaved={id => go("saved/" + id)} />;
-  else if (screen === "preview" && look) content = <Preview look={look} slots={slots} garments={garments} onBack={() => go("refine")} />;
+  else if (screen === "compare" && brief.id) content = <Compare loadTryOn={loadTryOn} useProfilePhoto={useProfilePhoto} setUseProfilePhoto={setUseProfilePhoto} briefId={brief.id} garments={garments} onEdit={() => go("style")} onChoose={chosen => { setLook(chosen); go("refine"); }} />;
+  else if (screen === "refine" && look) content = <Refine look={look} garments={garments} onBack={() => go("compare")} onPreview={() => go("preview")} onSaved={id => go("saved/" + id)} />;
+  else if (screen === "preview" && look) content = <Preview key={String(useProfilePhoto)} loadTryOn={loadTryOn} useProfilePhoto={useProfilePhoto} setUseProfilePhoto={setUseProfilePhoto} look={look} garments={garments} onBack={() => go("refine")} />;
   else content = <PlannerHome garments={garments} onNew={start} onSaved={() => go("saved")} />;
   const activeTab = screen === "home" ? "Home" : screen === "saved" ? "Saved" : null;
   return <main className="min-h-screen bg-canvas px-5 py-6 text-text sm:px-10">

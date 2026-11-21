@@ -140,7 +140,7 @@ test("reports an insufficient wardrobe before contacting Decisions", async () =>
 
   assert.equal(provider.calls.length, 0);
   assert.equal(result.status, "insufficient");
-  assert.match(result.message, /at least one confirmed clothing item/u);
+  assert.match(result.message, /confirm a wardrobe photo/u);
   assert.equal(result.looks, undefined);
 });
 

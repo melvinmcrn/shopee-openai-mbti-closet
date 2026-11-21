@@ -1,3 +1,4 @@
+import { readSampleImage } from "../src/app/api/_server/read-sample-image.mjs";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
@@ -66,7 +67,7 @@ async function startPlanner(t, preview, optionSlots = original, shoppingFetch) {
     database.exec(readFileSync(new URL(file, migrations), "utf8"));
   }
   const makeSession = (user = accountId, key = "mock-provider-key") => {
-    const env = { DB: d1Binding(database), OPENAI_API_KEY: key };
+    const env = { readSampleImage, DB: d1Binding(database), OPENAI_API_KEY: key };
     const dependencies = {
       generateLooks: async () => ({
         status: "ready",
@@ -120,6 +121,7 @@ test("preview sends the final shoe's bytes without reading a profile photo by de
   const images = JSON.parse(request.body).input[0].content
     .filter(({ type }) => type === "input_image")
     .map(({ image_url }) => image_url);
+  assert.equal(images.shift(), "data:image/webp;base64," + (await readSampleImage("studio-model")).toString("base64"));
   assert.deepEqual(images.sort(), [dress.imageRef, flats.imageRef]
     .map((reference) => "data:image/png;base64," + files.get(reference).toString("base64")).sort());
   assert.equal(preview.storeImage.mock.callCount(), 1);
@@ -186,7 +188,7 @@ test("Decisions selects a local Shopee search from the final outfit and the owne
   const [url, request] = shoppingFetch.mock.calls[0].arguments;
   assert.equal(url, "https://api.openai.com/v1/decisions");
   assert.equal(request.headers.authorization, "Bearer mock-provider-key");
-  assert.equal(request.redirect, "error");
+  assert.equal(request.redirect, "manual");
   const payload = JSON.parse(request.body);
   assert.equal(payload.model, "gpt-6-luna");
   const evidence = payload.input[1].content[0].data;

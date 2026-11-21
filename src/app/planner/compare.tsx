@@ -1,11 +1,15 @@
 "use client";
 
 import Image from "next/image";
+import type { LoadTryOn } from "./try-on";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api, imageUrl, type Garment, type Look } from "./shared";
 
 type CompareProps = {
+  loadTryOn: LoadTryOn;
+  useProfilePhoto: boolean;
+  setUseProfilePhoto: (value: boolean) => void;
   briefId: string;
   garments: Garment[];
   onChoose: (look: Look) => void;
@@ -21,76 +25,34 @@ type Generation = {
 const secondaryButton =
   "inline-flex min-h-11 items-center justify-center rounded-full border border-divider px-5 py-2 text-sm font-semibold text-secondary transition hover:bg-selected focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:cursor-wait disabled:opacity-60";
 
-function GarmentTile({ garment, slot }: { garment?: Garment; slot: string }) {
-  const [imageFailed, setImageFailed] = useState(false);
-  const src = garment?.imageRef ? imageUrl(garment.imageRef) : "";
-  const slotLabel = slot === "other" ? "Original photo" : slot.replace(/[-_]/g, " ");
-
-  return (
-    <li className="min-w-0">
-      <div className="relative flex aspect-[7/6] items-center justify-center overflow-hidden rounded-xl bg-selected">
-        {src && !imageFailed ? (
-          <Image
-            src={src}
-            alt=""
-            fill
-            unoptimized
-            className="object-contain"
-            onError={() => setImageFailed(true)}
-          />
-        ) : (
-          <span className="px-2 text-center text-xs capitalize text-supporting">
-            {garment?.color || slotLabel}
-          </span>
-        )}
-      </div>
-      <p className="mt-2 text-xs font-medium capitalize text-supporting">
-        {slotLabel}
-      </p>
-      <p className="mt-0.5 break-words text-sm font-semibold text-text">
-        {garment?.name || "Item unavailable"}
-      </p>
-    </li>
-  );
-}
-
-function StyledImage({ look, garments }: { look: Look; garments: Map<string, Garment> }) {
-  const [useProfilePhoto, setUseProfilePhoto] = useState(false);
+function StyledImage({ look, useProfilePhoto, loadTryOn }: { look: Look; useProfilePhoto: boolean; loadTryOn: LoadTryOn }) {
   const [attempt, setAttempt] = useState(0);
   const [generated, setGenerated] = useState("");
-  const [error, setError] = useState(false);
-  const request = useRef<Promise<{ imageRef: string }> | null>(null);
-  const original = look.profileRef || garments.get(look.slots.other ?? Object.values(look.slots)[0])?.imageRef;
+  const [error, setError] = useState("");
   useEffect(() => {
     let active = true;
     if (look.profileRef && !useProfilePhoto) return;
-    request.current ??= api<{ imageRef: string }>("preview", {
-      optionId: look.id, slots: look.slots, useProfilePhoto,
-    });
-    request.current.then(({ imageRef }) => {
+    loadTryOn(look, useProfilePhoto).then(({ imageRef }) => {
       if (active) setGenerated(imageRef);
-    }).catch(() => { if (active) setError(true); });
+    }).catch(cause => {
+      if (active) setError(cause instanceof Error ? cause.message : "Couldn’t generate the try-on.");
+    });
     return () => { active = false; };
-  }, [look, attempt, useProfilePhoto]);
-  const ref = generated || original;
+  }, [look, attempt, useProfilePhoto, loadTryOn]);
   return (
-    <div className="mt-4">
-      {ref && <Image src={imageUrl(ref)} alt={generated ? "AI-styled outfit" : "Original wardrobe photo"} width={512} height={640} unoptimized className="max-h-[32rem] w-full rounded-xl bg-selected object-contain" />}
-      <p role="status" className="mt-2 text-sm text-supporting">
-        {generated ? "AI-styled outfit" : error ? "Couldn’t generate the styled image." : look.profileRef && !useProfilePhoto ? "Original profile photo" : "Styling your outfit…"}
-      </p>
-      <label className="mt-2 flex items-center gap-2 text-sm text-supporting">
-        <input type="checkbox" checked={useProfilePhoto} onChange={event => {
-          request.current = null;
-          setGenerated("");
-          setError(false);
-          setUseProfilePhoto(event.target.checked);
-        }} />
-        Use my profile photo as the main image and send it to OpenAI for styling
-      </label>
+    <div>
+      <div className="relative grid aspect-[2/3] place-items-center overflow-hidden rounded-xl bg-selected">
+        {generated ? (
+          <Image src={imageUrl(generated)} alt="Full-body virtual try-on of this outfit" fill unoptimized className="object-contain"
+            onError={() => { setGenerated(""); setError("Couldn’t load the try-on."); }} />
+        ) : (
+          <p role="status" className="px-5 text-center text-sm text-supporting">
+            {error || ( look.profileRef && !useProfilePhoto ? "Select “Use my profile photo” above to see this try-on." : "Creating your full-body try-on…")}
+          </p>
+        )}
+      </div>
       {error && <button type="button" className={secondaryButton} onClick={() => {
-        request.current = null;
-        setError(false);
+        setError("");
         setAttempt(count => count + 1);
       }}>Retry styled image</button>}
     </div>
@@ -100,41 +62,42 @@ function StyledImage({ look, garments }: { look: Look; garments: Map<string, Gar
 function LookCard({
   look,
   index,
+  loadTryOn,
+  useProfilePhoto,
   garments,
   onChoose,
 }: {
   look: Look;
   index: number;
+  loadTryOn: LoadTryOn;
+  useProfilePhoto: boolean;
   garments: Map<string, Garment>;
   onChoose: (look: Look) => void;
 }) {
   return (
-    <article className="flex min-w-0 flex-col rounded-2xl border border-divider bg-surface p-4 shadow-sm sm:p-5">
-      <h2 className="font-heading text-2xl text-text">Look {index + 1}</h2>
-      {look.occasion && (
-        <p className="mt-1 text-sm text-supporting">{look.occasion}</p>
-      )}
-      <StyledImage look={look} garments={garments} />
-      <ul className="mt-4 grid grid-cols-2 gap-x-3 gap-y-4">
-        {Object.entries(look.slots).map(([slot, garmentId]) => (
-          <GarmentTile
-            key={`${slot}:${garmentId}`}
-            garment={garments.get(garmentId)}
-            slot={slot}
-          />
-        ))}
-      </ul>
-      <p className="mb-4 mt-5 flex-1 text-sm leading-relaxed text-supporting">
-        {look.explanation}
-      </p>
-      {!look.profileRef && <button
-        type="button"
-        aria-label={`Choose look ${index + 1}`}
-        onClick={() => onChoose(look)}
-        className="min-h-11 w-full rounded-full bg-primary px-4 py-2 text-sm font-semibold text-on-primary transition hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary"
-      >
-        Choose this look
-      </button>}
+    <article className="flex min-w-0 flex-col rounded-2xl border border-divider bg-surface p-2 sm:p-3">
+      <StyledImage loadTryOn={loadTryOn} key={String(useProfilePhoto)} look={look} useProfilePhoto={useProfilePhoto} />
+      <div className="flex flex-1 flex-col px-1 pb-1 pt-3 sm:px-2">
+        <h2 className="font-heading text-lg text-text sm:text-2xl">Look {index + 1}</h2>
+        {Object.keys(look.slots).length > 0 && (
+          <details className="mt-3 text-sm">
+            <summary className="cursor-pointer">{Object.keys(look.slots).length} wardrobe {Object.keys(look.slots).length === 1 ? "item" : "items"}</summary>
+            <ul className="mt-2 list-inside list-disc">
+              {Object.entries(look.slots).map(([slot, id]) => <li key={slot}>{garments.get(id)?.name || slot}</li>)}
+            </ul>
+            <p className="mt-2 text-supporting">{look.explanation}</p>
+          </details>
+        )}
+        <div className="flex-1" />
+        {!look.profileRef && <button
+          type="button"
+          aria-label={`Choose look ${index + 1}`}
+          onClick={() => onChoose(look)}
+          className="mt-3 min-h-11 w-full rounded-full bg-primary px-4 py-2 text-sm font-semibold text-on-primary transition hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary"
+        >
+          Choose this look
+        </button>}
+      </div>
     </article>
   );
 }
@@ -150,7 +113,7 @@ async function generate(briefId: string, priorLooks: Look[]) {
   }
 }
 
-function CompareBrief({ briefId, garments, onChoose, onEdit }: CompareProps) {
+function CompareBrief({ briefId, garments, onChoose, onEdit, loadTryOn, useProfilePhoto, setUseProfilePhoto }: CompareProps) {
   const [result, setResult] = useState<Generation>();
   const [looks, setLooks] = useState<Look[]>([]);
   const [busy, setBusy] = useState(true);
@@ -179,7 +142,7 @@ function CompareBrief({ briefId, garments, onChoose, onEdit }: CompareProps) {
     const response = await generate(briefId, priorLooks.current);
     if (response.status === "ready" && response.looks?.length) {
       priorLooks.current = [...priorLooks.current, ...response.looks];
-      setLooks(response.looks);
+      setLooks(priorLooks.current);
     }
     setResult(response);
     setBusy(false);
@@ -215,17 +178,25 @@ function CompareBrief({ briefId, garments, onChoose, onEdit }: CompareProps) {
       </header>
 
       {looks.length > 0 && (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <>
+        <label className="mb-5 flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={useProfilePhoto} onChange={event => setUseProfilePhoto(event.target.checked)} />
+          Use my profile photo for all looks and send it to OpenAI for styling
+        </label>
+        <div className="grid grid-cols-2 gap-2 sm:gap-4">
           {looks.map((look, index) => (
             <LookCard
               key={look.id}
               look={look}
               index={index}
+              loadTryOn={loadTryOn}
+              useProfilePhoto={useProfilePhoto}
               garments={garmentById}
               onChoose={onChoose}
             />
           ))}
         </div>
+        </>
       )}
 
       <div aria-live="polite" className={looks.length ? "mt-5" : ""}>
@@ -253,7 +224,7 @@ function CompareBrief({ briefId, garments, onChoose, onEdit }: CompareProps) {
             onClick={requestOptions}
             className={secondaryButton}
           >
-            {needsRetry ? "Try again" : "More options"}
+            {needsRetry ? "Try again" : "Show more looks"}
           </button>
         </div>
       )}
