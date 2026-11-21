@@ -1,5 +1,8 @@
 import { useRef, useState, type FormEvent } from "react";
+import { normalizeUpload, photoAccept, photoRequirements } from "../wardrobe/add/normalize-upload.mjs";
 import { api, type Brief } from "./shared";
+
+type PreparedTryOn = { status: "ready"; brief: Brief } | { status: "photo_required" };
 
 type StyleProps = {
   brief: Brief;
@@ -18,6 +21,8 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
   const [comfort, setComfort] = useState(brief.comfort);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [needsPhoto, setNeedsPhoto] = useState(false);
+  const [photo, setPhoto] = useState<File | null>(null);
   const savePending = useRef(false);
 
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -29,13 +34,31 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
     setError("");
 
     try {
-      const saved = await api<Brief>("saveBrief", {
+      if (photo) {
+        const file = await normalizeUpload(photo).catch(() => {
+          throw new Error(`Choose a photo in a supported format. ${photoRequirements}.`);
+        });
+        const body = new FormData();
+        body.set("image", file);
+        const response = await fetch("/api/profile/photo", { method: "PUT", body });
+        if (!response.ok) {
+          const problem = await response.json().catch(() => ({}));
+          throw new Error(problem.error || "Your photo could not be saved. Try again.");
+        }
+        setPhoto(null);
+        setNeedsPhoto(false);
+      }
+      const result = await api<PreparedTryOn>("prepareTryOn", {
         ...brief,
         formality: formality.trim(),
         comfort: comfort.trim(),
         preferences: [],
       });
-      onNext(saved);
+      if (result.status === "photo_required") {
+        setNeedsPhoto(true);
+        return;
+      }
+      onNext(result.brief);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save your style preferences. Try again.");
     } finally {
@@ -115,6 +138,17 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
         <p id="look-photo-use" className="mt-4 text-sm text-supporting">
           Your profile photo is required and is sent to OpenAI to create your try-on photos.
         </p>
+        {needsPhoto && (
+          <div className="mt-4">
+            <label className="block text-sm font-semibold" htmlFor="try-on-photo">
+              Add or replace your profile photo to continue
+            </label>
+            <input id="try-on-photo" type="file" accept={photoAccept} required disabled={saving}
+              aria-describedby="look-photo-use try-on-formats" className="mt-2 max-w-full text-sm"
+              onChange={event => { setPhoto(event.currentTarget.files?.[0] ?? null); setError(""); }} />
+            <p id="try-on-formats" className="mt-1 text-sm text-supporting">{photoRequirements}</p>
+          </div>
+        )}
         {error && <p role="alert" className="mt-4 text-sm text-danger">{error}</p>}
         <button
           aria-describedby="look-photo-use"
@@ -122,7 +156,7 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
           disabled={saving}
           className="mt-4 min-h-12 rounded-full bg-primary px-6 text-sm font-semibold text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:opacity-60"
         >
-          {saving ? "Saving…" : "Create looks with my profile photo"}
+          {saving ? "Saving…" : needsPhoto ? "Save photo and create looks" : "Create looks with my profile photo"}
         </button>
       </form>
     </section>

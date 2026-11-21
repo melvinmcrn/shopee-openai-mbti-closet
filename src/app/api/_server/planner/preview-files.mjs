@@ -41,7 +41,7 @@ export async function profilePhotoRef(db, accountId) {
 
 export async function readPreviewImage(env, accountId, ref) {
   const file = await readPrivateFile(env, { id: accountId }, ref);
-  if (!file) throw new Error("Image unavailable");
+  if (!file) return null;
   return new Blob([await file.arrayBuffer()], { type: file.httpMetadata?.contentType });
 }
 

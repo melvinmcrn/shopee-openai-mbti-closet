@@ -122,14 +122,10 @@ export function profilePhotoChanged() {
 }
 
 export async function readProfileImage(readImage, ref) {
-  try {
-    const blob = await readImage(ref);
-    const type = await profilePhotoType(blob);
-    if (!type) throw new Error();
-    return blob.slice(0, blob.size, type);
-  } catch {
-    throw profilePhotoRequired();
-  }
+  const blob = await readImage(ref);
+  const type = await profilePhotoType(blob);
+  if (!type) throw profilePhotoRequired();
+  return blob.slice(0, blob.size, type);
 }
 
 export async function generatePreview(env, finalGarments, deps, products = [], base = {}, profile) {
