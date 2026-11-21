@@ -1,39 +1,64 @@
 import { getLook } from "./saved.mjs";
 
-const shopeeOrigin = "https://shopee.sg";
-
-function occasionGroup({ occasion, slots }) {
+function accessorySuggestion({ occasion, slots }) {
   if (/\b(wedding|gala|cocktail|anniversary|dinner|formal|ceremony|black tie)\b/i.test(occasion)) {
-    return "dressy";
+    return "Simple stud earrings";
   }
-  if (/\b(hike|hiking|gym|workout|sports|running)\b/i.test(occasion)) return "active";
+  if (/\b(hike|hiking|gym|workout|sports|running)\b/i.test(occasion)) {
+    return "Lightweight sports cap";
+  }
   if (/\b(casual|weekend|picnic|brunch|coffee)\b/i.test(occasion)
     || /\b(sneakers?|trainers?)\b/i.test(slots.shoes?.name ?? "")) {
-    return "casual";
+    return "Canvas tote bag";
   }
-  return "any";
+  return "Compact crossbody bag";
 }
 
-async function suggestionsForLook(db, look) {
-  if (look.slots.accessory) return [];
-  const group = occasionGroup(look);
+async function loadSuggestions(db, accountId, lookId) {
   const { results } = await db.prepare(`
-    SELECT id, title, url, sponsored FROM planner_shopping_catalog
-    WHERE occasion_group IN (?, 'any')
-    ORDER BY occasion_group = ? DESC, id
-  `).bind(group, group).all();
+    SELECT suggestion.id, suggestion.product_name, suggestion.product_url,
+           suggestion.is_sponsored, suggestion.hidden_at
+    FROM shopping_suggestions AS suggestion
+    JOIN saved_looks AS look ON look.id = suggestion.saved_look_id
+    WHERE look.user_id = ? AND look.id = ?
+    ORDER BY suggestion.id
+  `).bind(accountId, lookId).all();
+  return results;
+}
 
+async function seedSuggestion(db, accountId, look) {
+  const title = accessorySuggestion(look);
+  const url = new URL("https://shopee.sg/search");
+  url.searchParams.set("keyword", title.toLowerCase());
+  // Check all rows, including hidden ones, in the same statement as the insert.
+  await db.prepare(`
+    INSERT INTO shopping_suggestions (saved_look_id, product_name, merchant, product_url)
+    SELECT look.id, ?, 'Shopee', ?
+    FROM saved_looks AS look
+    WHERE look.id = ? AND look.user_id = ?
+      AND NOT EXISTS (
+        SELECT 1 FROM shopping_suggestions WHERE saved_look_id = look.id
+      )
+  `).bind(title, url.href, look.id, accountId).run();
+}
+
+function visibleSuggestions(rows) {
   const suggestions = [];
-  for (const { id, title, url, sponsored } of results) {
-    let target;
+  for (const row of rows) {
+    if (row.hidden_at !== null) continue;
+    let url;
     try {
-      target = new URL(url);
+      url = new URL(row.product_url);
     } catch {
       continue;
     }
-    if (target.protocol !== "https:" || target.origin !== shopeeOrigin || target.username || target.password) continue;
-    suggestions.push({ id, title, url: target.href, sponsored: sponsored === 1 });
-    if (suggestions.length === 2) break;
+    if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username || url.password) continue;
+    suggestions.push({
+      id: String(row.id),
+      title: row.product_name,
+      url: url.href,
+      sponsored: row.is_sponsored === 1,
+    });
   }
   return suggestions;
 }
@@ -45,25 +70,32 @@ export async function shoppingAction(db, accountId, action, input) {
 
   const look = await getLook(db, accountId, input.lookId);
   if (!look) throw Object.assign(new Error("This item could not be found."), { status: 404 });
-  const suggestions = await suggestionsForLook(db, look);
 
   if (action === "shopping") {
-    const { results } = await db.prepare(`
-      SELECT suggestion_id FROM planner_hidden_suggestions WHERE look_id = ?
-    `).bind(look.id).all();
-    const hiddenIds = new Set(results.map((row) => row.suggestion_id));
-    return suggestions.filter(({ id }) => !hiddenIds.has(id));
+    let rows = await loadSuggestions(db, accountId, look.id);
+    const hasAccessory = Object.keys(look.slots).some((slot) => /^accessory(?:_\d+)?$/.test(slot));
+    if (!rows.length && !hasAccessory) {
+      await seedSuggestion(db, accountId, look);
+      rows = await loadSuggestions(db, accountId, look.id);
+    }
+    return visibleSuggestions(rows);
   }
 
   if (action === "hide") {
-    if (!suggestions.some(({ id }) => id === input.id)) {
+    if (typeof input.id !== "string" || !input.id) {
+      throw new TypeError("A shopping suggestion is required.");
+    }
+    const hidden = await db.prepare(`
+      UPDATE shopping_suggestions
+      SET hidden_at = COALESCE(hidden_at, CURRENT_TIMESTAMP)
+      WHERE id = ? AND saved_look_id IN (
+        SELECT id FROM saved_looks WHERE id = ? AND user_id = ?
+      )
+      RETURNING id
+    `).bind(input.id, look.id, accountId).first();
+    if (!hidden) {
       throw Object.assign(new Error("This suggestion could not be found."), { status: 404 });
     }
-    await db.prepare(`
-      INSERT INTO planner_hidden_suggestions (look_id, suggestion_id)
-      SELECT id, ? FROM planner_saved_looks WHERE id = ? AND account_id = ?
-      ON CONFLICT (look_id, suggestion_id) DO NOTHING
-    `).bind(input.id, look.id, accountId).run();
     return { hidden: true };
   }
 
