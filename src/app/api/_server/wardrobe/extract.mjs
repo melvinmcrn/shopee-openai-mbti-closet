@@ -2,7 +2,7 @@ import { deletePrivateFile, readPrivateFile, writePrivateFile } from "../private
 import { fileUrl } from "../wardrobe-files.mjs";
 import { fixtures } from "./extraction-fixtures.mjs";
 import { ExtractionImageError, normalizePhoto } from "./extraction-image.mjs";
-import { LunaExtractionError, lunaExtraction } from "./extraction-luna.mjs";
+import { LunaExtractionError, lunaBatchExtraction, lunaExtraction } from "./extraction-luna.mjs";
 
 const columns = "id, name, category, garment_type, color, image_file_id, confirmed_at, extraction_source";
 const maxPhotoBytes = 8 * 1024 * 1024;
@@ -59,7 +59,7 @@ export async function extract(request, env, userId, id) {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-export async function extractDraft(env, userId, itemId) {
+async function prepareDraft(env, userId, itemId, dimension) {
   if (!Number.isSafeInteger(itemId) || itemId < 1) return failure("Wardrobe item not found.", "item_not_found", 404);
   const draft = await loadItem(env, userId, itemId);
   if (!draft) return failure("Wardrobe item not found.", "item_not_found", 404);
@@ -83,28 +83,100 @@ export async function extractDraft(env, userId, itemId) {
     return failure("Choose a photo that is 8 MB or smaller for extraction.", "unsupported_photo", 413);
   }
 
-  let extracted;
-  let png;
-  let source;
   try {
     const bytes = new Uint8Array(await photoFile.arrayBuffer());
     const fixture = fixturesEnabled ? await fixtureFor(bytes) : null;
     if (!fixture && !apiKey) return failure(unavailable, "extraction_unavailable", 503);
     if (fixture) {
-      extracted = fixture;
-      source = "fixture";
-      png = Uint8Array.from(atob(fixture.pngBase64), (char) => char.charCodeAt(0));
-    } else {
-      extracted = await lunaExtraction(await normalizePhoto(bytes), apiKey);
-      source = "luna";
-      png = extracted.png;
+      return { draft, fixture };
     }
+    return { draft, photo: await normalizePhoto(bytes, dimension), apiKey };
   } catch (error) {
-    if (error instanceof LunaExtractionError) return failure(error.message, error.code, error.status);
     if (error instanceof ExtractionImageError) return failure(error.message, "unsupported_photo", error.status);
     throw error;
   }
+}
 
+function lunaFailure(error) {
+  if (error instanceof LunaExtractionError) return failure(error.message, error.code, error.status);
+  console.warn("Wardrobe extraction failed after draft upload");
+  return failure(unavailable, "extraction_unavailable", 503);
+}
+
+function persistFixture(env, userId, { draft, fixture }) {
+  const png = Uint8Array.from(atob(fixture.pngBase64), (char) => char.charCodeAt(0));
+  return persistExtraction(env, userId, draft, fixture, png, "fixture");
+}
+
+export async function extractDraft(env, userId, itemId) {
+  const pending = await prepareDraft(env, userId, itemId);
+  if (!pending.draft) return pending;
+  if (pending.fixture) return persistFixture(env, userId, pending);
+
+  try {
+    const data = await lunaExtraction(pending.photo, pending.apiKey);
+    return await persistExtraction(env, userId, pending.draft, data, data.png, "luna");
+  } catch (error) {
+    if (error instanceof LunaExtractionError) return lunaFailure(error);
+    throw error;
+  }
+}
+
+export async function extractDraftBatch(env, userId, ids) {
+  if (ids.length > 20) throw new RangeError("Too many wardrobe drafts");
+  if (ids.length === 1) {
+    try {
+      return [await extractDraft(env, userId, ids[0])];
+    } catch (error) {
+      return [lunaFailure(error)];
+    }
+  }
+  const outcomes = new Array(ids.length);
+  const pending = [];
+  for (const [index, id] of ids.entries()) {
+    try {
+      const item = await prepareDraft(env, userId, id, 640);
+      if (!item.draft) outcomes[index] = item;
+      else if (item.fixture) outcomes[index] = await persistFixture(env, userId, item);
+      else pending.push({ index, ...item });
+    } catch (error) {
+      outcomes[index] = lunaFailure(error);
+    }
+  }
+  if (!pending.length) return outcomes;
+
+  let results;
+  try {
+    const apiKey = pending[0].apiKey;
+    results = pending.length === 1
+      ? [await lunaExtraction(pending[0].photo, apiKey)]
+      : await lunaBatchExtraction(pending.map(({ photo }) => photo), apiKey);
+  } catch (error) {
+    const failed = lunaFailure(error);
+    for (const { index } of pending) outcomes[index] = failed;
+    return outcomes;
+  }
+
+  for (let offset = 0; offset < pending.length; offset += 4) {
+    await Promise.all(pending.slice(offset, offset + 4).map(async ({ index, draft }, i) => {
+      const data = results[offset + i];
+      if (!data) {
+        outcomes[index] = failure("No valid cutout was returned for this garment.", "invalid_extraction", 502);
+        return;
+      }
+      try {
+        outcomes[index] = await persistExtraction(env, userId, draft, data, data.png, "luna");
+      } catch (error) {
+        outcomes[index] = lunaFailure(error);
+      }
+    }));
+  }
+  return outcomes;
+}
+
+async function persistExtraction(env, userId, draft, extracted, png, source) {
+  const itemId = draft.id;
+  const account = { id: userId };
   // Each run writes a separate object so parallel model responses cannot overwrite the winner.
   const key = await writePrivateFile(env, account, png, "image/png");
   let updated;

@@ -461,3 +461,21 @@ test("detached originals remain queued when object deletion fails", async (t) =>
   assert.deepEqual([...files.keys()], [item.imageFileId]);
   assert.equal(db.prepare("SELECT state FROM private_files WHERE file_id = ?").get(original), undefined);
 });
+
+test("an upstream redirect is not followed and the uploaded original remains private", async (t) => {
+  const logs = t.mock.method(console, "warn", () => {});
+  const provider = t.mock.method(globalThis, "fetch", (url, flags) => {
+    assert.equal(url, "https://api.openai.com/v1/responses");
+    assert.equal(flags.redirect, "manual");
+    return new Response(null, { status: 302, headers: { Location: "https://unexpected.example/" } });
+  });
+  const { run, files } = scenario(samplePhoto(), { OPENAI_API_KEY: "mock-key" });
+  const response = await run();
+  assert.equal(response.status, 502);
+  assert.equal((await response.json()).code, "extraction_failed");
+  assert.equal(provider.mock.callCount(), 1);
+  assert.deepEqual([...files.keys()], [original]);
+  assert.deepEqual(logs.mock.calls[0].arguments, [
+    "Wardrobe extraction upstream", { stage: "provider_http", status: 302 },
+  ]);
+});
