@@ -1,5 +1,5 @@
 export type Garment = { id: string; name: string; color: string; category: string; imageRef: string };
-export type Look = { id: string; occasion: string; explanation: string; slots: Record<string, string> };
+export type Look = { id: string; profileRef?: string; occasion: string; explanation: string; slots: Record<string, string> };
 export type Brief = { id?: string; occasion: string; timing: string; location: string; formality: string; comfort: string; preferences: string[] };
 export type SavedLook = { id: string; occasion: string; explanation: string; createdAt: string; slots: Record<string, Garment>; originalSlots: Record<string, Garment> };
 

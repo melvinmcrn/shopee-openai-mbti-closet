@@ -11,7 +11,7 @@ type PreviewProps = {
   onBack: () => void;
 };
 
-const slotOrder = ["top", "bottom", "dress", "shoes", "outerwear", "accessory"];
+const slotOrder = ["other", "top", "bottom", "dress", "shoes", "outerwear", "accessory"];
 const buttonClass =
   "min-h-11 rounded-xl px-4 py-2 text-sm font-semibold transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:cursor-not-allowed disabled:opacity-60";
 

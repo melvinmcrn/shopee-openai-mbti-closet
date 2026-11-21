@@ -15,7 +15,7 @@ type Wear = { id: string; date: string; rating: number | null; note: string | nu
 type Suggestion = { id: string; title: string; url: string; sponsored: boolean };
 type ItemsResult<T> = { items: T[] } | { error: string };
 
-const slotOrder = ["top", "bottom", "dress", "shoes", "outerwear", "accessory"];
+const slotOrder = ["other", "top", "bottom", "dress", "shoes", "outerwear", "accessory"];
 const secondaryButton =
   "inline-flex min-h-11 items-center justify-center rounded-full border border-divider px-5 py-2 text-sm font-semibold text-secondary transition hover:bg-selected focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:opacity-60";
 

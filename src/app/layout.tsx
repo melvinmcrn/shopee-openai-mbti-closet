@@ -41,7 +41,7 @@ export const metadata: Metadata = {
   appleWebApp: { capable: true, statusBarStyle: "default", title: "Closet" },
 };
 
-export const viewport: Viewport = { themeColor: "#FCFAF6" };
+export const viewport: Viewport = { themeColor: "#FCFAF6", viewportFit: "cover" };
 
 const website = {
   "@context": "https://schema.org",

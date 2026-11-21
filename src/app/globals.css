@@ -2,6 +2,7 @@
 
 :root {
   color-scheme: light;
+  --footer-navigation-height: calc(68px + env(safe-area-inset-bottom, 0px));
   --palette-primary: #ef5b5b;
   --palette-primary-hover: #e55353;
   --palette-on-primary: #fff;

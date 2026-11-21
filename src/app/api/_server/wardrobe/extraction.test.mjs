@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { crc32, deflateSync } from "node:zlib";
 import { decode, encode } from "fast-png";
 import { retryPrivateFileCleanup } from "../private-files.mjs";
 import { fileUrl } from "../wardrobe-files.mjs";
@@ -200,6 +201,137 @@ test("one Luna High Fast response supplies editable metadata and the exact priva
   assert.equal(provider.mock.callCount(), 1);
 });
 
+test("accepts phased commentary, reasoning and split text in the final assistant message", async (t) => {
+  const full = fakeLuna(sampleOutput());
+  const final = full.output[2];
+  const json = final.content[0].text;
+  final.phase = "final_answer";
+  final.content = [
+    { type: "output_text", text: json.slice(0, 21) },
+    { type: "output_text", text: json.slice(21) },
+  ];
+  full.output.unshift({
+    type: "message", role: "assistant", status: "completed", phase: "commentary",
+    content: [{ type: "output_text", text: "I’ll isolate the bag." }],
+  });
+  full.output.push({ ...full.output[0], phase: null });
+  const provider = t.mock.method(globalThis, "fetch", async () => Response.json(full));
+  const { run, files } = scenario(samplePhoto(), { OPENAI_API_KEY: "secret" });
+  const response = await run();
+  assert.equal(response.status, 200);
+  const { item } = await response.json();
+  assert.equal(item.name, "Navy canvas bag");
+  assert.deepEqual(files.get(item.imageFileId).bytes, sampleCutout());
+  assert.equal(provider.mock.callCount(), 1);
+});
+
+test("accepts the last unlabelled assistant message when the API omits phases", async (t) => {
+  const full = fakeLuna(sampleOutput());
+  full.output.unshift({
+    type: "message", role: "assistant", status: "completed",
+    content: [{ type: "output_text", text: "I’ll isolate the bag." }],
+  });
+  const provider = t.mock.method(globalThis, "fetch", async () => Response.json(full));
+  const { run } = scenario(samplePhoto(), { OPENAI_API_KEY: "secret" });
+  assert.equal((await run()).status, 200);
+  assert.equal(provider.mock.callCount(), 1);
+});
+
+function pngChunk(type, body) {
+  const chunk = Buffer.alloc(12 + body.length);
+  const content = Buffer.concat([Buffer.from(type), Buffer.from(body)]);
+  chunk.writeUInt32BE(body.length);
+  content.copy(chunk, 4);
+  chunk.writeUInt32BE(crc32(content), chunk.length - 4);
+  return chunk;
+}
+
+function palettePng({ transparency = [0], firstRow = 0x40, extraChunks = [] } = {}) {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(2);
+  header.writeUInt32BE(2, 4);
+  header[8] = 1; // Two one-bit indices per row plus row padding.
+  header[9] = 3;
+  return Buffer.concat([
+    sampleCutout().subarray(0, 8),
+    pngChunk("IHDR", header),
+    pngChunk("PLTE", [255, 255, 255, 12, 31, 56]),
+    ...(transparency ? [pngChunk("tRNS", transparency)] : []),
+    ...extraChunks,
+    pngChunk("IDAT", deflateSync(Uint8Array.of(0, firstRow, 0, 0x80))),
+    pngChunk("IEND", []),
+  ]);
+}
+
+function keyedRgbPng() {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(2);
+  header.writeUInt32BE(2, 4);
+  header[8] = 8;
+  header[9] = 2;
+  return Buffer.concat([
+    sampleCutout().subarray(0, 8),
+    pngChunk("IHDR", header),
+    pngChunk("tRNS", [0, 255, 0, 255, 0, 255]),
+    pngChunk("IDAT", deflateSync(Uint8Array.of(0, 255, 255, 255, 12, 31, 56, 0, 12, 31, 56, 255, 255, 255))),
+    pngChunk("IEND", []),
+  ]);
+}
+
+for (const [format, cutout] of [
+  ["indexed PNG with a transparent palette entry", palettePng()],
+  ["RGB PNG with a transparent color key", keyedRgbPng()],
+]) {
+  test("stores the exact " + format + " returned by the provider", async (t) => {
+    t.mock.method(globalThis, "fetch", async () => Response.json(fakeLuna(sampleOutput(), cutout)));
+    const { run, files } = scenario(samplePhoto(), { OPENAI_API_KEY: "secret" });
+    const response = await run();
+    assert.equal(response.status, 200);
+    const { item } = await response.json();
+    assert.deepEqual(Buffer.from(files.get(item.imageFileId).bytes), cutout);
+  });
+}
+
+test("logs one allowlisted stage, HTTP status and request ID without provider content or secrets", async (t) => {
+  const full = fakeLuna(sampleOutput());
+  const final = full.output[2];
+  final.phase = "final_answer";
+  final.content = [{ type: "refusal", refusal: "Private provider content" }];
+  full.output.unshift({
+    ...fakeLuna(sampleOutput()).output[2], phase: "commentary",
+  });
+  t.mock.method(globalThis, "fetch", async () => Response.json(full, {
+    headers: { "x-request-id": "req_TEST123456" },
+  }));
+  const logger = t.mock.method(console, "warn", () => {});
+  const { run, files } = scenario(samplePhoto(), { OPENAI_API_KEY: "secret" });
+  const response = await run();
+  assert.equal(response.status, 502);
+  assert.equal((await response.json()).code, "invalid_extraction");
+  assert.deepEqual([...files.keys()], [original]);
+  assert.equal(logger.mock.callCount(), 1);
+  assert.deepEqual(logger.mock.calls[0].arguments, [
+    "Wardrobe extraction upstream",
+    { stage: "final_message_refused", status: 200, requestId: "req_TEST123456" },
+  ]);
+});
+
+test("omits nonconforming request IDs and upstream error details from logs", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => Response.json(
+    { internal: "private upstream error details" },
+    { status: 400, headers: { "x-request-id": "arbitrary sensitive header value" } },
+  ));
+  const logger = t.mock.method(console, "warn", () => {});
+  const { run, files } = scenario(samplePhoto(), { OPENAI_API_KEY: "secret" });
+  const response = await run();
+  assert.equal(response.status, 502);
+  assert.equal((await response.json()).code, "extraction_failed");
+  assert.deepEqual([...files.keys()], [original]);
+  assert.deepEqual(logger.mock.calls.map((call) => call.arguments), [
+    ["Wardrobe extraction upstream", { stage: "provider_http", status: 400 }],
+  ]);
+});
+
 const withEditedImage = (properties) => {
   const full = fakeLuna(sampleOutput());
   Object.assign(full.output[1], properties);
@@ -217,6 +349,16 @@ for (const [caseName, responseBody] of [
   }],
   ["image only", () => ({ status: "completed", output: [fakeLuna(sampleOutput()).output[1]] })],
   ["opaque PNG", () => fakeLuna(sampleOutput(), samplePhoto())],
+  ["opaque indexed PNG", () => fakeLuna(sampleOutput(), palettePng({ transparency: null }))],
+  ["indexed PNG with all entries transparent", () => fakeLuna(sampleOutput(), palettePng({ transparency: [0, 0] }))],
+  ["PNG with excessive chunks", () => fakeLuna(sampleOutput(), palettePng({
+    extraChunks: Array.from({ length: 4096 }, () => pngChunk("tEXt", [65, 0, 66])),
+  }))],
+  ["commentary only", () => {
+    const full = fakeLuna(sampleOutput());
+    full.output[2].phase = "commentary";
+    return full;
+  }],
   ["empty alpha PNG", () => fakeLuna(sampleOutput(), encode({ width: 12, height: 12, data: new Uint8Array(12 * 12 * 4) }))],
   ["corrupt PNG", () => fakeLuna(sampleOutput(), sampleCutout().subarray(0, 55))],
   ["malformed base64", () => withEditedImage({ result: "not a base64 PNG" })],
@@ -226,6 +368,7 @@ for (const [caseName, responseBody] of [
   ["empty name", () => fakeLuna({ ...sampleOutput(), name: " " })],
 ]) {
   test("rejects " + caseName + " and preserves the original draft", async (t) => {
+    const logger = t.mock.method(console, "warn", () => {});
     const provider = t.mock.method(globalThis, "fetch", async () => Response.json(responseBody()));
     const { run, files, db } = scenario(samplePhoto(), { OPENAI_API_KEY: "secret" });
     const response = await run();
@@ -237,6 +380,10 @@ for (const [caseName, responseBody] of [
     assert.equal(row.extraction_source, null);
     assert.equal(row.image_file_id, original);
     assert.equal(provider.mock.callCount(), 1);
+    assert.equal(logger.mock.callCount(), 1);
+    if (["opaque PNG", "opaque indexed PNG", "empty alpha PNG"].includes(caseName)) {
+      assert.deepEqual(logger.mock.calls[0].arguments[1], { stage: "image_alpha", status: 200 });
+    }
   });
 }
 

@@ -1,4 +1,4 @@
-const slotNames = new Set(["top", "bottom", "dress", "shoes", "outerwear", "accessory"]);
+const slotNames = new Set(["top", "bottom", "dress", "shoes", "outerwear", "accessory", "other"]);
 
 function numericId(value) {
   if (typeof value !== "string" || !/^[1-9]\d*$/.test(value)) return null;

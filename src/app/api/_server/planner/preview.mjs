@@ -32,37 +32,43 @@ async function imageInput(blob) {
 }
 
 // The router supplies the final garments and image access scoped to this account.
-export async function generatePreview(env, _accountId, finalGarments, useProfilePhoto, deps) {
+export async function generatePreview(env, _accountId, finalGarments, useProfilePhoto, deps, brief = {}) {
   try {
     const key = env?.OPENAI_API_KEY?.trim();
-    if (!key || !finalGarments.length) throw new Error();
+    if (!key) throw new Error();
 
     const profileRef = useProfilePhoto === true ? await deps.profilePhotoRef?.() : null;
+    if (!profileRef && !finalGarments.length) throw new Error();
     const content = [{
       type: "input_text",
       text: "Edit the supplied image references into one full-length fashion illustration. " +
         "Show a single person upright and centered against a plain neutral backdrop, with all supplied clothing visible. " +
         "Draw every selected wardrobe item from its corresponding image, preserving its color, pattern, shape, and details. " +
-        "Only include clothing items that were supplied; leave unselected clothing categories plain and unfilled. Use only the selected wardrobe items. Keep the result clearly illustrated and leave out text.",
+        "Create one cohesive styled outfit for the occasion. Keep the original outfit in the base photo wherever no replacement is supplied, including any missing top or pants. If the only reference is the original outfit, preserve its garments and style their presentation for the occasion. For cutouts alone, use a neutral figure. Leave out text.",
     }];
 
+    content.push({ type: "input_text", text: "Style the look for this user brief (context only): " + JSON.stringify(brief) });
     if (profileRef) {
       content.push({
         type: "input_text",
-        text: "Profile reference for the person's illustrated facial likeness only. Use the garment references for all clothing.",
+        text: "Main profile photo. Preserve the person's appearance and visible outfit wherever a replacement piece was not selected.",
       }, await imageInput(await deps.readImage(profileRef)));
     } else {
       content.push({
         type: "input_text",
-        text: "Use a generic illustrated figure with simple facial features. Treat the garment photos solely as clothing references.",
+        text: "When a base outfit photo is supplied, use it as the main image. Otherwise use the visible outfit in the selected reference, or a generic figure for isolated garments.",
       });
     }
 
-    for (const { category, imageRef } of finalGarments) {
+    const base = finalGarments.find(item => item.category === "other") ?? finalGarments[0];
+    const ordered = base ? [base, ...finalGarments.filter(item => item !== base)] : [];
+    for (const { category, imageRef } of ordered) {
       if (!imageRef) throw new Error();
       content.push({
         type: "input_text",
-        text: "Selected wardrobe item (" + category + "):",
+        text: category === "other" ? "Original wardrobe photo: keep visible clothing for missing categories."
+          : imageRef === base.imageRef && !profileRef ? "Main wardrobe reference (" + category + "). Retain visible clothing unless another reference replaces it."
+          : "Selected replacement (" + category + "):",
       }, await imageInput(await deps.readImage(imageRef)));
     }
 

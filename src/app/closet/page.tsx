@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 import { ClosetWordmark } from "../closet-wordmark";
+import { FooterNavigation } from "../footer-navigation";
 
 const categoryLabels = {
   top: "Top",
@@ -150,11 +151,6 @@ export default function ClosetPage() {
           <Link className="flex h-[30px] items-center" href="/" aria-label="Closet home">
             <ClosetWordmark />
           </Link>
-          <nav aria-label="Main" className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm font-semibold">
-            <Link aria-current="page" className="underline underline-offset-4" href="/closet">Closet</Link>
-            <Link className="hover:underline" href="/planner">Outfit planner</Link>
-            <Link className="hover:underline" href="/profile/settings">Profile settings</Link>
-          </nav>
         </div>
       </header>
 
@@ -327,6 +323,7 @@ export default function ClosetPage() {
           </ul>
         )}
       </div>
+      <FooterNavigation active="Wardrobe" />
     </main>
   );
 }

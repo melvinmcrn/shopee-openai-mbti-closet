@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ClosetWordmark } from "../closet-wordmark";
+import { FooterNavigation } from "../footer-navigation";
 import { api, type Brief, type Garment, type Look } from "./shared";
 import { PlannerHome } from "./home";
 import { Occasion } from "./occasion";
@@ -26,12 +27,16 @@ export default function PlannerPage() {
   const [reload, setReload] = useState(0);
   useEffect(() => {
     const readRoute = () => setScreen(window.location.hash.slice(1) || "home");
+    const changeScreen = () => {
+      readRoute();
+      window.scrollTo(0, 0);
+    };
     readRoute();
-    window.addEventListener("hashchange", readRoute);
+    window.addEventListener("hashchange", changeScreen);
     const restore = (event: PageTransitionEvent) => { if (event.persisted) window.location.reload(); };
     window.addEventListener("pageshow", restore);
     return () => {
-      window.removeEventListener("hashchange", readRoute);
+      window.removeEventListener("hashchange", changeScreen);
       window.removeEventListener("pageshow", restore);
     };
   }, []);
@@ -44,7 +49,6 @@ export default function PlannerPage() {
 
   function go(page: string) {
     window.location.hash = page;
-    window.scrollTo(0, 0);
   }
   function start() {
     setBrief({ ...emptyBrief, preferences: [] });
@@ -66,15 +70,21 @@ export default function PlannerPage() {
   else if (screen === "refine" && look) content = <Refine look={look} slots={slots} garments={garments} onChange={setSlots} onBack={() => go("compare")} onPreview={() => go("preview")} onSaved={id => go("saved/" + id)} />;
   else if (screen === "preview" && look) content = <Preview look={look} slots={slots} garments={garments} onBack={() => go("refine")} />;
   else content = <PlannerHome garments={garments} onNew={start} onSaved={() => go("saved")} />;
+  const activeTab = screen === "home" ? "Home" : screen === "saved" ? "Saved" : null;
   return <main className="min-h-screen bg-canvas px-5 py-6 text-text sm:px-10">
     <div className="mx-auto max-w-4xl">
-      <nav aria-label="Planner navigation" className="mb-7 flex items-center gap-5 border-b border-divider pb-4 text-sm font-medium">
+      <header className="mb-7 flex items-center gap-5 border-b border-divider pb-4 text-sm font-medium">
         <a href="#home" className="mr-auto flex h-[30px] items-center" aria-label="Outfit planner home">
           <ClosetWordmark />
         </a>
-        <a href="#saved">Saved</a><Link href="/account">Account</Link>
-      </nav>
+        {!activeTab && (
+          <nav aria-label="Planner navigation" className="flex gap-5">
+            <a href="#saved">Saved</a><Link href="/account">Account</Link>
+          </nav>
+        )}
+      </header>
       {content}
     </div>
+    {activeTab && <FooterNavigation active={activeTab} />}
   </main>;
 }
