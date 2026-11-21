@@ -17,10 +17,10 @@ const garmentCategories = [
 ];
 
 const inputClass =
-  "mt-2 min-h-12 w-full rounded-xl border border-[#d4bdce] bg-white px-3 py-2 text-base text-[#302331] placeholder:text-[#776575] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#713f65]";
+  "mt-2 min-h-12 w-full rounded-xl border border-divider bg-surface px-3 py-2 text-base text-text placeholder:text-supporting focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary";
 
 const actionClass =
-  "min-h-11 rounded-lg px-3 text-sm font-semibold text-[#713f65] hover:bg-[#f1e9ee] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#713f65] disabled:opacity-60";
+  "min-h-11 rounded-lg px-3 text-sm font-semibold text-secondary hover:bg-selected focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:opacity-60";
 
 export function Style({ brief, onNext, onBack }: StyleProps) {
   const [formality, setFormality] = useState(brief.formality);
@@ -61,7 +61,7 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
   }
 
   return (
-    <section aria-labelledby="style-heading" className="mx-auto max-w-2xl text-[#302331]">
+    <section aria-labelledby="style-heading" className="mx-auto max-w-2xl text-text">
       <button type="button" onClick={onBack} disabled={saving} className={`${actionClass} -ml-3 mb-3`}>
         <span aria-hidden="true">← </span>Back to occasion
       </button>
@@ -69,13 +69,13 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
         <h1 id="style-heading" className="text-3xl font-semibold tracking-tight sm:text-4xl">
           Today’s style
         </h1>
-        <p className="mt-2 text-sm text-[#655467]">What would you like to wear for {brief.occasion}?</p>
+        <p className="mt-2 text-sm text-supporting">What would you like to wear for {brief.occasion}?</p>
       </header>
 
-      <form onSubmit={save} className="mt-6 rounded-2xl border border-[#e6dae2] bg-white p-5 sm:p-7">
+      <form onSubmit={save} className="mt-6 rounded-2xl border border-divider bg-surface p-5 sm:p-7">
         <fieldset disabled={saving} className="grid gap-5 sm:grid-cols-2">
           <label className="text-sm font-semibold">
-            Formality <span className="font-normal text-[#655467]">(optional)</span>
+            Formality <span className="font-normal text-supporting">(optional)</span>
             <input
               name="formality"
               value={formality}
@@ -86,7 +86,7 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
             />
           </label>
           <label className="text-sm font-semibold">
-            Comfort <span className="font-normal text-[#655467]">(optional)</span>
+            Comfort <span className="font-normal text-supporting">(optional)</span>
             <input
               name="comfort"
               value={comfort}
@@ -100,14 +100,14 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
 
         <fieldset disabled={saving} aria-describedby="garment-preference-hint" className="mt-6">
           <legend className="text-sm font-semibold">Garment preferences</legend>
-          <p id="garment-preference-hint" className="mt-1 text-sm text-[#655467]">
+          <p id="garment-preference-hint" className="mt-1 text-sm text-supporting">
             Choose any categories you’d like to prioritize.
           </p>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
             {garmentCategories.map(({ value, label }) => (
               <label
                 key={value}
-                className="flex min-h-12 items-center gap-2 rounded-xl border border-[#d4bdce] px-3 py-2 text-sm font-medium has-checked:border-[#713f65] has-checked:bg-[#f1e9ee] has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-[#713f65]"
+                className="flex min-h-12 items-center gap-2 rounded-xl border border-divider px-3 py-2 text-sm font-medium has-checked:border-secondary has-checked:bg-selected has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-secondary"
               >
                 <input
                   type="checkbox"
@@ -115,7 +115,7 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
                   value={value}
                   checked={preferences.includes(value)}
                   onChange={(event) => updatePreference(value, event.target.checked)}
-                  className="size-4 shrink-0 accent-[#713f65]"
+                  className="size-4 shrink-0 accent-primary"
                 />
                 {label}
               </label>
@@ -131,11 +131,11 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
           </button>
         </fieldset>
 
-        {error && <p role="alert" className="mt-4 text-sm text-[#8c2548]">{error}</p>}
+        {error && <p role="alert" className="mt-4 text-sm text-danger">{error}</p>}
         <button
           type="submit"
           disabled={saving}
-          className="mt-4 min-h-12 rounded-full bg-[#613853] px-6 text-sm font-semibold text-white transition-colors hover:bg-[#4e2943] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#713f65] disabled:opacity-60"
+          className="mt-4 min-h-12 rounded-full bg-primary px-6 text-sm font-semibold text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:opacity-60"
         >
           {saving ? "Saving…" : "Continue"}
         </button>

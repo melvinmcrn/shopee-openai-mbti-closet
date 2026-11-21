@@ -25,26 +25,26 @@ export function PlannerHome({ garments, onNew, onSaved }: PlannerHomeProps) {
     <>
       <section
         aria-labelledby="planner-title"
-        className="rounded-3xl bg-[#2a1f29] px-6 py-9 text-[#fff9f4] sm:px-10 sm:py-14"
+        className="rounded-3xl bg-secondary px-6 py-9 text-canvas sm:px-10 sm:py-14"
       >
         <h1 id="planner-title" className="text-4xl font-semibold tracking-tight sm:text-6xl">
           Outfit planner
         </h1>
-        <p className="mt-4 max-w-md leading-relaxed text-[#e9dce4]">
+        <p className="mt-4 max-w-md leading-relaxed text-selected">
           Tell us what you’re dressing for. Compare outfits from your closet and save the looks you want to wear again.
         </p>
         <div className="mt-7 flex flex-wrap gap-3">
           <button
             type="button"
             onClick={onNew}
-            className="min-h-12 rounded-full bg-[#f7e8ef] px-6 font-semibold text-[#2a1f29] transition-colors hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
+            className="min-h-12 rounded-full bg-primary px-6 font-semibold text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-canvas"
           >
             Plan a new outfit
           </button>
           <button
             type="button"
             onClick={onSaved}
-            className="min-h-12 rounded-full border border-[#a594a2] px-6 font-semibold text-[#fff9f4] transition-colors hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
+            className="min-h-12 rounded-full border border-canvas/60 px-6 font-semibold text-canvas transition-colors hover:bg-canvas/10 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-canvas"
           >
             Saved looks
           </button>
@@ -58,7 +58,7 @@ export function PlannerHome({ garments, onNew, onSaved }: PlannerHomeProps) {
           {categoryCounts.map(({ label, count }) => (
             <div
               key={label}
-              className="rounded-2xl border border-current/15 bg-current/5 px-4 py-3"
+              className="rounded-2xl border border-divider bg-surface px-4 py-3"
             >
               <dt className="text-sm font-medium">{label}</dt>
               <dd className="mt-1 text-2xl font-semibold tabular-nums">{count}</dd>
