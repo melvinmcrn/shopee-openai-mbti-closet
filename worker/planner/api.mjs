@@ -1,6 +1,10 @@
 import { saveBrief, getBrief } from "./brief.mjs";
-import { generateLooks } from "./decision.mjs";
-import { saveLook, listLooks, getLook } from "./saved.mjs";
+import { readOption, generateOptions } from "./options.mjs";
+import { wearAction } from "./wear.mjs";
+import { shoppingAction } from "./shopping.mjs";
+import { generatePreview } from "./preview.mjs";
+import { previewFiles } from "./preview-files.mjs";
+import { saveLook, listLooks, getLook, snapshotSlots } from "./saved.mjs";
 
 export class PlannerError extends Error {
   constructor(status, message) {
@@ -26,9 +30,7 @@ export async function getGarments(env, accountId) {
 }
 
 async function option(db, accountId, id) {
-  const row = await db.prepare("SELECT option_json FROM planner_options WHERE account_id = ? AND id = ?")
-    .bind(accountId, id).first();
-  return JSON.parse(found(row).option_json);
+  return found(await readOption(db, accountId, id));
 }
 
 export async function dispatchPlanner(env, accountId, action, input = {}, dependencies = {}) {
@@ -42,13 +44,16 @@ export async function dispatchPlanner(env, accountId, action, input = {}, depend
     case "option": return option(db, accountId, input.id);
     case "generate": {
       const brief = found(await getBrief(db, accountId, input.briefId));
-      const generation = await (dependencies.generateLooks ?? generateLooks)(env, brief, await wardrobe(), input.priorLooks);
-      if (generation.status !== "ready") return generation;
-      const looks = generation.looks.map(look => ({ ...look, id: crypto.randomUUID(), occasion: brief.occasion }));
-      await db.batch(looks.map(look => db.prepare(
-        "INSERT INTO planner_options (account_id, id, brief_id, option_json) VALUES (?, ?, ?, ?)"
-      ).bind(accountId, look.id, brief.id, JSON.stringify(look))));
-      return { status: "ready", looks };
+      return generateOptions(env, accountId, brief, await wardrobe(), input.priorLooks, dependencies.generateLooks);
+    }
+    case "wearList": case "wearAdd": case "wearGet": case "wearUpdate":
+      return wearAction(db, accountId, action, input);
+    case "shopping": case "hide": return shoppingAction(db, accountId, action, input);
+    case "preview": {
+      const source = await option(db, accountId, input.optionId);
+      const final = snapshotSlots(input.slots, await wardrobe());
+      return generatePreview(env, accountId, Object.values(final), input.useProfilePhoto,
+        dependencies.preview ?? previewFiles(env, accountId, source.id));
     }
     case "save": return saveLook(db, accountId, await option(db, accountId, input.optionId), input.slots, await wardrobe());
     case "list": return listLooks(db, accountId);

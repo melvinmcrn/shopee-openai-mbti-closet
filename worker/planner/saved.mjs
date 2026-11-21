@@ -6,7 +6,7 @@ function numericId(value) {
   return Number.isSafeInteger(id) ? id : null;
 }
 
-function snapshotSlots(slots, garments) {
+export function snapshotSlots(slots, garments) {
   if (!slots || typeof slots !== "object" || Array.isArray(slots)) {
     throw new TypeError("A look must provide its garment slots");
   }
@@ -60,7 +60,7 @@ function selectSlots(table, lookKey, lookId) {
 
 async function readLooks(db, accountId, id) {
   const { results } = await db.prepare(`
-    SELECT look.id, look.source_option_id, request.occasion, option.explanation,
+    SELECT look.id, look.source_option_id, look.name AS occasion, option.explanation,
       strftime('%Y-%m-%dT%H:%M:%fZ', look.saved_at) AS created_at,
       ${selectSlots("saved_look_items", "saved_look_id", "look.id")} AS slots,
       ${selectSlots("outfit_option_items", "option_id", "look.source_option_id")} AS original_slots
