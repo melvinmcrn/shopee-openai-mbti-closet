@@ -8,6 +8,7 @@ import worker from "./index.mjs";
 const siteOrigin = "https://mbti-closet.stonyimpala.chatgpt.site";
 const sessionCookie = "__Secure-authjs.session-token";
 const authSecret = "local-integration-test-secret";
+const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jvYQAAAAASUVORK5CYII=", "base64");
 const emptyProfile = { heightCm: null, weightKg: null, styles: [], facePhotoUrl: null, setupCompletedAt: null };
 
 function setup(t) {
@@ -52,10 +53,20 @@ function setup(t) {
   const objects = new Map();
   const BUCKET = {
     async put(key, bytes, { httpMetadata }) {
-      objects.set(key, { body: Uint8Array.from(bytes), httpMetadata });
+      objects.set(key, { image: new Blob([bytes]), httpMetadata });
+    },
+    async head(key) {
+      const object = objects.get(key);
+      return object ? { size: object.image.size, httpMetadata: object.httpMetadata } : null;
     },
     async get(key) {
-      return objects.get(key) ?? null;
+      const object = objects.get(key);
+      if (!object) return null;
+      return {
+        ...await this.head(key),
+        body: object.image.stream(),
+        arrayBuffer: () => object.image.arrayBuffer(),
+      };
     },
     async delete(key) {
       objects.delete(key);
@@ -69,12 +80,23 @@ function setup(t) {
   ]));
   t.after(() => { delete globalThis.SITE_ASSETS; });
 
-  return {
+  const env = {
     DB,
     BUCKET,
     AUTH_SECRET: authSecret,
     GOOGLE_CLIENT_ID: "unused-test-client",
     GOOGLE_CLIENT_SECRET: "unused-test-client-secret",
+  };
+  return {
+    env,
+    async signIn(googleSubject, email) {
+      // Reproduce the account row established by the Google callback before issuing a JWT.
+      await DB.prepare(`
+        INSERT INTO users (auth_provider, auth_subject, email) VALUES ('google', ?, ?)
+        ON CONFLICT (auth_provider, auth_subject) DO UPDATE SET email = excluded.email
+      `).bind(googleSubject, email).run();
+      return cookieFor({ googleSubject, email });
+    },
   };
 }
 
@@ -84,15 +106,15 @@ async function cookieFor(token) {
 }
 
 function client(env, cookie) {
-  return (path, { method = "GET", json, origin = siteOrigin } = {}) => {
+  return (path, { method = "GET", json, form, origin = siteOrigin } = {}) => {
     const headers = new Headers();
     if (cookie) headers.set("Cookie", cookie);
-    if (method !== "GET" && origin !== null) headers.set("Origin", origin);
+    if (method !== "GET" && method !== "HEAD" && origin !== null) headers.set("Origin", origin);
     if (json !== undefined) headers.set("Content-Type", "application/json");
     return worker.fetch(new Request(siteOrigin + path, {
       method,
       headers,
-      body: JSON.stringify(json),
+      body: form ?? JSON.stringify(json),
     }), env);
   };
 }
@@ -104,22 +126,36 @@ async function jsonSuccess(response) {
 }
 
 test("setup saves three confirmed pieces and optional styles by Google account across sessions", async (t) => {
-  const env = setup(t);
-  const firstCookie = await cookieFor({ googleSubject: "google-owner", email: "before@example.com" });
+  const { env, signIn } = setup(t);
+  const firstCookie = await signIn("google-owner", "before@example.com");
   const owner = client(env, firstCookie);
+  const account = { method: "POST" };
+  const originalSession = await jsonSuccess(await owner("/api/account", account));
+  assert.ok(Number.isSafeInteger(originalSession.user.id));
   assert.deepEqual(await jsonSuccess(await owner("/api/profile")), emptyProfile);
 
   const { items: samples } = await jsonSuccess(await owner("/api/wardrobe/sample", { method: "POST" }));
   assert.deepEqual(await jsonSuccess(await owner("/api/wardrobe/items")), { items: [] });
-  const top = samples.find(({ category }) => category === "top");
   const shoes = samples.filter(({ category }) => category === "shoes");
-  assert.ok(top);
   assert.equal(shoes.length, 2);
   assert.notEqual(shoes[0].id, shoes[1].id);
   assert.notEqual(shoes[0].imageUrl, shoes[1].imageUrl);
 
-  const confirmed = [];
-  for (const piece of [top, ...shoes]) {
+  const form = new FormData();
+  form.set("draftKey", crypto.randomUUID());
+  form.set("image", new Blob([png], { type: "image/png" }), "top.png");
+  const { id: topId } = await jsonSuccess(await owner("/api/wardrobe/upload", { method: "POST", form }));
+  assert.equal((await jsonSuccess(await owner("/api/wardrobe/upload", { method: "POST", form }))).id, topId);
+  const { item: top } = await jsonSuccess(await owner(`/api/wardrobe/items/${topId}`, {
+    method: "PATCH",
+    json: { name: "My uploaded top", category: "top", confirm: true },
+  }));
+  assert.equal(top.id, topId);
+  assert.equal(top.name, "My uploaded top");
+  assert.equal(top.category, "top");
+
+  const confirmed = [top];
+  for (const piece of shoes) {
     const name = `My ${piece.name.toLowerCase()}`;
     const { item } = await jsonSuccess(await owner(`/api/wardrobe/items/${piece.id}`, {
       method: "PATCH",
@@ -129,7 +165,7 @@ test("setup saves three confirmed pieces and optional styles by Google account a
     confirmed.push(item);
   }
 
-  const styles = ["Casual", "Minimal"];
+  const styles = ["Casual", "Minimalist"];
   const setStyles = { method: "PATCH", json: { styles } };
   assert.equal((await owner("/api/profile", { ...setStyles, origin: null })).status, 403);
   assert.equal((await owner("/api/profile", { ...setStyles, origin: "https://elsewhere.example" })).status, 403);
@@ -143,12 +179,22 @@ test("setup saves three confirmed pieces and optional styles by Google account a
   assert.deepEqual(completed, { ...emptyProfile, styles, setupCompletedAt: completed.setupCompletedAt });
 
   // Sign in again after changing email. The Google subject is the stable identity.
-  const secondCookie = await cookieFor({ googleSubject: "google-owner", email: "after@example.com" });
+  const secondCookie = await signIn("google-owner", "after@example.com");
   assert.notEqual(secondCookie, firstCookie);
   const returningOwner = client(env, secondCookie);
+  const returningSession = await jsonSuccess(await returningOwner("/api/account", account));
+  assert.equal(returningSession.user.id, originalSession.user.id);
   assert.deepEqual(await jsonSuccess(await returningOwner("/api/profile")), completed);
   const { items: active } = await jsonSuccess(await returningOwner("/api/wardrobe/items"));
   assert.deepEqual(active, confirmed.toSorted((left, right) => right.id - left.id));
+  const topImage = await returningOwner(top.imageUrl);
+  assert.equal(topImage.status, 200);
+  assert.equal(topImage.headers.get("Content-Type"), "image/png");
+  assert.deepEqual(Buffer.from(await topImage.arrayBuffer()), png);
+  const topImageHead = await returningOwner(top.imageUrl, { method: "HEAD" });
+  assert.equal(topImageHead.status, 200);
+  assert.equal(topImageHead.headers.get("Content-Length"), String(png.byteLength));
+  assert.equal(topImageHead.body, null);
 
   const shoeImages = [];
   for (const { imageUrl } of shoes) {
@@ -162,7 +208,9 @@ test("setup saves three confirmed pieces and optional styles by Google account a
   }
   assert.notDeepEqual(shoeImages[0], shoeImages[1]);
 
-  const otherOwner = client(env, await cookieFor({ googleSubject: "different-google-owner", email: "after@example.com" }));
+  const otherOwner = client(env, await signIn("different-google-owner", "after@example.com"));
+  const otherSession = await jsonSuccess(await otherOwner("/api/account", account));
+  assert.notEqual(otherSession.user.id, returningSession.user.id);
   assert.deepEqual(await jsonSuccess(await otherOwner("/api/profile")), emptyProfile);
   assert.deepEqual(await jsonSuccess(await otherOwner("/api/wardrobe/items")), { items: [] });
   assert.equal((await otherOwner(shoes[0].imageUrl)).status, 404);
@@ -170,6 +218,10 @@ test("setup saves three confirmed pieces and optional styles by Google account a
     method: "PATCH",
     json: { name: "Another account's item" },
   })).status, 404);
+
+  const unregistered = client(env, await cookieFor({ googleSubject: "unregistered-google-owner" }));
+  assert.equal(await jsonSuccess(await unregistered("/api/account", account)), null);
+  assert.equal((await unregistered("/api/profile")).status, 401);
 
   const signedOut = client(env);
   for (const path of ["/api/profile", "/api/wardrobe/items", shoes[0].imageUrl]) {
