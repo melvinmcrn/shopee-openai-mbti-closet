@@ -221,6 +221,65 @@ def run_flow(browser, device, base):
     context.close()
 
 
+def check_wardrobe_deletion(browser, device, base):
+    context, page = mobile_session(browser, device, base, "returning-session")
+    page.goto(f"{base}/closet/")
+    page.get_by_role("button", name="Delete Leather heels").tap()
+    expect(page.get_by_role("heading", name="Leather heels")).to_have_count(0)
+    page.get_by_role("button", name="Delete Walking flats").tap()
+    dialog = page.get_by_role("dialog")
+    expect(dialog).to_contain_text(OCCASION)
+    dialog.get_by_role("button", name="Cancel").tap()
+    expect(page.get_by_role("heading", name="Walking flats")).to_be_visible()
+    open_saved(page, base)
+
+    page.goto(f"{base}/closet/")
+    page.get_by_role("button", name="Delete Walking flats").tap()
+    dialog.get_by_role("button", name="Delete item and look").tap()
+    expect(page.get_by_role("heading", name="Walking flats")).to_have_count(0)
+    expect(page.get_by_role("heading", name="Silk blouse")).to_be_visible()
+    page.goto(f"{base}/planner/#saved")
+    expect(page.get_by_role("heading", name="No saved looks yet")).to_be_visible()
+    context.close()
+
+
+def check_outfit_upload(browser, device, base):
+    context, page = mobile_session(browser, device, base, "other-account")
+    page.goto(f"{base}/wardrobe/add/")
+    photo = Path(__file__).resolve().parents[1] / "public/sample-wardrobe/studio-model.webp"
+    page.get_by_label("Choose photos").set_input_files(photo)
+    page.get_by_role("button", name="Upload photos").tap()
+    review = page.get_by_role("link", name="Review 3 items")
+    expect(review).to_be_visible()
+    page.get_by_label("Choose more photos").set_input_files(photo)
+    remove = page.get_by_role("button", name=f"Remove {photo.name}")
+    expect(remove).to_be_visible()
+    expect(review).to_have_count(0)
+    remove.tap()
+    review.tap()
+    expect(page.get_by_text("3 items to review", exact=True)).to_be_visible()
+    forms = page.locator("form")
+    expect(forms).to_have_count(3)
+    photos = []
+    for form, name, category in zip(forms.all(), ["Striped shirt", "Straight jeans", "White sneakers"], ["top", "bottom", "shoes"]):
+        expect(form.get_by_label("Name", exact=True)).to_have_value(name)
+        expect(form.get_by_role("combobox", name="Category")).to_have_value(category)
+        image = form.get_by_role("img")
+        image.scroll_into_view_if_needed()
+        expect(image).not_to_have_js_property("naturalWidth", 0)
+        photos.append(image.get_attribute("src"))
+    assert len(set(photos)) == 3
+    forms.first.get_by_label("Name", exact=True).fill("My striped shirt")
+    forms.first.get_by_role("button", name="Confirm item").tap()
+    expect(page.get_by_text("2 items to review · 1 confirmed")).to_be_visible()
+    page.get_by_role("button", name="Confirm all").tap()
+    expect(page.get_by_text("No items to review · 3 confirmed")).to_be_visible()
+    page.goto(f"{base}/closet/")
+    for name in ["My striped shirt", "Straight jeans", "White sneakers"]:
+        expect(page.get_by_role("heading", name=name)).to_be_visible()
+    context.close()
+
+
 def main():
     root = Path(__file__).resolve().parent.parent
     output = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root / "out"
@@ -242,6 +301,8 @@ def main():
                     device = playwright.devices["iPhone 13"]
                     check_shared_navigation(browser, device, base)
                     run_flow(browser, device, base)
+                    check_wardrobe_deletion(browser, device, base)
+                    check_outfit_upload(browser, device, base)
                 finally:
                     browser.close()
         finally:

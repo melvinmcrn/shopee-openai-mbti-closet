@@ -18,7 +18,7 @@ function scenario(bytes, config) {
   const db = new DatabaseSync(":memory:");
   const migrations = new URL("../../../../../drizzle/", import.meta.url);
   const filesInOrder = readdirSync(migrations).sort();
-  for (const name of ["stylist", "private_files", "private_file_expiry", "wardrobe_extraction"]) {
+  for (const name of ["stylist", "private_files", "private_file_expiry", "wardrobe_extraction", "wardrobe_extraction_groups"]) {
     const file = filesInOrder.find((entry) => entry.endsWith("_" + name + ".sql"));
     assert.ok(file, "Missing migration for " + name);
     db.exec(readFileSync(new URL(file, migrations), "utf8"));
@@ -34,9 +34,21 @@ function scenario(bytes, config) {
         bind: (...params) => ({
           first: async () => db.prepare(sql).get(...params) ?? null,
           all: async () => ({ results: db.prepare(sql).all(...params) }),
+          execute: () => ({ results: db.prepare(sql).all(...params) }),
           run: async () => db.prepare(sql).run(...params),
         }),
       }),
+      async batch(statements) {
+        db.exec("BEGIN");
+        try {
+          const results = statements.map((statement) => statement.execute());
+          db.exec("COMMIT");
+          return results;
+        } catch (error) {
+          db.exec("ROLLBACK");
+          throw error;
+        }
+      },
     },
     BUCKET: {
       get: async (key) => {
@@ -67,7 +79,8 @@ for (const fixture of fixtures) {
     const response = await run();
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("Cache-Control"), "no-store");
-    const { item, source } = await response.json();
+    const { item, items, source } = await response.json();
+    assert.deepEqual(items, [item]);
     assert.equal(source, "fixture");
     assert.equal(item.name, fixture.name);
     assert.equal(item.category, fixture.category);
@@ -91,7 +104,7 @@ for (const fixture of fixtures) {
     }
     for (const point of [[0, 0], ...background]) assert.deepEqual(pixel(png, point), [0, 0, 0, 0]);
 
-    assert.deepEqual(await (await run()).json(), { source, item });
+    assert.deepEqual(await (await run()).json(), { source, item, items: [item] });
     assert.equal((await run(10)).status, 404);
   });
 }
@@ -110,20 +123,20 @@ test("requires explicit fixtures and refuses to classify unknown photos without 
   }
 });
 
-function fakeLuna(output, png = sampleCutout()) {
+function fakeLuna(garment, png = sampleCutout()) {
+  const metadata = { garments: garment ? [garment] : [] };
   return {
     status: "completed",
     output: [
       { type: "reasoning", summary: [] },
       { type: "image_generation_call", status: "completed", result: Buffer.from(png).toString("base64") },
-      { type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: JSON.stringify(output) }] },
+      { type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: JSON.stringify(metadata) }] },
     ],
   };
 }
 
 function sampleOutput() {
   return {
-    garment_found: true,
     name: "Navy canvas bag",
     category: "accessory",
     garment_type: "Bag",
@@ -159,7 +172,7 @@ test("one Luna High Fast response supplies editable metadata and the exact priva
     assert.equal(modelRequest.service_tier, "fast");
     assert.equal(modelRequest.store, false);
     assert.equal(modelRequest.text.format.strict, true);
-    assert.deepEqual(modelRequest.text.format.schema.required, ["garment_found", "name", "category", "garment_type", "color"]);
+    assert.deepEqual(modelRequest.text.format.schema.properties.garments.items.required, ["name", "category", "garment_type", "color"]);
     assert.equal(modelRequest.max_tool_calls, 1);
     assert.deepEqual(modelRequest.tools, [{
       type: "image_generation",
@@ -196,7 +209,7 @@ test("one Luna High Fast response supplies editable metadata and the exact priva
   assert.deepEqual(pixel(png, [0, 0]), [0, 0, 0, 0]);
   assert.deepEqual(pixel(png, [5, 5]), [12, 31, 56, 255]);
   assert.deepEqual(pixel(png, [6, 6]), [0, 0, 0, 0]);
-  assert.deepEqual(await (await run()).json(), { source, item });
+  assert.deepEqual(await (await run()).json(), { source, item, items: [item] });
   assert.equal((await run(10)).status, 404);
   assert.equal(provider.mock.callCount(), 1);
 });
@@ -388,8 +401,7 @@ for (const [caseName, responseBody] of [
 }
 
 test("reports no garment without inventing metadata or saving a cutout", async (t) => {
-  const noGarment = { garment_found: false, name: null, category: null, garment_type: null, color: null };
-  const full = fakeLuna(noGarment);
+  const full = fakeLuna(null);
   full.output.splice(1, 1);
   const provider = t.mock.method(globalThis, "fetch", async () => Response.json(full));
   const { run, files } = scenario(samplePhoto(), { OPENAI_API_KEY: "secret" });

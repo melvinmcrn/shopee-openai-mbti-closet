@@ -137,7 +137,9 @@ export function createPostgresDatabase(client) {
   async function transaction(operations, snapshot) {
     for (let attempt = 0; ; attempt += 1) {
       try {
-        return await client.begin(snapshot ? "isolation level repeatable read" : "", async (sql) => {
+        // D1 serializes batches. Match that guarantee when a save reads a
+        // garment while a deletion checks its saved-look memberships.
+        return await client.begin(snapshot ? "isolation level serializable" : "", async (sql) => {
           await sql.unsafe("SET LOCAL search_path TO app, pg_catalog");
           const context = { lastInsertId: null, changes: 0 };
           const results = [];

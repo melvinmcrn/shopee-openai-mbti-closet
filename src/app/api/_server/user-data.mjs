@@ -304,8 +304,8 @@ export function userData(db, userId) {
     async saveLook({ sourceOptionId, name, slots }) {
       const encoded = encodeSlots(slots);
       const look = await writeSlots(statement(`
-        INSERT INTO saved_looks (user_id, source_option_id, name)
-        SELECT user_id, id, ? FROM outfit_options
+        INSERT INTO saved_looks (id, user_id, source_option_id, name)
+        SELECT (SELECT id FROM next_saved_look_id), user_id, id, ? FROM outfit_options
         WHERE user_id = ? AND id = ? AND ${eligibleSlots}
         RETURNING ${lookColumns}
       `, name, userId, sourceOptionId, encoded, userId, slots.length),

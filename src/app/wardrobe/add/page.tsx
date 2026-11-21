@@ -13,7 +13,7 @@ const extractionError = "The garment details could not be read. Your photo is sa
 const extractionMessages = new Map([
   ["extraction_unavailable", "Automatic garment extraction is unavailable right now."],
   ["unsupported_photo", "This photo format could not be processed. Try a clearer JPEG or PNG."],
-  ["garment_not_found", "No garment could be isolated. Try a clearer photo of one item."],
+  ["garment_not_found", "No wardrobe items were found. Try a clearer photo or review it manually."],
   ["invalid_extraction", "The cutout or garment details could not be read. Try a clearer photo."],
 ]);
 const sampleError = "The sample wardrobe could not be loaded. Try again.";
@@ -32,16 +32,18 @@ type Photo = {
   preview: string;
   draftKey: string;
   id: number | null;
+  garments?: ExtractedItem[];
   status: keyof typeof photoStatuses;
   error?: string;
 };
 
+type ExtractedItem = { id: number; name: string };
 type Progress = BatchProgress | { phase: "preparing" };
 
 type UploadItem = {
   draftKey: string;
   id?: unknown;
-  extraction?: { status?: unknown; code?: string } | null;
+  extraction?: { status?: unknown; code?: string; item?: ExtractedItem; items?: ExtractedItem[] } | null;
   status?: number;
   error?: string;
 };
@@ -91,8 +93,9 @@ export default function AddWardrobePhotoPage() {
   const hasQueued = photos.some((photo) => photo.status === "queued");
   const hasFailures = photos.some((photo) => photo.status.endsWith("-failed"));
   const uploaded = photos.filter((photo) => photo.id !== null);
+  const reviewIds = uploaded.flatMap((photo) => photo.garments?.map((garment) => garment.id) ?? [photo.id]);
   const params = new URLSearchParams();
-  params.set("batch", uploaded.map((photo) => photo.id).join(","));
+  params.set("batch", reviewIds.join(","));
   const manual = uploaded.filter((photo) => photo.status === "extraction-failed");
   if (manual.length) params.set("manual", manual.map((photo) => photo.id).join(","));
 
@@ -194,7 +197,8 @@ export default function AddWardrobePhotoPage() {
         const item = byKey.get(photo.draftKey);
         if (typeof item?.id === "number" && Number.isSafeInteger(item.id) && item.id > 0) {
           if (item.extraction?.status === "ready") {
-            return { ...photo, id: item.id, status: "ready" };
+            const garments = item.extraction.items ?? (item.extraction.item && [item.extraction.item]);
+            return { ...photo, id: item.id, garments, status: "ready" };
           }
           const code = item.extraction?.code;
           return {
@@ -254,7 +258,7 @@ export default function AddWardrobePhotoPage() {
           </Link>
         )}
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Add wardrobe photos</h1>
-        <p>Choose several photos at once, with one garment per photo. You can review and save the items together.</p>
+        <p>Upload individual pieces or a full outfit. You can review and save each item we find.</p>
       </header>
 
       <form onSubmit={submitPhotos} className="space-y-5">
@@ -299,7 +303,14 @@ export default function AddWardrobePhotoPage() {
                     width={240}
                   />
                   <p className="mt-2 break-all text-sm font-medium">{photo.name}</p>
-                  <p className="mt-1 text-sm">{photoStatuses[photo.status]}</p>
+                  {photo.status === "ready" && photo.garments?.length ? (
+                    <div className="mt-1 text-sm">
+                      <p>{photo.garments.length === 1 ? "1 item found" : `${photo.garments.length} items found`}</p>
+                      <ul className="mt-1 list-disc pl-5 text-supporting">
+                        {photo.garments.map((garment) => <li key={garment.id}>{garment.name}</li>)}
+                      </ul>
+                    </div>
+                  ) : <p className="mt-1 text-sm">{photoStatuses[photo.status]}</p>}
                   {photo.error && <p className="mt-1 text-sm text-danger" role="alert">{photo.error}</p>}
                   {photo.id === null && (
                     <button
@@ -359,9 +370,9 @@ export default function AddWardrobePhotoPage() {
                   Retry failed photos
                 </button>
               )}
-              {!busy && uploaded.length > 0 && uploaded.length === photos.length && (
+              {!busy && !hasQueued && reviewIds.length > 0 && (
                 <Link className={actionButton} href={`/wardrobe/confirm?${params}`}>
-                  {uploaded.length === 1 ? "Review item" : `Review ${uploaded.length} items`}
+                  {reviewIds.length === 1 ? "Review item" : `Review ${reviewIds.length} items`}
                 </Link>
               )}
             </div>
