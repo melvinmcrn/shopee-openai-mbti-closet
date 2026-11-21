@@ -3,6 +3,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { decode, encode } from "fast-png";
+import sharp from "sharp";
+import { normalizeWardrobePhoto } from "../../../../../server/normalize-wardrobe-photo.mjs";
 import { requestWardrobeUpload } from "../../../wardrobe/add/request-wardrobe-upload.mjs";
 import { wardrobeApi } from "../wardrobe-api.mjs";
 import { sheetGrid } from "./extraction-sheet.mjs";
@@ -269,6 +271,36 @@ function postBatch(env, entries, userId = 1) {
   }
   return wardrobeApi(new Request("https://wardrobe.example/api/wardrobe/upload", { method: "POST", body: form }), env, userId);
 }
+
+test("extracts a full-resolution portrait JPEG on upload and on a key-only retry of a saved draft", async (t) => {
+  const { env, sqlite } = fixture(t);
+  const jpeg = await sharp({
+    create: { width: 4032, height: 3024, channels: 3, background: "navy" },
+  }).withMetadata({ orientation: 6 }).jpeg().toBuffer();
+  const photo = new File([jpeg], "image.jpg", { type: "image/jpeg" });
+  const savedKey = crypto.randomUUID();
+  env.OPENAI_API_KEY = "fixture-key";
+  const provider = t.mock.method(globalThis, "fetch", (_url, init) => {
+    const content = JSON.parse(init.body).input[0].content;
+    const { image_url } = content.find(({ type }) => type === "input_image");
+    const input = decode(Buffer.from(image_url.split(",")[1], "base64"));
+    assert.deepEqual([input.width, input.height], [768, 1024]);
+    return completedExtraction();
+  });
+  const { items: [saved] } = await (await postBatch(env, [{ key: savedKey, photo }])).json();
+  assert.deepEqual(saved.extraction, { status: "manual", code: "unsupported_photo" });
+  assert.equal(provider.mock.callCount(), 0);
+
+  env.normalizeWardrobePhoto = normalizeWardrobePhoto;
+
+  const { items: [retried] } = await (await postBatch(env, [{ key: savedKey }])).json();
+  assert.equal(retried.id, saved.id);
+  assert.equal(retried.extraction.status, "ready");
+  const { items: [fresh] } = await (await postBatch(env, [{ key: crypto.randomUUID(), photo }])).json();
+  assert.equal(fresh.extraction.status, "ready");
+  assert.equal(provider.mock.callCount(), 2);
+  assert.equal(sqlite.prepare("SELECT count(*) AS count FROM wardrobe_items").get().count, 2);
+});
 
 function responseSheet(count, { gapBleed = false, blankSlot, duplicateSlot = false } = {}) {
   const grid = sheetGrid(count);

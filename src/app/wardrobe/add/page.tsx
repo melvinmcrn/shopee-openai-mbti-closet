@@ -12,7 +12,7 @@ const uploadError = "This photo could not be uploaded. Try again.";
 const extractionError = "The garment details could not be read. Your photo is saved and ready for manual review.";
 const extractionMessages = new Map([
   ["extraction_unavailable", "Automatic garment extraction is unavailable right now."],
-  ["unsupported_photo", "This photo format could not be processed. Try a clearer JPEG or PNG."],
+  ["unsupported_photo", "Automatic extraction couldn’t read this image. You can still review the saved photo."],
   ["garment_not_found", "No garment could be isolated. Try a clearer photo of one item."],
   ["invalid_extraction", "The cutout or garment details could not be read. Try a clearer photo."],
 ]);
