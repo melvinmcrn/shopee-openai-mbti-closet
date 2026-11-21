@@ -114,6 +114,7 @@ for (const name of ["first-session", "returning-session", "rating-session", "oth
 
 // Keep candidate construction, Decisions parsing and ranking in the production code.
 let enhancementRequests = 0;
+let providerCalls = 0;
 function outfitExtractionFixture() {
   const garments = [
     { name: "Striped shirt", category: "top", garment_type: "Shirt", color: "Blue" },
@@ -139,6 +140,7 @@ function outfitExtractionFixture() {
 }
 
 async function decisionsFixture(url, options) {
+  if (String(url).startsWith("https://api.openai.com/")) providerCalls++;
   if (String(url).startsWith("https://down-th.img.susercontent.com/file/")) {
     const product = database.prepare("SELECT item_id FROM clothes_image_database WHERE image_url = ?").get(String(url));
     assert.ok(product, "try-on must fetch the product image from the catalog");
@@ -192,7 +194,7 @@ async function decisionsFixture(url, options) {
     const visible_items = pieces.map(piece => piece.reference);
     if (pieces.some(piece => piece.name === "Column dress")) visible_items.push("unlisted");
     return Response.json({ status: "completed", output: [{ type: "message", role: "assistant", status: "completed",
-      content: [{ type: "output_text", text: JSON.stringify({ visible_items }) }] }] });
+      content: [{ type: "output_text", text: JSON.stringify({ full_body_try_on: true, visible_items }) }] }] });
   }
   assert.equal(url, "https://api.openai.com/v1/decisions");
   const { input, questions } = JSON.parse(options.body);
@@ -256,6 +258,14 @@ function reply(response, status, data, type = "application/json") {
 const server = createServer(async (request, response) => {
   const path = new URL(request.url, "http://localhost").pathname;
   try {
+    if (request.method === "POST" && path === "/__fixture/evict-preview") {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const { ref } = JSON.parse(Buffer.concat(chunks).toString());
+      const result = database.prepare("DELETE FROM planner_previews WHERE file_id = ?").run(ref);
+      return reply(response, 200, { changes: result.changes });
+    }
+    if (path === "/__fixture/provider-calls") return reply(response, 200, providerCalls);
     if (path.startsWith("/api/")) {
       const headers = new Headers(request.headers);
       const session = /(?:^|;\s*)planner-fixture=([^;]+)/u.exec(headers.get("Cookie") ?? "")?.[1];

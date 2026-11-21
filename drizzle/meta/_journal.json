@@ -78,6 +78,13 @@
       "when": 1795250982000,
       "tag": "0113_occasion_catalog_items",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1795251551000,
+      "tag": "0114_pin_saved_try_on",
+      "breakpoints": true
     }
   ]
 }

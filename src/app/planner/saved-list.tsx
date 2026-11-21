@@ -1,11 +1,10 @@
 import { EnhancementProduct } from "./enhancement";
-import { SavedPhoto, type FindTryOn } from "./saved-photo";
+import { SavedPhoto } from "./saved-photo";
 import { WardrobePhotos } from "./wardrobe-photos";
 import { useEffect, useState } from "react";
 import { api, occasionLookLabel, type SavedLook } from "./shared";
 
 type SavedListProps = {
-  findTryOn: FindTryOn;
   onOpen: (id: string) => void;
   onNew: () => void;
 };
@@ -23,7 +22,7 @@ const secondaryButton =
 
 const dateFormat = new Intl.DateTimeFormat("en", { dateStyle: "medium" });
 
-export function SavedList({ onOpen, onNew, findTryOn }: SavedListProps) {
+export function SavedList({ onOpen, onNew }: SavedListProps) {
   const [state, setState] = useState<SavedListState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
 
@@ -85,7 +84,7 @@ export function SavedList({ onOpen, onNew, findTryOn }: SavedListProps) {
           {state.looks.map((look) => (
             <li key={look.id} className="min-w-0">
               <article className="flex h-full flex-col rounded-2xl border border-divider bg-surface p-5 shadow-sm">
-                <SavedPhoto look={look} findTryOn={findTryOn} catalogItemIds={look.enhancements.map(product => product.id)} />
+                <SavedPhoto look={look} catalogItemIds={look.enhancements.map(product => product.id)} />
                 <h2 className="mt-3 break-words font-heading text-2xl">{look.occasion}</h2>
                 <time dateTime={look.createdAt} className="mt-1 text-sm text-supporting">
                   {dateFormat.format(new Date(look.createdAt))}

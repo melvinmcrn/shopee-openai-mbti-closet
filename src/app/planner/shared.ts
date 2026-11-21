@@ -4,11 +4,18 @@ export type Garment = { id: string; name: string; color: string; category: strin
 export const occasionLookLabel = "Styled for your occasion";
 type LookKind = "occasion";
 export type Look = { kind?: LookKind; id: string; profileRef?: string; occasion: string; explanation: string; slots: Record<string, string> };
+export type CompletedLook = Look & { imageRef: string; products: CatalogProduct[]; useProfilePhoto?: boolean };
 export type Brief = { id?: string; occasion: string; timing: string; location: string; formality: string; comfort: string; preferences: string[] };
-export type SavedLook = { kind?: LookKind; enhancements: CatalogProduct[]; id: string; optionId: string; useProfilePhoto: boolean; previewRef: string | null; occasion: string; explanation: string; createdAt: string; slots: Record<string, Garment>; originalSlots: Record<string, Garment> };
+export type SavedLook = { kind?: LookKind; enhancements: CatalogProduct[]; id: string; optionId: string; useProfilePhoto: boolean; previewRef: string | null; hasPinnedPreview?: boolean; occasion: string; explanation: string; createdAt: string; slots: Record<string, Garment>; originalSlots: Record<string, Garment> };
 
 export function imageUrl(imageRef: string) {
   return "/api/files/" + encodeURIComponent(imageRef);
+}
+
+export class PlannerApiError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
 }
 
 export async function api<T>(action: string, input: object = {}): Promise<T> {
@@ -18,10 +25,10 @@ export async function api<T>(action: string, input: object = {}): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action, input }),
   });
-  if (response.status === 401) throw new Error("Sign in to open your planner.");
+  if (response.status === 401) throw new PlannerApiError(401, "Sign in to open your planner.");
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.message || "Your request could not be completed. Try again.");
+    throw new PlannerApiError(response.status, error.message || "Your request could not be completed. Try again.");
   }
   return response.json();
 }

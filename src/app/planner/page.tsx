@@ -3,14 +3,13 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePlannerScreen } from "./use-planner-screen";
-import { api, type Brief, type Garment, type Look } from "./shared";
+import { api, type Brief, type CompletedLook, type Garment } from "./shared";
 import { PlannerHome } from "./home";
 import { Occasion } from "./occasion";
 import { Style } from "./style";
 import { createTryOnLoader } from "./try-on";
 import { Compare, type Comparison } from "./compare";
 import { Refine } from "./refine";
-import { Preview } from "./preview";
 import { SavedList } from "./saved-list";
 import { Detail } from "./detail";
 import { WearEntry } from "./wear";
@@ -22,7 +21,9 @@ export default function PlannerPage() {
   const [brief, setBrief] = useState<Brief>(emptyBrief);
   const [loadTryOn] = useState(createTryOnLoader);
   const [comparison, setComparison] = useState<Comparison>();
-  const [look, setLook] = useState<Look>();
+  const [comparisonNotice, setComparisonNotice] = useState("");
+  const [reviewed, setReviewed] = useState<CompletedLook[]>([]);
+  const [lastSavedId, setLastSavedId] = useState<string>();
   const [garments, setGarments] = useState<Garment[]>();
   const [loadError, setLoadError] = useState("");
   const [reload, setReload] = useState(0);
@@ -49,23 +50,43 @@ export default function PlannerPage() {
   function start() {
     setBrief({ ...emptyBrief, preferences: [] });
     setComparison(undefined);
-    setLook(undefined);
+    setComparisonNotice("");
+    setReviewed([]);
+    setLastSavedId(undefined);
     go("occasion");
   }
-  const [, savedId, wearId] = screen.split("/");
+  function choose(chosen: CompletedLook) {
+    setReviewed(previous => [...previous.filter(item => item.id !== chosen.id), chosen]);
+    setComparisonNotice("");
+    go("refine/" + chosen.id);
+  }
+  function refreshStaleLook(chosen: CompletedLook) {
+    loadTryOn.clear(chosen);
+    setReviewed(previous => previous.filter(item => item.id !== chosen.id));
+    setComparisonNotice("This outfit changed before it could be saved. Choose a current photo to continue.");
+    setLoadError("");
+    setGarments(undefined);
+    setReload(count => count + 1);
+    window.history.back();
+  }
+  const [view, routeId, wearId] = screen.split("/");
+  const look = view === "refine" && (routeId ? reviewed.find(item => item.id === routeId) : reviewed.at(-1));
   let content;
-  if (screen === "saved") content = <SavedList findTryOn={loadTryOn.find} onOpen={id => go("saved/" + id)} onNew={start} />;
-  else if (screen.startsWith("saved/") && savedId) content = wearId
-    ? <WearEntry id={wearId} onBack={() => go("saved/" + savedId)} />
-    : <Detail findTryOn={loadTryOn.find} id={savedId} onWear={id => go("saved/" + savedId + "/" + id)} onBack={() => go("saved")} />;
+  if (screen === "saved") content = <SavedList onOpen={id => go("saved/" + id)} onNew={start} />;
+  else if (view === "saved" && routeId) content = wearId
+    ? <WearEntry id={wearId} onBack={() => go("saved/" + routeId)} />
+    : <Detail id={routeId} onWear={id => go("saved/" + routeId + "/" + id)} onBack={() => go("saved")}
+        onCompare={lastSavedId === routeId && comparison ? () => go("compare") : undefined} />;
   else if (!garments) content = loadError
     ? <div className="text-danger" role="alert">{loadError} <Link className="underline" href="/account">Account</Link> · <button onClick={() => {setLoadError(""); setReload(n => n + 1);}}>Retry</button></div>
     : <p role="status">Opening your closet…</p>;
   else if (screen === "occasion") content = <Occasion key={brief.id || "new"} brief={brief} onBack={() => go("home")} onNext={saved => { setBrief(saved); go("style"); }} />;
-  else if (screen === "style" && brief.id) content = <Style brief={brief} onBack={() => go("occasion")} onNext={saved => { setBrief(saved); setComparison(undefined); go("compare"); }} />;
-  else if (screen === "compare" && brief.id) content = <Compare comparison={comparison} onComparison={setComparison} loadTryOn={loadTryOn} briefId={brief.id} garments={garments} onEdit={() => go("style")} onChoose={chosen => { setLook(chosen); go("refine"); }} />;
-  else if (screen === "refine" && look) content = <Refine look={look} garments={garments} onBack={() => go("compare")} onPreview={() => go("preview")} onSaved={id => { loadTryOn.rememberSaved(look, id); go("saved/" + id); }} />;
-  else if (screen === "preview" && look) content = <Preview loadTryOn={loadTryOn} look={look} garments={garments} onBack={() => go("refine")} />;
+  else if (screen === "style" && brief.id) content = <Style brief={brief} onBack={() => go("occasion")} onNext={saved => { setBrief(saved); setComparison(undefined); setComparisonNotice(""); go("compare"); }} />;
+  else if (screen === "compare" && brief.id) content = <Compare comparison={comparison} notice={comparisonNotice} onComparison={setComparison} loadTryOn={loadTryOn} briefId={brief.id} garments={garments}
+    onEdit={() => go("style")} onChoose={choose} />;
+  else if (look) content = <Refine key={look.id} look={look} garments={garments}
+    onBack={() => window.history.back()} onStale={() => refreshStaleLook(look)}
+    onSaved={id => { setLastSavedId(id); go("saved/" + id); }} />;
   else content = <PlannerHome garments={garments} onNew={start} />;
   return <main className="flex-1 bg-canvas px-5 py-6 text-text sm:px-10">
     <div className={screen === "compare" ? "mx-auto max-w-7xl" : "mx-auto max-w-4xl"}>{content}</div>

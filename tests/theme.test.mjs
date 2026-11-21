@@ -55,7 +55,6 @@ test("the main flows share the same primary action colors and label style", () =
     "planner/style.tsx",
     "planner/compare.tsx",
     "planner/refine.tsx",
-    "planner/preview.tsx",
     "planner/saved-list.tsx",
     "planner/detail.tsx",
     "planner/wear.tsx",

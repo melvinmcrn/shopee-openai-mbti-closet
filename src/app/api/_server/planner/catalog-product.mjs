@@ -122,6 +122,47 @@ export async function readOptionProducts(db, accountId, optionId) {
   return results.map(selectedProduct).filter(Boolean);
 }
 
+// A generated preview may predate changes elsewhere in the wardrobe. Read the
+// decisions for that exact option/selection, without running a new shopping search.
+export async function approvedPreviewProducts(db, accountId, option, slots) {
+  if (option.kind === "occasion") return readOptionProducts(db, accountId, option.id);
+  const general = enhancementSelection(slots);
+  const top = enhancementSelection(slots, "top");
+  const bottom = enhancementSelection(slots, "bottom");
+  const { results } = await db.prepare(`
+    SELECT e.selection, ${productColumns}
+    FROM outfit_enhancements e JOIN clothes_image_database product ON product.item_id = e.item_id AND ${searchableProduct}
+    WHERE e.user_id = ? AND e.option_id = ? AND e.selection IN (?, ?, ?)
+  `).bind(accountId, option.id, general, top, bottom).all();
+  return results.flatMap(row => {
+    const product = catalogProduct(row);
+    if (!product) return [];
+    return row.selection === general ? product : { ...product, wardrobeGap: row.selection === top ? "top" : "bottom" };
+  });
+}
+
+async function readPinnedProducts(db, accountId, ids) {
+  const products = new Map(ids.map(id => [id, []]));
+  if (!ids.length) return products;
+  const { results } = await db.prepare(`
+    SELECT look.id AS look_id, chosen.catalog_slot, chosen.wardrobe_gap, ${productColumns}
+    FROM saved_looks look JOIN saved_look_catalog_items chosen ON chosen.saved_look_id = look.id
+    JOIN clothes_image_database product ON product.item_id = chosen.item_id AND ${searchableProduct}
+    WHERE look.user_id = ? AND look.id IN (SELECT value FROM json_each(?))
+      AND NOT EXISTS (SELECT 1 FROM saved_look_hidden_catalog_items hidden
+        WHERE hidden.saved_look_id = look.id AND hidden.item_id = chosen.item_id)
+    ORDER BY look.id, chosen.catalog_slot, CASE WHEN chosen.wardrobe_gap = 'top' THEN 0 ELSE 1 END, chosen.item_id
+  `).bind(accountId, JSON.stringify(ids)).all();
+  for (const row of results) {
+    const product = catalogProduct(row);
+    if (product) products.get(String(row.look_id)).push({ ...product,
+      ...(row.catalog_slot ? { catalogSlot: row.catalog_slot } : {}),
+      ...(row.wardrobe_gap ? { wardrobeGap: row.wardrobe_gap } : {}),
+    });
+  }
+  return products;
+}
+
 async function readOccasionSavedProducts(db, accountId, selectionsByLook) {
   const products = new Map();
   let rows;
@@ -153,14 +194,12 @@ async function readOccasionSavedProducts(db, accountId, selectionsByLook) {
   return products;
 }
 
-export async function readSavedCatalog(db, accountId, selectionsByLook) {
+export async function readSavedCatalog(db, accountId, selectionsByLook, pinnedIds = []) {
   const occasion = await readOccasionSavedProducts(db, accountId, selectionsByLook);
-  const legacy = Object.fromEntries(Object.entries(selectionsByLook).filter(([id]) => !occasion.has(id)));
+  const pinned = await readPinnedProducts(db, accountId, pinnedIds);
+  const legacy = Object.fromEntries(Object.entries(selectionsByLook).filter(([id]) => !occasion.has(id) && !pinned.has(id)));
   const products = Object.keys(legacy).length ? await readLegacyProducts(db, accountId, legacy) : new Map();
   for (const [id, selected] of occasion) products.set(id, selected);
+  for (const [id, selected] of pinned) products.set(id, selected);
   return { products, occasion };
-}
-
-export async function readSavedProducts(db, accountId, selectionsByLook) {
-  return (await readSavedCatalog(db, accountId, selectionsByLook)).products;
 }

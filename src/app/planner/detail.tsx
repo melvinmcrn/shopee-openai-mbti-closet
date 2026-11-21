@@ -1,13 +1,13 @@
 "use client";
 
-import { SavedPhoto, type FindTryOn } from "./saved-photo";
+import { SavedPhoto } from "./saved-photo";
 import { WardrobePhotos } from "./wardrobe-photos";
 import { EnhancementProduct, type CatalogProduct } from "./enhancement";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, occasionLookLabel, type SavedLook } from "./shared";
 
 type DetailProps = {
-  findTryOn: FindTryOn;
+  onCompare?: () => void;
   id: string;
   onWear: (id: string) => void;
   onBack: () => void;
@@ -22,11 +22,12 @@ const slotOrder = ["other", "top", "bottom", "dress", "shoes", "outerwear", "acc
 const secondaryButton =
   "inline-flex min-h-11 items-center justify-center rounded-full border border-divider px-5 py-2 text-sm font-semibold text-secondary transition hover:bg-selected focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:opacity-60";
 
-function useLookItems<T>(action: "wearList" | "shopping", lookId: string) {
+function useLookItems<T>(action: "wearList" | "shopping", lookId?: string) {
   const [result, setResult] = useState<ItemsResult<T>>();
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
+    if (!lookId) return;
     let active = true;
     api<T[]>(action, { lookId })
       .then((items) => {
@@ -237,15 +238,18 @@ function ShoppingSuggestions({ lookId, result, retry, suggestions, onHidden }: {
   );
 }
 
-function SavedDetail({ id, onWear, onBack, findTryOn }: DetailProps) {
+function SavedDetail({ id, onWear, onBack, onCompare }: DetailProps) {
   const [result, setResult] = useState<DetailResult>();
   const [attempt, setAttempt] = useState(0);
 
-  const shopping = useLookItems<Suggestion>("shopping", id);
+  const look = result && "look" in result ? result.look : undefined;
+  const shopping = useLookItems<Suggestion>("shopping", look && !look.hasPinnedPreview ? id : undefined);
   const [hidden, setHidden] = useState<string[]>([]);
-  const suggestions = shopping.result && "items" in shopping.result
-    ? shopping.result.items.filter(item => !hidden.includes(item.id)) : undefined;
-  const catalogItemIds = suggestions?.map(item => item.catalogItemId);
+  const shoppingResult = look?.hasPinnedPreview
+    ? { items: look.enhancements.map(product => ({ ...product, catalogItemId: product.id, sponsored: false })) }
+    : shopping.result;
+  const suggestions = shoppingResult && "items" in shoppingResult
+    ? shoppingResult.items.filter(item => !hidden.includes(item.id)) : undefined;
 
   useEffect(() => {
     let active = true;
@@ -263,7 +267,7 @@ function SavedDetail({ id, onWear, onBack, findTryOn }: DetailProps) {
     };
   }, [id, attempt]);
 
-  const look = result && "look" in result ? result.look : undefined;
+  const catalogItemIds = suggestions?.map(item => item.catalogItemId);
   const error = result && "error" in result ? result.error : undefined;
   const slots = look
     ? Object.entries(look.slots).sort(([a], [b]) => slotOrder.indexOf(a) - slotOrder.indexOf(b))
@@ -272,9 +276,10 @@ function SavedDetail({ id, onWear, onBack, findTryOn }: DetailProps) {
   return (
     <section aria-labelledby="saved-detail-title" className="space-y-6 text-text">
       <header>
-        <button type="button" className={secondaryButton} onClick={onBack}>
-          <span aria-hidden="true" className="mr-2">←</span>Saved looks
-        </button>
+        <div className="flex flex-wrap gap-2">
+          {onCompare && <button type="button" className={secondaryButton} onClick={onCompare}>Back to compare looks</button>}
+          <button type="button" className={secondaryButton} onClick={onBack}>Saved looks</button>
+        </div>
         <h1 id="saved-detail-title" className="mt-4 font-heading text-4xl tracking-tight sm:text-5xl">
           {look?.occasion || "Saved look"}
         </h1>
@@ -303,12 +308,12 @@ function SavedDetail({ id, onWear, onBack, findTryOn }: DetailProps) {
           <div className="flex flex-col gap-6 md:flex-row md:items-start">
             <div className="mx-auto w-full max-w-sm empty:hidden md:mx-0 md:w-2/5 md:shrink-0">
               {catalogItemIds !== undefined && (
-                <SavedPhoto look={look} catalogItemIds={catalogItemIds} findTryOn={findTryOn} />
+                <SavedPhoto look={look} catalogItemIds={catalogItemIds} />
               )}
             </div>
             <div className="min-w-0 flex-1 space-y-4 empty:hidden">
               <WardrobePhotos garments={slots.map(([, garment]) => garment)} />
-              <ShoppingSuggestions lookId={look.id} {...shopping} suggestions={suggestions}
+              <ShoppingSuggestions lookId={look.id} result={shoppingResult} retry={shopping.retry} suggestions={suggestions}
                 onHidden={id => setHidden(items => [...items, id])} />
             </div>
           </div>

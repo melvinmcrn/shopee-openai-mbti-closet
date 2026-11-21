@@ -18,7 +18,7 @@ const pants = { ...product, id: "86", title: "Linen trousers", category: "busine
 const topBytes = Uint8Array.of(255, 216, 255, 225, 43);
 const pantsBytes = Uint8Array.of(255, 216, 255, 225, 44);
 
-function setup(t, observed) {
+function setup(t, observed, fullBodyTryOn = true) {
   return {
     readImage: async () => jpeg,
     fetch: t.mock.fn(async url => {
@@ -28,7 +28,7 @@ function setup(t, observed) {
       if (url.endsWith("/images/edits")) return Response.json({ data: [{ b64_json: "/9j/4A==" }] });
       return Response.json({
         status: "completed", output: [{ type: "message", role: "assistant", status: "completed",
-          content: [{ type: "output_text", text: JSON.stringify({ visible_items: observed }) }] }],
+          content: [{ type: "output_text", text: JSON.stringify({ visible_items: observed, full_body_try_on: fullBodyTryOn }) }] }],
       });
     }),
     storeImage: t.mock.fn(async () => "verified-photo"),
@@ -43,6 +43,12 @@ for (const observed of [["item_1", "unlisted"], [], ["uncertain"], ["item_1", "i
     assert.equal(deps.storeImage.mock.callCount(), 0);
   });
 }
+
+test("a correct inventory in a cropped photo or flat lay cannot become a completed look", async t => {
+  const deps = setup(t, ["item_1"], false);
+  assert.deepEqual(await generatePreview(env, 1, [dress], false, deps), { imageRef: null });
+  assert.equal(deps.storeImage.mock.callCount(), 0);
+});
 
 test("a missing base garment falls back to source photos without generating filler clothing", async t => {
   const deps = setup(t, []);

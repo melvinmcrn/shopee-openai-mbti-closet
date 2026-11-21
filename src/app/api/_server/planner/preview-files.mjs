@@ -1,12 +1,14 @@
 import { readPrivateFile, writePrivateFile, deletePrivateFile } from "../private-files.mjs";
 
-export function previewSelection(slots, personal, products = [], profileRef = null) {
+export const currentInventoryVersion = "inventory-v4";
+
+export function previewSelection(slots, personal, products = [], profileRef = null, version = currentInventoryVersion) {
   const entries = Object.entries(slots).sort(([a], [b]) => a.localeCompare(b))
     .map(([slot, item]) => [slot, String(item.id), item.imageRef, item.name]);
   const listings = (Array.isArray(products) ? products : products ? [products] : [])
     .map(p => [p.id, p.imageUrl, p.title, p.category])
     .sort(([a], [b]) => a.localeCompare(b));
-  return JSON.stringify(["inventory-v3", personal, personal ? profileRef : null, entries, listings]);
+  return JSON.stringify([version, personal, personal ? profileRef : null, entries, listings]);
 }
 
 export async function profilePhotoRef(db, accountId) {
@@ -31,15 +33,21 @@ export function previewFiles(env, accountId, optionId, slots, personal, products
     async storeImage(blob) {
       const ref = await writePrivateFile(env, account, await blob.arrayBuffer(), blob.type);
       try {
-        await env.DB.prepare(`
+        const saved = await env.DB.prepare(`
           INSERT INTO planner_previews(user_id,option_id,selection,file_id) VALUES (?,?,?,?)
-          ON CONFLICT(user_id,option_id,selection) DO UPDATE SET file_id=excluded.file_id
-        `).bind(accountId, optionId, selection, ref).run();
+          ON CONFLICT(user_id,option_id,selection) DO UPDATE SET file_id=planner_previews.file_id
+          RETURNING file_id
+        `).bind(accountId, optionId, selection, ref).first();
+        if (saved.file_id !== ref) {
+          // A simultaneous render already won. Return the common verified file
+          // even if cleanup of the unused upload needs to be retried later.
+          await deletePrivateFile(env, account, ref).catch(() => console.warn("Unused preview cleanup is pending"));
+        }
+        return saved.file_id;
       } catch (error) {
         await deletePrivateFile(env,account,ref);
         throw error;
       }
-      return ref;
     },
   };
 }

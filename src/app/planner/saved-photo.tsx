@@ -1,40 +1,22 @@
 import Image from "next/image";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api, imageUrl, type SavedLook } from "./shared";
-import type { LoadTryOn, TryOnResult } from "./try-on";
+import type { TryOnResult } from "./try-on";
 
-export type FindTryOn = LoadTryOn["find"];
-
-type SavedPhotoProps = { look: SavedLook; findTryOn: FindTryOn; catalogItemIds: string[] };
+type SavedPhotoProps = { look: SavedLook; catalogItemIds: string[] };
 
 export function SavedPhoto(props: SavedPhotoProps) {
   return <SavedPhotoForSelection key={JSON.stringify([props.look.id, props.look.previewRef, [...props.catalogItemIds].sort()])} {...props} />;
 }
 
-function SavedPhotoForSelection({ look, findTryOn, catalogItemIds }: SavedPhotoProps) {
-  const visible = look.enhancements.filter(product => catalogItemIds.includes(product.id));
-  const matchesDetail = visible.length === catalogItemIds.length && visible.length === look.enhancements.length;
-  const cached = matchesDetail ? look.previewRef : null;
-  const existing = !cached && matchesDetail ? findTryOn(look, visible) : undefined;
-  const [imageRef, setImageRef] = useState(cached);
-  const [loading, setLoading] = useState(Boolean(existing));
+function SavedPhotoForSelection({ look, catalogItemIds }: SavedPhotoProps) {
+  const matchesDetail = catalogItemIds.length === look.enhancements.length &&
+    look.enhancements.every(product => catalogItemIds.includes(product.id));
+  const [imageRef, setImageRef] = useState(matchesDetail ? look.previewRef : null);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [checked, setChecked] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    existing?.then(result => {
-      if (active) {
-        setImageRef(result.imageRef);
-        setChecked(true);
-      }
-    }).catch(() => {
-      if (active) setError("The try-on could not be created.");
-    }).finally(() => {
-      if (active) setLoading(false);
-    });
-    return () => { active = false; };
-  }, [existing]);
+  const [reload, setReload] = useState(0);
 
   async function generate() {
     setLoading(true);
@@ -50,16 +32,19 @@ function SavedPhotoForSelection({ look, findTryOn, catalogItemIds }: SavedPhotoP
     }
   }
 
-  if (imageRef) return (
-    <Image src={imageUrl(imageRef)} alt={`Full-body AI try-on for ${look.occasion}`}
+  if (imageRef && !error) return (
+    <Image src={imageUrl(imageRef) + (reload ? "?retry=" + reload : "")} alt={`Full-body AI try-on for ${look.occasion}`}
       width={512} height={768} unoptimized className="aspect-[2/3] w-full rounded-xl bg-selected object-contain"
-      onError={() => { setImageRef(null); setError("The try-on photo couldn’t be loaded."); }} />
+      onError={() => setError("The try-on photo couldn’t be loaded.")} />
   );
   if (checked && !loading && !error) return null;
   return (
     <div className="grid min-h-24 place-items-center gap-2 rounded-xl bg-selected p-4 text-center text-sm">
       {error && <p role="alert">{error}</p>}
-      {loading ? <p role="status">Creating your try-on…</p> : (!checked || error) && (
+      {imageRef ? (
+        <button type="button" className="min-h-11 rounded-full border border-divider bg-surface px-4 font-semibold"
+          onClick={() => { setReload(value => value + 1); setError(""); }}>Reload photo</button>
+      ) : loading ? <p role="status">Creating your try-on…</p> : (!checked || error) && (
         <button type="button" className="min-h-11 rounded-full border border-divider bg-surface px-4 font-semibold"
           onClick={generate}>{error ? "Retry try-on" : "Create try-on photo"}</button>
       )}

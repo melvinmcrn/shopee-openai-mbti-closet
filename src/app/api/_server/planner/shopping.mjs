@@ -165,7 +165,7 @@ function visibleSuggestions(rows) {
 }
 
 export async function suggestionsForLook(env, accountId, look, wardrobe, request) {
-  if (look.kind === "occasion") {
+  if (look.hasPinnedPreview || look.kind === "occasion") {
     return look.enhancements.map(product => ({ ...product, catalogItemId: product.id, sponsored: false }));
   }
   const db = env.DB;
@@ -198,11 +198,14 @@ export async function shoppingAction(env, accountId, action, input, request, war
     if (typeof input.id !== "string" || !input.id) {
       throw new TypeError("A shopping suggestion is required.");
     }
-    if (look.kind === "occasion") {
+    if (look.hasPinnedPreview || look.kind === "occasion") {
+      const choices = look.hasPinnedPreview
+        ? "saved_look_catalog_items chosen ON chosen.saved_look_id = look.id"
+        : "outfit_option_catalog_items chosen ON chosen.user_id = look.user_id AND chosen.option_id = look.source_option_id";
       const hidden = await db.prepare(`
         INSERT INTO saved_look_hidden_catalog_items(saved_look_id, item_id)
         SELECT look.id, chosen.item_id FROM saved_looks look
-        JOIN outfit_option_catalog_items chosen ON chosen.user_id = look.user_id AND chosen.option_id = look.source_option_id
+        JOIN ${choices}
         WHERE look.user_id = ? AND look.id = ? AND chosen.item_id = ?
         ON CONFLICT(saved_look_id, item_id) DO UPDATE SET item_id = excluded.item_id
         RETURNING item_id

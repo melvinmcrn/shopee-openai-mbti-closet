@@ -131,7 +131,7 @@ test("a catalog-only occasion look works with an empty closet and a studio try-o
     assert.equal(result.looks.length, 1);
     const [look] = result.looks;
     const catalogItemIds = Object.values(catalogSlots);
-    assert.deepEqual(await dispatch("preview", { optionId: look.id, catalogItemIds }), { imageRef: "studio-photo" });
+    assert.deepEqual(await dispatch("preview", { optionId: look.id, catalogItemIds }), { imageRef: "studio-photo", useProfilePhoto: false });
     const saved = await dispatch("save", { optionId: look.id, slots: {} });
     assert.deepEqual(saved.slots, {});
     assert.deepEqual(saved.enhancements.map(item => item.id).sort(), [...catalogItemIds].sort());

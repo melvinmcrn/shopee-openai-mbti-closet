@@ -4,6 +4,7 @@ import test from "node:test";
 import postgres from "postgres";
 import { createPostgresDatabase } from "../server/postgres.mjs";
 import { dispatchPlanner } from "../src/app/api/_server/planner/api.mjs";
+import { previewFiles } from "../src/app/api/_server/planner/preview-files.mjs";
 import { saveLook } from "../src/app/api/_server/planner/saved.mjs";
 import { enhancementSelection } from "../src/app/api/_server/planner/catalog-product.mjs";
 import { readPrivateFile, writePrivateFile } from "../src/app/api/_server/private-files.mjs";
@@ -227,6 +228,30 @@ test("Postgres supports owner-scoped profiles, wardrobe items, and the planner",
     assert.ok(cutout.imageFileId !== originalFileId);
     assert.ok(objects.has(cutout.imageFileId));
     assert.equal(objects.has(originalFileId), false);
+
+    await t.test("a saved try-on retains the exact file and product snapshots after cache eviction", async () => {
+      const products = await dispatchPlanner(env, owner.id, "enhancements", { optionId: occasionLook.id });
+      const files = previewFiles(env, owner.id, occasionLook.id, occasionSave.slots, false, products, null);
+      const jpeg = new Blob([Uint8Array.of(255, 216, 255, 224)], { type: "image/jpeg" });
+      const previewRef = await files.storeImage(jpeg);
+      const catalogItemIds = products.map(item => item.id);
+      const pinned = await dispatchPlanner(env, owner.id, "save", {
+        optionId: occasionLook.id, slots: occasionLook.slots, previewRef, catalogItemIds,
+      });
+      assert.equal(pinned.previewRef, previewRef);
+      assert.deepEqual(pinned.slots, occasionSave.slots);
+      assert.deepEqual(pinned.enhancements, products);
+      await DB.prepare("DELETE FROM planner_previews WHERE file_id=? AND user_id=?").bind(previewRef, owner.id).run();
+      const [newest] = await dispatchPlanner(env, owner.id, "list");
+      assert.equal(newest.id, pinned.id);
+      assert.deepEqual(await dispatchPlanner(env, owner.id, "detail", { id: pinned.id }), pinned);
+      assert.deepEqual(await dispatchPlanner(env, owner.id, "savedPreview", { id: pinned.id, catalogItemIds }), { imageRef: previewRef });
+      assert.equal(await readPrivateFile(env, visitor, previewRef), null);
+      const photo = await readPrivateFile(env, owner, previewRef);
+      assert.deepEqual(await photo.arrayBuffer(), await jpeg.arrayBuffer());
+      await DB.prepare("DELETE FROM saved_looks WHERE id=? AND user_id=?").bind(pinned.id, owner.id).run();
+      assert.equal(await DB.prepare("SELECT state FROM private_files WHERE file_id=?").bind(previewRef).first("state"), "deleting");
+    });
   } finally {
     try {
       for (const id of accounts) {
