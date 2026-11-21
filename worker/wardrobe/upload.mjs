@@ -23,10 +23,10 @@ export function imageType(image) {
   return null;
 }
 
-export async function upload(request, env, userId) {
+export async function readUploadForm(request) {
   const contentType = request.headers.get("Content-Type") ?? "";
   if (!/^multipart\/form-data\s*;/i.test(contentType) || !request.body) {
-    return error("Choose a photo to upload.", 400);
+    return { error: "Choose a photo to upload.", status: 400 };
   }
 
   let form;
@@ -47,10 +47,17 @@ export async function upload(request, env, userId) {
     try {
       form = await new Response(body, { headers: { "Content-Type": contentType } }).formData();
     } catch {
-      if (!tooLarge) return error("The photo upload could not be read.", 400);
+      if (!tooLarge) return { error: "The photo upload could not be read.", status: 400 };
     }
   }
-  if (tooLarge) return error("Choose a photo that is 8 MB or smaller.", 413);
+  if (tooLarge) return { error: "Choose a photo that is 8 MB or smaller.", status: 413 };
+  return { form };
+}
+
+export async function upload(request, env, userId) {
+  const result = await readUploadForm(request);
+  if (!result.form) return error(result.error, result.status);
+  const { form } = result;
 
   const draftKey = form.get("draftKey");
   if (typeof draftKey !== "string" || !uuid.test(draftKey) || form.getAll("draftKey").length !== 1) {
@@ -77,7 +84,7 @@ export async function upload(request, env, userId) {
   const fileKey = `users/${userId}/wardrobe/${key}/${digest}`;
   await putFile(env, userId, fileKey, bytes, type);
 
-  const [, result] = await env.DB.batch([
+  const [, draftResult] = await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO wardrobe_items (user_id, name, category, image_file_id, draft_key)
        VALUES (?, 'Untitled garment', 'other', ?, ?)
@@ -85,7 +92,7 @@ export async function upload(request, env, userId) {
     ).bind(userId, fileKey, key),
     env.DB.prepare(findDraft).bind(userId, key),
   ]);
-  const draft = result.results[0];
+  const draft = draftResult.results[0];
   if (draft.image_file_id !== fileKey) {
     try {
       await deleteFile(env, userId, fileKey);
