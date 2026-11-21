@@ -108,34 +108,49 @@ async function archiveItem(db, userId, itemId) {
   return archived ? new Response(null, { status: 204 }) : error("Wardrobe item not found.", 404);
 }
 
+const affectedLookIds = `
+  SELECT saved.id FROM saved_looks AS saved WHERE saved.user_id = ?1 AND EXISTS (
+    SELECT 1 FROM saved_look_items AS slot
+    WHERE slot.saved_look_id = saved.id AND slot.user_id = saved.user_id AND slot.item_id = ?2
+  )
+`;
+
+function deleteImpactQuery(db, userId, itemId) {
+  return db.prepare(`
+    SELECT look.id, look.name AS title FROM wardrobe_items AS item
+    LEFT JOIN saved_looks AS look ON look.user_id = item.user_id AND look.id IN (${affectedLookIds})
+    WHERE item.user_id = ?1 AND item.id = ?2 ORDER BY look.id
+  `).bind(userId, itemId);
+}
+
+function deleteImpactResponse({ results }, status) {
+  if (!results.length) return error("Wardrobe item not found.", 404);
+  const savedLooks = results.filter(look => look.id !== null);
+  return Response.json(status === 409 ? { code: "saved_looks_affected", savedLooks } : { savedLooks }, { status });
+}
+
 async function deleteItem(request, db, userId, itemId) {
-  let approved = [];
   const body = await request.text();
-  if (body.length) {
-    let input;
-    try {
-      input = JSON.parse(body);
-    } catch {
-      return error("Expected saved look IDs.", 400);
-    }
-    approved = input?.savedLookIds;
-    if (!Array.isArray(approved) || approved.some(id => !Number.isSafeInteger(id) || id < 1)
-        || new Set(approved).size !== approved.length) {
-      return error("Expected distinct numeric saved look IDs.", 400);
-    }
+  if (!body.length) {
+    return deleteImpactResponse(await deleteImpactQuery(db, userId, itemId).all(), 409);
+  }
+  let input;
+  try {
+    input = JSON.parse(body);
+  } catch {
+    return error("Expected saved look IDs.", 400);
+  }
+  const approved = input?.savedLookIds;
+  if (!Array.isArray(approved) || approved.some(id => !Number.isSafeInteger(id) || id < 1)
+      || new Set(approved).size !== approved.length) {
+    return error("Expected distinct numeric saved look IDs.", 400);
   }
 
-  const affected = `
-    SELECT saved.id FROM saved_looks AS saved WHERE saved.user_id = ?1 AND EXISTS (
-      SELECT 1 FROM saved_look_items AS slot
-      WHERE slot.saved_look_id = saved.id AND slot.user_id = saved.user_id AND slot.item_id = ?2
-    )
-  `;
   const [updated, , state] = await db.batch([
     // Keep the garment row for source-option history and upload retries. The
     // two set differences bind the confirmation to exactly the current looks.
     db.prepare(`
-      WITH affected AS (${affected}), approved AS (SELECT CAST(value AS BIGINT) AS id FROM json_each(?3))
+      WITH affected AS (${affectedLookIds}), approved AS (SELECT CAST(value AS BIGINT) AS id FROM json_each(?3))
       UPDATE wardrobe_items SET archived_at = COALESCE(archived_at, CURRENT_TIMESTAMP)
       WHERE user_id = ?1 AND id = ?2
         AND NOT EXISTS (SELECT id FROM affected EXCEPT SELECT id FROM approved)
@@ -145,33 +160,28 @@ async function deleteItem(request, db, userId, itemId) {
     `).bind(userId, itemId, JSON.stringify(approved)),
     db.prepare(`
       DELETE FROM saved_looks
-      WHERE user_id = ?1 AND changes() = 1 AND id IN (${affected})
+      WHERE user_id = ?1 AND changes() = 1 AND id IN (${affectedLookIds})
     `).bind(userId, itemId),
-    db.prepare(`
-      SELECT look.id, look.name AS title FROM wardrobe_items AS item
-      LEFT JOIN saved_looks AS look ON look.user_id = item.user_id AND look.id IN (${affected})
-      WHERE item.user_id = ?1 AND item.id = ?2 ORDER BY look.id
-    `).bind(userId, itemId),
+    deleteImpactQuery(db, userId, itemId),
   ]);
   if (updated.results.length) return new Response(null, { status: 204 });
-  if (!state.results.length) return error("Wardrobe item not found.", 404);
-  return Response.json({
-    code: "saved_looks_affected", savedLooks: state.results.filter(look => look.id !== null),
-  }, { status: 409 });
+  return deleteImpactResponse(state, 409);
 }
 
-export async function items(request, env, userId, id) {
+export async function items(request, env, userId, id, action) {
   const { method } = request;
-  if (id == null && method === "GET") {
-    return listItems(request, env.DB, userId);
+  const allowed = id == null || action === "delete-impact" ? ["GET"] : ["PATCH", "DELETE"];
+  if (!allowed.includes(method)) {
+    return new Response(null, { status: 405, headers: { Allow: allowed.join(", ") } });
   }
-  if (id == null || (method !== "PATCH" && method !== "DELETE")) {
-    return new Response(null, { status: 405, headers: { Allow: id == null ? "GET" : "PATCH, DELETE" } });
-  }
+  if (id == null) return listItems(request, env.DB, userId);
 
   const itemId = /^[1-9]\d*$/.test(id) ? Number(id) : NaN;
   if (!Number.isSafeInteger(itemId)) {
     return error("Wardrobe item not found.", 404);
+  }
+  if (action === "delete-impact") {
+    return deleteImpactResponse(await deleteImpactQuery(env.DB, userId, itemId).all(), 200);
   }
   if (method === "PATCH") {
     return updateItem(request, env.DB, userId, itemId);
