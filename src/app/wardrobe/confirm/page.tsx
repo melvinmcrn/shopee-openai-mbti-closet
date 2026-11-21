@@ -35,7 +35,7 @@ const fieldClass = "mt-1 block min-h-11 w-full rounded-lg border border-divider 
 export default function ConfirmWardrobeItemsPage() {
   const [items, setItems] = useState<DraftItem[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "signed-out" | "error">("loading");
-  const [manualItemId, setManualItemId] = useState<string | null>(null);
+  const [manualItemIds, setManualItemIds] = useState<Set<string>>(() => new Set());
   const [reloads, setReloads] = useState(0);
   const [saving, setSaving] = useState(false);
   const [savedCount, setSavedCount] = useState(0);
@@ -63,11 +63,24 @@ export default function ConfirmWardrobeItemsPage() {
         if (controller.signal.aborted) return;
         const params = new URLSearchParams(window.location.search);
         const requestedId = params.get("item");
-        setManualItemId(params.get("review") === "manual" ? requestedId : null);
-        const requestedItem = data.items.find((item) => String(item.id) === requestedId);
-        setItems(requestedItem
-          ? [requestedItem, ...data.items.filter((item) => item.id !== requestedItem.id)]
-          : data.items);
+        const batchIds = params.get("batch");
+        const manualIds = new Set(params.get("manual")?.split(","));
+        if (requestedId && params.get("review") === "manual") manualIds.add(requestedId);
+        setManualItemIds(manualIds);
+
+        if (batchIds !== null) {
+          const draftsById = new Map(data.items.map((item) => [String(item.id), item]));
+          const batch = [...new Set(batchIds.split(","))].flatMap((id) => {
+            const draft = draftsById.get(id);
+            return draft ? [draft] : [];
+          });
+          setItems(batch);
+        } else {
+          const requestedItem = data.items.find((item) => String(item.id) === requestedId);
+          setItems(requestedItem
+            ? [requestedItem, ...data.items.filter((item) => item.id !== requestedItem.id)]
+            : data.items);
+        }
         setStatus("ready");
       } catch {
         if (!controller.signal.aborted) setStatus("error");
@@ -135,7 +148,7 @@ export default function ConfirmWardrobeItemsPage() {
           </Link>
           <h1 className="mt-5 text-4xl font-semibold tracking-tight sm:text-5xl">Confirm items</h1>
           <p className="mt-3 max-w-lg leading-relaxed text-supporting">
-            Review the photos and details. Confirm each item you want to add to your wardrobe.
+            Review the photos and details. Confirm items individually or save the whole batch with Confirm all.
           </p>
         </header>
 
@@ -208,7 +221,7 @@ export default function ConfirmWardrobeItemsPage() {
                     </div>
                     <fieldset className="space-y-4 p-4" disabled={saving}>
                       <legend className="sr-only">{item.name || "Wardrobe item"} details</legend>
-                      {!item.extractionSource && String(item.id) === manualItemId && (
+                      {!item.extractionSource && manualItemIds.has(String(item.id)) && (
                         <p className="text-sm text-supporting">Original photo · Automatic extraction did not complete.</p>
                       )}
                       {item.extractionSource === "luna" && (

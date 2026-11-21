@@ -69,9 +69,13 @@ export function Occasion({ brief, onNext, onBack }: OccasionProps) {
 
       <form onSubmit={save} className="mt-6 rounded-2xl border border-divider bg-surface p-5 sm:p-7">
         <fieldset disabled={saving} className="grid gap-5 sm:grid-cols-2">
-          <label className="text-sm font-semibold sm:col-span-2">
-            Occasion
+          <div className="sm:col-span-2">
+            <label htmlFor="planner-occasion" className="text-sm font-semibold">
+              Occasion
+            </label>
             <input
+              id="planner-occasion"
+              aria-describedby="planner-occasion-example"
               name="occasion"
               value={occasion}
               onChange={(event) => {
@@ -80,32 +84,46 @@ export function Occasion({ brief, onNext, onBack }: OccasionProps) {
               }}
               required
               maxLength={500}
-              placeholder="e.g. A birthday dinner"
               className={inputClass}
             />
-          </label>
-          <label className="text-sm font-semibold">
-            Timing <span className="font-normal text-supporting">(optional)</span>
+            <p id="planner-occasion-example" className="mt-1 text-sm text-supporting">
+              e.g. Birthday dinner with friends
+            </p>
+          </div>
+          <div>
+            <label htmlFor="planner-timing" className="text-sm font-semibold">
+              Timing <span className="font-normal text-supporting">(optional)</span>
+            </label>
             <input
+              id="planner-timing"
+              aria-describedby="planner-timing-example"
               name="timing"
               value={timing}
               onChange={(event) => setTiming(event.target.value)}
               maxLength={500}
-              placeholder="e.g. Saturday evening"
               className={inputClass}
             />
-          </label>
-          <label className="text-sm font-semibold">
-            Location or weather <span className="font-normal text-supporting">(optional)</span>
+            <p id="planner-timing-example" className="mt-1 text-sm text-supporting">
+              e.g. Saturday evening, around 7 pm
+            </p>
+          </div>
+          <div>
+            <label htmlFor="planner-location" className="text-sm font-semibold">
+              Location or weather <span className="font-normal text-supporting">(optional)</span>
+            </label>
             <input
+              id="planner-location"
+              aria-describedby="planner-location-example"
               name="location"
               value={location}
               onChange={(event) => setLocation(event.target.value)}
               maxLength={500}
-              placeholder="e.g. Outdoors and chilly"
               className={inputClass}
             />
-          </label>
+            <p id="planner-location-example" className="mt-1 text-sm text-supporting">
+              e.g. Rooftop restaurant, warm and breezy
+            </p>
+          </div>
         </fieldset>
         {error && <p role="alert" className="mt-4 text-sm text-danger">{error}</p>}
         <button

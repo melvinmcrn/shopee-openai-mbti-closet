@@ -74,28 +74,58 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
 
       <form onSubmit={save} className="mt-6 rounded-2xl border border-divider bg-surface p-5 sm:p-7">
         <fieldset disabled={saving} className="grid gap-5 sm:grid-cols-2">
-          <label className="text-sm font-semibold">
-            Formality <span className="font-normal text-supporting">(optional)</span>
-            <input
-              name="formality"
-              value={formality}
-              maxLength={500}
-              placeholder="e.g. Smart casual"
-              onChange={(event) => setFormality(event.target.value)}
-              className={inputClass}
-            />
-          </label>
-          <label className="text-sm font-semibold">
-            Comfort <span className="font-normal text-supporting">(optional)</span>
-            <input
-              name="comfort"
-              value={comfort}
-              maxLength={500}
-              placeholder="e.g. Comfortable for walking"
-              onChange={(event) => setComfort(event.target.value)}
-              className={inputClass}
-            />
-          </label>
+          <div>
+            <label className="text-sm font-semibold">
+              Formality <span className="font-normal text-supporting">(optional)</span>
+              <input
+                name="formality"
+                value={formality}
+                maxLength={500}
+                placeholder="Choose a suggestion or type your own"
+                onChange={(event) => setFormality(event.target.value)}
+                className={inputClass}
+              />
+            </label>
+            <div role="group" aria-label="Formality suggestions" className="mt-2 flex flex-wrap gap-2">
+              {["Casual", "Smart casual", "Business casual", "Formal"].map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  aria-pressed={formality === option}
+                  onClick={() => setFormality(formality === option ? "" : option)}
+                  className="min-h-9 rounded-full border border-divider px-3 text-sm aria-pressed:bg-selected aria-pressed:text-secondary"
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="text-sm font-semibold">
+              Comfort <span className="font-normal text-supporting">(optional)</span>
+              <input
+                name="comfort"
+                value={comfort}
+                maxLength={500}
+                placeholder="Choose a suggestion or type your own"
+                onChange={(event) => setComfort(event.target.value)}
+                className={inputClass}
+              />
+            </label>
+            <div role="group" aria-label="Comfort suggestions" className="mt-2 flex flex-wrap gap-2">
+              {["Comfortable for walking", "Loose fit", "Light and breathable", "Warm layers"].map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  aria-pressed={comfort === option}
+                  onClick={() => setComfort(comfort === option ? "" : option)}
+                  className="min-h-9 rounded-full border border-divider px-3 text-sm aria-pressed:bg-selected aria-pressed:text-secondary"
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          </div>
         </fieldset>
 
         <fieldset disabled={saving} aria-describedby="garment-preference-hint" className="mt-6">
