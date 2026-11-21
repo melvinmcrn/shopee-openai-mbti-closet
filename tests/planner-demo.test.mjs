@@ -22,9 +22,9 @@ function d1Binding(database) {
       const statement = database.prepare(sql);
       return {
         bind(...params) {
+          if (/\?\d/.test(sql)) params = [Object.fromEntries(params.map((value, i) => [String(i + 1), value]))];
           const run = () => {
-            statement.run(...params);
-            return { success: true };
+            return { success: true, results: statement.all(...params).map(row => ({...row})) };
           };
           const boundStatement = {
             async first() {
@@ -58,18 +58,16 @@ function d1Binding(database) {
 }
 
 function migrate(database) {
-  const directory = new URL("../migrations/", import.meta.url);
+  const directory = new URL("../drizzle/", import.meta.url);
   for (const filename of readdirSync(directory).sort()) {
-    if (filename.startsWith("planner-") && filename.endsWith(".sql")) {
-      database.exec(readFileSync(new URL(filename, directory), "utf8"));
-    }
+    database.exec(readFileSync(new URL(filename, directory), "utf8"));
   }
 }
 
-const blouse = { id: "silk-blouse", name: "Silk blouse", category: "top", color: "Cream", imageRef: "wardrobe/blouse.jpg" };
-const trousers = { id: "wool-trousers", name: "Wool trousers", category: "bottom", color: "Navy", imageRef: "wardrobe/trousers.jpg" };
-const heels = { id: "leather-heels", name: "Leather heels", category: "shoes", color: "Black", imageRef: "wardrobe/heels.jpg" };
-const flats = { id: "walking-flats", name: "Walking flats", category: "shoes", color: "Black", imageRef: "wardrobe/flats.jpg" };
+const blouse = { id: "9", name: "Silk blouse", category: "top", color: "Cream", imageRef: "wardrobe/blouse.jpg" };
+const trousers = { id: "10", name: "Wool trousers", category: "bottom", color: "Navy", imageRef: "wardrobe/trousers.jpg" };
+const heels = { id: "11", name: "Leather heels", category: "shoes", color: "Black", imageRef: "wardrobe/heels.jpg" };
+const flats = { id: "12", name: "Walking flats", category: "shoes", color: "Black", imageRef: "wardrobe/flats.jpg" };
 const garments = [blouse, trousers, heels, flats];
 
 const originalSlots = { top: blouse.id, bottom: trousers.id, shoes: heels.id };
@@ -92,9 +90,13 @@ test("a shoe swap survives a reopened planner session and stays private to its a
   };
 
   const { optionId, saved } = await withDatabase(databasePath, async (database) => {
-    database.exec("CREATE TABLE users (id INTEGER PRIMARY KEY)");
-    database.prepare("INSERT INTO users (id) VALUES (?), (?)").run(accountId, otherAccountId);
     migrate(database);
+    database.exec("INSERT INTO users (id,auth_provider,auth_subject) VALUES (1,'google','owner'),(2,'google','other')");
+    for (const item of garments) {
+      database.prepare("INSERT INTO private_files(file_id,user_id,state) VALUES (?,1,'ready')").run(item.imageRef);
+      database.prepare(`INSERT INTO wardrobe_items(id,user_id,name,category,color,image_file_id,confirmed_at)
+        VALUES (?,1,?,?,?,?,CURRENT_TIMESTAMP)`).run(item.id,item.name,item.category,item.color,item.imageRef);
+    }
     const dependencies = {
       getGarments: async () => structuredClone(garments),
       generateLooks: t.mock.fn(async () => ({

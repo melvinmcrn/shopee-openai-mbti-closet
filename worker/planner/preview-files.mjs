@@ -1,7 +1,8 @@
 import { readPrivateFile, writePrivateFile, deletePrivateFile } from "../private-files.mjs";
 
-export function previewFiles(env, accountId, optionId) {
-  const account = {id: accountId};
+export function previewFiles(env, accountId, optionId, slots) {
+  const account = { id: accountId };
+  const selection = JSON.stringify(Object.entries(slots).filter(([, id]) => id != null).sort(([a], [b]) => a.localeCompare(b)));
   return {
     async profilePhotoRef() {
       const row = await env.DB.prepare("SELECT face_photo_file_id AS ref FROM profiles WHERE user_id=?").bind(accountId).first();
@@ -15,9 +16,10 @@ export function previewFiles(env, accountId, optionId) {
     async storeImage(blob) {
       const ref = await writePrivateFile(env, account, await blob.arrayBuffer(), blob.type);
       try {
-        const attached = await env.DB.prepare("UPDATE outfit_options SET preview_file_id=? WHERE user_id=? AND id=? RETURNING id")
-          .bind(ref, accountId, optionId).first();
-        if (!attached) throw new Error("Option unavailable");
+        await env.DB.prepare(`
+          INSERT INTO planner_previews(user_id,option_id,selection,file_id) VALUES (?,?,?,?)
+          ON CONFLICT(user_id,option_id,selection) DO UPDATE SET file_id=excluded.file_id
+        `).bind(accountId, optionId, selection, ref).run();
       } catch (error) {
         await deletePrivateFile(env,account,ref);
         throw error;

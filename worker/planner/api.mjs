@@ -53,7 +53,7 @@ export async function dispatchPlanner(env, accountId, action, input = {}, depend
       const source = await option(db, accountId, input.optionId);
       const final = snapshotSlots(input.slots, await wardrobe());
       return generatePreview(env, accountId, Object.values(final), input.useProfilePhoto,
-        dependencies.preview ?? previewFiles(env, accountId, source.id));
+        dependencies.preview ?? previewFiles(env, accountId, source.id, input.slots));
     }
     case "save": return saveLook(db, accountId, await option(db, accountId, input.optionId), input.slots, await wardrobe());
     case "list": return listLooks(db, accountId);

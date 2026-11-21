@@ -118,7 +118,7 @@ export function SavedList({ onOpen, onNew }: SavedListProps) {
                   ))}
                 </ul>
                 <p className="mt-5 flex-1 text-sm leading-relaxed text-[#51434d]">
-                  {look.explanation}
+                  <strong>Original suggestion</strong> · {look.explanation}
                 </p>
                 <button
                   type="button"

@@ -262,8 +262,10 @@ export async function generateLooks(env, brief, garments, priorLooks = [], reque
   const firstCore = combinationKey(first.slots, true);
   const wantsBothShapes = brief?.preferences?.includes("dress") &&
     (brief.preferences.includes("top") || brief.preferences.includes("bottom"));
-  const oppositeShape = wantsBothShapes && alternatives.find(look => Boolean(look.slots.dress) !== Boolean(first.slots.dress));
-  const second = (oppositeShape || undefined) ?? alternatives.find((look) => !look.repeat && combinationKey(look.slots, true) !== firstCore) ??
+  const oppositeShape = wantsBothShapes
+    ? alternatives.find(look => Boolean(look.slots.dress) !== Boolean(first.slots.dress))
+    : undefined;
+  const second = oppositeShape ?? alternatives.find((look) => !look.repeat && combinationKey(look.slots, true) !== firstCore) ??
     alternatives.find((look) => !look.repeat) ??
     alternatives.find((look) => combinationKey(look.slots, true) !== firstCore) ??
     alternatives[0];

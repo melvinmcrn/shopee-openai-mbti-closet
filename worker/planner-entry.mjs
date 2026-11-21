@@ -7,7 +7,7 @@ function json(value, status = 200) {
   return Response.json(value, { status, headers: { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" } });
 }
 
-export default {
+const plannerWorker = {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === "/planner" || url.pathname === "/planner/") {
@@ -28,3 +28,5 @@ export default {
     }
   },
 };
+
+export default plannerWorker;

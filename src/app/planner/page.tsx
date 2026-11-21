@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, type Brief, type Garment, type Look } from "./shared";
 import { PlannerHome } from "./home";
@@ -56,7 +57,7 @@ export default function PlannerPage() {
     ? <WearEntry id={wearId} onBack={() => go("saved/" + savedId)} />
     : <Detail id={savedId} onWear={id => go("saved/" + savedId + "/" + id)} onBack={() => go("saved")} />;
   else if (!garments) content = loadError
-    ? <div role="alert">{loadError} <a className="underline" href="/">Account</a> · <button onClick={() => {setLoadError(""); setReload(n => n + 1);}}>Retry</button></div>
+    ? <div role="alert">{loadError} <Link className="underline" href="/">Account</Link> · <button onClick={() => {setLoadError(""); setReload(n => n + 1);}}>Retry</button></div>
     : <p role="status">Opening your closet…</p>;
   else if (screen === "occasion") content = <Occasion key={brief.id || "new"} brief={brief} onBack={() => go("home")} onNext={saved => { setBrief(saved); go("style"); }} />;
   else if (screen === "style" && brief.id) content = <Style brief={brief} onBack={() => go("occasion")} onNext={saved => { setBrief(saved); go("compare"); }} />;
@@ -68,7 +69,7 @@ export default function PlannerPage() {
     <div className="mx-auto max-w-4xl">
       <nav aria-label="Planner navigation" className="mb-7 flex items-center gap-5 border-b border-[#ded2d8] pb-4 text-sm font-medium">
         <a href="#home" className="mr-auto text-lg font-semibold">MBTI Closet</a>
-        <a href="#saved">Saved</a><a href="/">Account</a>
+        <a href="#saved">Saved</a><Link href="/">Account</Link>
       </nav>
       {content}
     </div>

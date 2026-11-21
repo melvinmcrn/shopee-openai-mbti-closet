@@ -9,7 +9,7 @@ const brief = {
   location: "Indoors",
   formality: "Smart casual",
   comfort: "Standing for two hours",
-  preferences: ["Neutral colors"],
+  preferences: ["dress", "top", "bottom"],
 };
 
 function garment(id, category, name, fields = {}) {

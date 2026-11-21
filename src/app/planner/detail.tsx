@@ -356,7 +356,7 @@ function SavedDetail({ id, onWear, onBack }: DetailProps) {
             </ul>
           </section>
           {look.explanation && (
-            <p className="max-w-2xl text-sm leading-relaxed text-[#51434d]">{look.explanation}</p>
+            <p className="max-w-2xl text-sm leading-relaxed text-[#51434d]"><strong>Original suggestion</strong> · {look.explanation}</p>
           )}
           <WearHistory lookId={look.id} onWear={onWear} />
           <ShoppingSuggestions lookId={look.id} />
