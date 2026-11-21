@@ -1,4 +1,4 @@
-import { deleteFile, putFile } from "../wardrobe-files.mjs";
+import { deletePrivateFile, writePrivateFile } from "../private-files.mjs";
 
 export const maxImageBytes = 8 * 1024 * 1024;
 const maxFormBytes = maxImageBytes + 64 * 1024;
@@ -79,27 +79,30 @@ export async function upload(request, env, userId) {
   const existing = await env.DB.prepare(findDraft).bind(userId, key).first();
   if (existing) return Response.json({ id: existing.id });
 
-  // Content-bound storage prevents concurrent requests from replacing the winning photo.
-  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-  const digest = Array.from(hash, (byte) => byte.toString(16).padStart(2, "0")).join("");
-  const fileKey = `users/${userId}/wardrobe/${key}/${digest}`;
-  await putFile(env, userId, fileKey, bytes, type);
-
-  const [, draftResult] = await env.DB.batch([
-    env.DB.prepare(
-      `INSERT INTO wardrobe_items (user_id, name, category, image_file_id, draft_key)
-       VALUES (?, 'Untitled garment', 'other', ?, ?)
-       ON CONFLICT (user_id, draft_key) DO NOTHING`,
-    ).bind(userId, fileKey, key),
-    env.DB.prepare(findDraft).bind(userId, key),
-  ]);
-  const draft = draftResult.results[0];
-  if (draft.image_file_id !== fileKey) {
-    try {
-      await deleteFile(env, userId, fileKey);
-    } catch (cleanupError) {
-      console.error("Unable to remove unused wardrobe upload", cleanupError.name);
+  const account = { id: userId };
+  const fileId = await writePrivateFile(env, account, bytes, type);
+  let attached = false;
+  try {
+    const [, draftResult] = await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO wardrobe_items (user_id, name, category, image_file_id, draft_key)
+         VALUES (?, 'Untitled garment', 'other', ?, ?)
+         ON CONFLICT (user_id, draft_key) DO NOTHING`,
+      ).bind(userId, fileId, key),
+      env.DB.prepare(findDraft).bind(userId, key),
+    ]);
+    const draft = draftResult.results[0];
+    if (!draft) throw new Error("Wardrobe draft could not be saved");
+    attached = draft.image_file_id === fileId;
+    return Response.json({ id: draft.id });
+  } finally {
+    if (!attached) {
+      try {
+        // Storage checks live references before deleting, including after an uncertain D1 write.
+        await deletePrivateFile(env, account, fileId);
+      } catch {
+        console.warn("Wardrobe upload cleanup is pending");
+      }
     }
   }
-  return Response.json({ id: draft.id });
 }
