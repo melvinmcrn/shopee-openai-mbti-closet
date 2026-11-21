@@ -15,7 +15,7 @@ const fixturePhoto = (name) => readFile(new URL("./extraction-fixtures/" + name 
 
 function scenario(bytes, config) {
   const db = new DatabaseSync(":memory:");
-  const migrations = new URL("../../drizzle/", import.meta.url);
+  const migrations = new URL("../../../../../drizzle/", import.meta.url);
   const filesInOrder = readdirSync(migrations).sort();
   for (const name of ["stylist", "private_files", "private_file_expiry", "wardrobe_extraction"]) {
     const file = filesInOrder.find((entry) => entry.endsWith("_" + name + ".sql"));

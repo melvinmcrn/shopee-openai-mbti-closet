@@ -1,5 +1,5 @@
 import { after } from "next/server";
-import { createVercelHandler } from "../../../../server/vercel-api.mjs";
+import { createVercelHandler } from "../_server/vercel-api.mjs";
 import { vercelStorage } from "../../../../server/vercel-storage.mjs";
 
 export const runtime = "nodejs";

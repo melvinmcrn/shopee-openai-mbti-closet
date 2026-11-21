@@ -11,7 +11,7 @@ const jpeg = Uint8Array.of(0xff, 0xd8, 0xff, 0xd9);
 function fixture() {
   const sqlite = new DatabaseSync(":memory:");
   for (const migration of ["0000_stylist.sql", "0001_private_files.sql", "0002_private_file_expiry.sql"]) {
-    sqlite.exec(readFileSync(new URL(`../../drizzle/${migration}`, import.meta.url), "utf8"));
+    sqlite.exec(readFileSync(new URL(`../../../../../drizzle/${migration}`, import.meta.url), "utf8"));
   }
   sqlite.exec(`
     INSERT INTO users (id, auth_provider, auth_subject) VALUES (1, 'google', 'first'), (2, 'google', 'second');

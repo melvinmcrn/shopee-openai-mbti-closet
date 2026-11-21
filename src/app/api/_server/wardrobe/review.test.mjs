@@ -8,7 +8,7 @@ test("AI draft details are editable before explicit confirmation and private to 
   const db = new DatabaseSync(":memory:");
   try {
     for (const path of ["0000_stylist", "0001_private_files", "0002_private_file_expiry", "0103_wardrobe_extraction"]) {
-      db.exec(readFileSync(new URL(`../../drizzle/${path}.sql`, import.meta.url), "utf8"));
+      db.exec(readFileSync(new URL(`../../../../../drizzle/${path}.sql`, import.meta.url), "utf8"));
     }
     db.exec(`
       INSERT INTO users (id, auth_provider, auth_subject) VALUES (8, 'google', 'account'), (9, 'google', 'other');

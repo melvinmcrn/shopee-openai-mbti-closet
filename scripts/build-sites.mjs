@@ -23,7 +23,7 @@ for (const file of await readdir("out", { recursive: true, withFileTypes: true }
 }
 
 await build({
-  entryPoints: ["worker/planner-entry.mjs"],
+  entryPoints: ["worker/index.mjs"],
   outfile: "dist/server/index.js",
   platform: "browser",
   format: "esm",

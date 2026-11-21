@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { dispatchPlanner } from "../worker/planner/api.mjs";
+import { dispatchPlanner } from "../src/app/api/_server/planner/api.mjs";
 
 async function withDatabase(path, callback) {
   const database = new DatabaseSync(path);

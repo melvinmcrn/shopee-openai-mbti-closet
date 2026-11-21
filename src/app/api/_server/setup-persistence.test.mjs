@@ -1,10 +1,11 @@
+import { readSampleImage } from "./read-sample-image.mjs";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { encode } from "@auth/core/jwt";
 import { userData } from "./user-data.mjs";
-import worker from "./index.mjs";
+import { handleApi } from "./handle-api.mjs";
 
 const siteOrigin = "https://mbti-closet.stonyimpala.chatgpt.site";
 const sessionCookie = "__Secure-authjs.session-token";
@@ -15,7 +16,7 @@ const emptyProfile = { heightCm: null, weightKg: null, styles: [], facePhotoUrl:
 function setup(t) {
   const sqlite = new DatabaseSync(":memory:");
   t.after(() => sqlite.close());
-  const migrations = new URL("../drizzle/", import.meta.url);
+  const migrations = new URL("../../../../drizzle/", import.meta.url);
   for (const file of readdirSync(migrations).filter((name) => name.endsWith(".sql")).sort()) {
     sqlite.exec(readFileSync(new URL(file, migrations), "utf8"));
   }
@@ -74,14 +75,8 @@ function setup(t) {
     },
   };
 
-  const assetDirectory = new URL("../public/sample-wardrobe/", import.meta.url);
-  globalThis.SITE_ASSETS = Object.fromEntries(readdirSync(assetDirectory).map((name) => [
-    `/sample-wardrobe/${name}`,
-    ["image/webp", readFileSync(new URL(name, assetDirectory)).toString("base64")],
-  ]));
-  t.after(() => { delete globalThis.SITE_ASSETS; });
-
   const env = {
+    readSampleImage,
     DB,
     BUCKET,
     AUTH_SECRET: authSecret,
@@ -112,7 +107,7 @@ function client(env, cookie) {
     if (cookie) headers.set("Cookie", cookie);
     if (method !== "GET" && method !== "HEAD" && origin !== null) headers.set("Origin", origin);
     if (json !== undefined) headers.set("Content-Type", "application/json");
-    return worker.fetch(new Request(siteOrigin + path, {
+    return handleApi(new Request(siteOrigin + path, {
       method,
       headers,
       body: form ?? JSON.stringify(json),

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { generateLooks } from "../worker/planner/decision.mjs";
+import { generateLooks } from "../src/app/api/_server/planner/decision.mjs";
 
 const env = { OPENAI_API_KEY: "test-key" };
 const brief = {

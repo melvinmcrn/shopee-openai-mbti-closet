@@ -1,14 +1,14 @@
 /* global TEST_MIGRATIONS */
-import worker, { resolveAccount } from "../worker/index.mjs";
-import { deletePrivateFile, isOwnedPrivateFileId, writePrivateFile } from "../worker/private-files.mjs";
-import { userData } from "../worker/user-data.mjs";
+import { handleApi, resolveAccount } from "../src/app/api/_server/handle-api.mjs";
+import { deletePrivateFile, isOwnedPrivateFileId, writePrivateFile } from "../src/app/api/_server/private-files.mjs";
+import { userData } from "../src/app/api/_server/user-data.mjs";
 
 // This entry point runs only in the local test. Production requests use the normal
 // Worker. The test routes exercise the server-side methods through real bindings.
 const testWorker = {
   async fetch(request, env, ctx) {
     const { pathname } = new URL(request.url);
-    if (!pathname.startsWith("/_test/")) return worker.fetch(request, env, ctx);
+    if (!pathname.startsWith("/_test/")) return handleApi(request, env, ctx);
 
     const { args } = await request.json();
     if (pathname === "/_test/seed") {

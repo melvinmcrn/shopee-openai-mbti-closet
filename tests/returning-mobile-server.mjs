@@ -4,7 +4,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import worker from "../worker/planner-entry.mjs";
+import { handleApi } from "../src/app/api/_server/handle-api.mjs";
 
 const output = resolve(process.argv[2] ?? "out");
 const database = new DatabaseSync(":memory:");
@@ -135,7 +135,7 @@ const server = createServer(async (request, response) => {
       const chunks = [];
       for await (const chunk of request) chunks.push(chunk);
       const body = chunks.length ? Buffer.concat(chunks) : undefined;
-      const result = await worker.fetch(new Request(new URL(path, origin), {
+      const result = await handleApi(new Request(new URL(path, origin), {
         method: request.method, headers, body,
       }), env);
       response.writeHead(result.status, Object.fromEntries(result.headers));

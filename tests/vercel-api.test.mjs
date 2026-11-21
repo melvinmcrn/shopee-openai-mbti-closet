@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createVercelHandler } from "../server/vercel-api.mjs";
+import { createVercelHandler } from "../src/app/api/_server/vercel-api.mjs";
 
 const origin = "https://development.example";
 const credentials = {

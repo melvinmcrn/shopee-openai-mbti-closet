@@ -1,5 +1,6 @@
+import { readSampleImage } from "../read-sample-image.mjs";
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { sample } from "./sample.mjs";
@@ -7,7 +8,7 @@ import { sample } from "./sample.mjs";
 function setup(t) {
   const sqlite = new DatabaseSync(":memory:");
   t.after(() => sqlite.close());
-  const migrations = new URL("../../drizzle/", import.meta.url);
+  const migrations = new URL("../../../../../drizzle/", import.meta.url);
   for (const filename of [
     "0000_stylist.sql",
     "0001_private_files.sql",
@@ -23,6 +24,7 @@ function setup(t) {
 
   const objects = new Map();
   const env = {
+    readSampleImage,
     DB: {
       prepare(sql) {
         return {
@@ -60,13 +62,6 @@ function setup(t) {
       },
     },
   };
-
-  const assetDirectory = new URL("../../public/sample-wardrobe/", import.meta.url);
-  globalThis.SITE_ASSETS = Object.fromEntries(readdirSync(assetDirectory).map((name) => [
-    `/sample-wardrobe/${name}`,
-    ["image/webp", readFileSync(new URL(name, assetDirectory)).toString("base64")],
-  ]));
-  t.after(() => { delete globalThis.SITE_ASSETS; });
 
   async function loadSamples(userId) {
     const response = await sample(new Request("https://example.com/api/wardrobe/sample", { method: "POST" }), env, userId);

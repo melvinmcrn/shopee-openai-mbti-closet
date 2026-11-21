@@ -7,7 +7,7 @@ import { upload } from "./upload.mjs";
 function fixture(t) {
   const sqlite = new DatabaseSync(":memory:");
   t.after(() => sqlite.close());
-  const migrations = new URL("../../drizzle/", import.meta.url);
+  const migrations = new URL("../../../../../drizzle/", import.meta.url);
   for (const name of readdirSync(migrations).filter((name) => name.endsWith(".sql")).sort()) {
     sqlite.exec(readFileSync(new URL(name, migrations), "utf8"));
   }

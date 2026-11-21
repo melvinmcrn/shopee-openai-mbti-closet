@@ -1,14 +1,15 @@
+import { readSampleImage } from "../src/app/api/_server/read-sample-image.mjs";
 import assert from "node:assert/strict";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import postgres from "postgres";
 import { createPostgresDatabase } from "../server/postgres.mjs";
-import { dispatchPlanner } from "../worker/planner/api.mjs";
-import { readPrivateFile, writePrivateFile } from "../worker/private-files.mjs";
-import { userData } from "../worker/user-data.mjs";
-import { extract } from "../worker/wardrobe/extract.mjs";
-import { profile } from "../worker/wardrobe/profile.mjs";
-import { sample } from "../worker/wardrobe/sample.mjs";
+import { dispatchPlanner } from "../src/app/api/_server/planner/api.mjs";
+import { readPrivateFile, writePrivateFile } from "../src/app/api/_server/private-files.mjs";
+import { userData } from "../src/app/api/_server/user-data.mjs";
+import { extract } from "../src/app/api/_server/wardrobe/extract.mjs";
+import { profile } from "../src/app/api/_server/wardrobe/profile.mjs";
+import { sample } from "../src/app/api/_server/wardrobe/sample.mjs";
 
 const url = process.env.MBTI_POSTGRES_TEST_URL;
 
@@ -64,17 +65,22 @@ test("Postgres supports owner-scoped profiles, wardrobe items, and the planner",
   const DB = createPostgresDatabase(sql);
   const accounts = [];
   const objects = new Map();
-  const env = { DB, WARDROBE_EXTRACTION_FIXTURES: "1", BUCKET: {
-    async put(key, bytes, metadata) { objects.set(key, { blob: new Blob([bytes]), ...metadata }); },
-    async get(key) {
-      const file = objects.get(key);
-      return file ? {
-        body: file.blob.stream(), size: file.blob.size,
-        arrayBuffer: () => file.blob.arrayBuffer(), httpMetadata: file.httpMetadata,
-      } : null;
+  const env = {
+    readSampleImage,
+    DB,
+    WARDROBE_EXTRACTION_FIXTURES: "1",
+    BUCKET: {
+      async put(key, bytes, metadata) { objects.set(key, { blob: new Blob([bytes]), ...metadata }); },
+      async get(key) {
+        const file = objects.get(key);
+        return file ? {
+          body: file.blob.stream(), size: file.blob.size,
+          arrayBuffer: () => file.blob.arrayBuffer(), httpMetadata: file.httpMetadata,
+        } : null;
+      },
+      async delete(key) { objects.delete(key); },
     },
-    async delete(key) { objects.delete(key); },
-  } };
+  };
   const createAccount = async () => {
     const account = await DB.prepare("INSERT INTO users (auth_provider, auth_subject) VALUES ('google', ?) RETURNING id")
       .bind(crypto.randomUUID()).first();
@@ -131,14 +137,6 @@ test("Postgres supports owner-scoped profiles, wardrobe items, and the planner",
     await dispatchPlanner(env, owner.id, "wearUpdate", { id: wear.id, rating: 5 });
     assert.equal((await dispatchPlanner(env, owner.id, "wearGet", { id: wear.id })).rating, 5);
 
-    const sampleDirectory = new URL("../public/sample-wardrobe/", import.meta.url);
-    const names = await readdir(sampleDirectory);
-    const assets = Object.fromEntries(await Promise.all(names.map(async (name) => [
-      "/sample-wardrobe/" + name,
-      ["image/webp", (await readFile(new URL(name, sampleDirectory))).toString("base64")],
-    ])));
-    globalThis.SITE_ASSETS = assets;
-    t.after(() => { delete globalThis.SITE_ASSETS; });
     const sampleRequest = () => new Request("https://example.test/api/wardrobe/sample", { method: "POST" });
     const [initialSamples, repeatedSamples] = await Promise.all(
       [sampleRequest(), sampleRequest()].map(async (request) => (await sample(request, env, owner.id)).json()),
@@ -148,7 +146,7 @@ test("Postgres supports owner-scoped profiles, wardrobe items, and the planner",
     assert.equal(objects.size, 10);
     assert.deepEqual(await other.listWardrobeItems(), []);
 
-    const original = await readFile(new URL("../worker/wardrobe/extraction-fixtures/shirt.png", import.meta.url));
+    const original = await readFile(new URL("../src/app/api/_server/wardrobe/extraction-fixtures/shirt.png", import.meta.url));
     const originalFileId = await writePrivateFile(env, owner, original, "image/png");
     const draft = await owned.createWardrobeItem({ name: "Draft", category: "other", imageFileId: originalFileId });
     const extractRequest = () => new Request(`https://example.test/api/wardrobe/items/${draft.id}/extract`, { method: "POST" });

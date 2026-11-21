@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { dispatchPlanner } from "../worker/planner/api.mjs";
+import { dispatchPlanner } from "../src/app/api/_server/planner/api.mjs";
 
 const accountId = 1;
 const dress = { id: "9", name: "Column dress", category: "dress", color: "midnight blue", imageRef: "dress.png" };

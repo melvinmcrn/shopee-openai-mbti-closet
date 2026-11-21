@@ -1,6 +1,6 @@
 # Wardrobe extraction checks
 
-Run `node --test worker/wardrobe/extraction.test.mjs` from the repository root with Node 24.
+Run `node --test src/app/api/_server/wardrobe/extraction.test.mjs` from the repository root with Node 24.
 
 To test the fixture path in an isolated Site environment, set `WARDROBE_EXTRACTION_FIXTURES=1` and upload one of these four PNGs without re-encoding it. The Worker checks the exact file digest and reports `source: "fixture"` for matching uploads. The synthetic shirt, bag, sneakers, and jeans images fit the fixture silhouettes and exercise transparent pixel output, including disconnected shoes and the open bag handle.
 

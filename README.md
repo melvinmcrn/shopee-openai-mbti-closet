@@ -57,7 +57,7 @@ Visitors must first have access to the private Site. The Google account session 
 
 ## Vercel development with Supabase
 
-Vercel uses `npm run build:vercel` from `vercel.json`. Its Next.js Route Handler runs the same account, profile, wardrobe, private file, and planner APIs as the Sites Worker. The default `npm run build` still produces the Sites export and Worker with D1 and R2 bindings.
+Vercel uses `npm run build:vercel` from `vercel.json`. Its Next.js Route Handler serves the account, profile, wardrobe, private file, and planner APIs directly from `src/app/api/_server/`. The Sites Worker adapts requests to those same handlers and serves the static export. The default `npm run build` still produces the Sites export and Worker with D1 and R2 bindings.
 
 1. Create a separate Supabase development project and apply the SQL in `supabase/migrations/` there. Use the [Supabase CLI migration workflow](https://supabase.com/docs/guides/deployment/database-migrations) to link the development project and run `supabase db push`. Keep the `app` schema out of Supabase's exposed schemas.
 2. Create a **private** Storage bucket named `closet-private`. The app checks file ownership before it reads or serves an object. Give the backend the project URL and a [Supabase secret key](https://supabase.com/docs/guides/api/api-keys), available only in server environment variables.
@@ -85,7 +85,7 @@ if (!account) return new Response(null, { status: 401 });
 const records = userData(env.DB, account.id);
 ```
 
-Import `resolveAccount` from `worker/index.mjs`, `userData` from `worker/user-data.mjs`, and file operations from `worker/private-files.mjs`. The Worker supplies the private `DB` and `BUCKET` bindings.
+Import `resolveAccount` from `src/app/api/_server/handle-api.mjs`, `userData` from `src/app/api/_server/user-data.mjs`, and file operations from `src/app/api/_server/private-files.mjs`. The Worker supplies the private `DB` and `BUCKET` bindings.
 
 | Caller | Contract |
 | --- | --- |

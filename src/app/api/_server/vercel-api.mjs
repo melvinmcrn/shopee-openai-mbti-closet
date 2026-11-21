@@ -1,4 +1,5 @@
-import worker from "../worker/planner-entry.mjs";
+import { handleApi } from "./handle-api.mjs";
+import { readSampleImage } from "./read-sample-image.mjs";
 
 function privateResponse(body, status) {
   return new Response(body, {
@@ -36,13 +37,14 @@ export function createVercelHandler(config, getStorage) {
     }
     try {
       const { DB, BUCKET } = getStorage();
-      const response = await worker.fetch(request, {
+      const response = await handleApi(request, {
         APP_ORIGIN: origin,
         AUTH_SECRET: config.AUTH_SECRET,
         GOOGLE_CLIENT_ID: config.GOOGLE_CLIENT_ID,
         GOOGLE_CLIENT_SECRET: config.GOOGLE_CLIENT_SECRET,
         OPENAI_API_KEY: config.OPENAI_API_KEY,
         WARDROBE_EXTRACTION_FIXTURES: config.WARDROBE_EXTRACTION_FIXTURES,
+        readSampleImage,
         DB,
         BUCKET,
       }, context);

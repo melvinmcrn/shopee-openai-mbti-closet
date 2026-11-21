@@ -41,9 +41,7 @@ export async function sample(_request, env, userId) {
 
   const account = { id: userId };
   const uploads = await Promise.allSettled(missing.map(async (item) => {
-    const path = `/sample-wardrobe/${item.slug}.webp`;
-    const [, encodedImage] = SITE_ASSETS[path];
-    const bytes = Uint8Array.from(atob(encodedImage), (byte) => byte.charCodeAt(0));
+    const bytes = await env.readSampleImage(item.slug);
     return { item, fileId: await writePrivateFile(env, account, bytes, "image/webp") };
   }));
   const files = uploads.filter(({ status }) => status === "fulfilled").map(({ value }) => value);
