@@ -118,7 +118,7 @@ test("generation adds one occasion option and keeps its sourced pieces through s
   });
 });
 
-test("an empty closet gets the best weak catalog matches through generation, studio try-on and saving", async t => {
+test("an empty closet gets the best weak catalog matches and requires a portrait only for the try-on", async t => {
   await withDatabase(":memory:", async database => {
     migrate(database);
     database.exec("INSERT INTO users (id,auth_provider,auth_subject) VALUES (1,'google','owner')");
@@ -147,8 +147,7 @@ test("an empty closet gets the best weak catalog matches through generation, stu
       }) });
     });
     const env = { DB: d1Binding(database), OPENAI_API_KEY: "test-key" };
-    const dependencies = { preview: { cachedImage: async () => "studio-photo" } };
-    const dispatch = (action, input) => dispatchPlanner(env, 1, action, input, dependencies);
+    const dispatch = (action, input) => dispatchPlanner(env, 1, action, input);
     const brief = await dispatch("saveBrief", { occasion: "Summer lunch" });
     const result = await dispatch("generate", { briefId: brief.id });
     assert.equal(result.status, "ready");
@@ -158,7 +157,7 @@ test("an empty closet gets the best weak catalog matches through generation, stu
     const products = await dispatch("enhancements", { optionId: look.id, slots: look.slots });
     assert.deepEqual(Object.fromEntries(products.map(product => [product.catalogSlot, product.id])), catalogSlots);
     const catalogItemIds = Object.values(catalogSlots);
-    assert.deepEqual(await dispatch("preview", { optionId: look.id, catalogItemIds }), { imageRef: "studio-photo", useProfilePhoto: false });
+    await assert.rejects(dispatch("preview", { optionId: look.id, catalogItemIds }), { code: "profile_photo_required" });
     const saved = await dispatch("save", { optionId: look.id, slots: {} });
     assert.deepEqual(saved.slots, {});
     assert.deepEqual(saved.enhancements.map(item => item.id).sort(), [...catalogItemIds].sort());

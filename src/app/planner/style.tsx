@@ -112,13 +112,17 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
           </div>
         </fieldset>
 
+        <p id="look-photo-use" className="mt-4 text-sm text-supporting">
+          Your profile photo is required and is sent to OpenAI to create your try-on photos.
+        </p>
         {error && <p role="alert" className="mt-4 text-sm text-danger">{error}</p>}
         <button
+          aria-describedby="look-photo-use"
           type="submit"
           disabled={saving}
           className="mt-4 min-h-12 rounded-full bg-primary px-6 text-sm font-semibold text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:opacity-60"
         >
-          {saving ? "Saving…" : "Continue"}
+          {saving ? "Saving…" : "Create looks with my profile photo"}
         </button>
       </form>
     </section>

@@ -1,6 +1,6 @@
-import { readPrivateFile, writePrivateFile, deletePrivateFile } from "../private-files.mjs";
+import { readPrivateFile, writePrivateFile, deletePrivateFile, isOwnedPrivateFileId } from "../private-files.mjs";
 
-export const currentInventoryVersion = "photo-v5";
+export const currentInventoryVersion = "photo-v6";
 
 function garmentReferences(slots) {
   return Object.entries(slots).sort(([a], [b]) => a.localeCompare(b))
@@ -30,24 +30,33 @@ export function previewSelection(slots, personal, products = [], profileRef = nu
 }
 
 export async function profilePhotoRef(db, accountId) {
-  const row = await db.prepare("SELECT face_photo_file_id AS ref FROM profiles WHERE user_id=?").bind(accountId).first();
-  return row?.ref ?? null;
+  const row = await db.prepare(`
+    SELECT profile.face_photo_file_id AS ref FROM profiles AS profile
+    JOIN private_files AS photo ON photo.file_id = profile.face_photo_file_id
+      AND photo.user_id = profile.user_id AND photo.state = 'ready'
+    WHERE profile.user_id = ?
+  `).bind(accountId).first();
+  return isOwnedPrivateFileId({ id: accountId }, row?.ref) ? row.ref : null;
+}
+
+export async function readPreviewImage(env, accountId, ref) {
+  const file = await readPrivateFile(env, { id: accountId }, ref);
+  if (!file) throw new Error("Image unavailable");
+  return new Blob([await file.arrayBuffer()], { type: file.httpMetadata?.contentType });
 }
 
 export function previewFiles(env, accountId, optionId, slots, personal, products, profileRef, effectiveSlots = slots, identityOnly = false) {
   const account = { id: accountId };
   const selection = previewSelection(slots, personal, products, profileRef, effectiveSlots, currentInventoryVersion, identityOnly);
   return {
-    async cachedImage() {
+    async cachedImage(pinnedFile) {
+      if (pinnedFile) return await readPrivateFile(env, account, pinnedFile, { headOnly: true }) ? pinnedFile : null;
       const row = await env.DB.prepare("SELECT file_id FROM planner_previews WHERE user_id=? AND option_id=? AND selection=?")
         .bind(accountId, optionId, selection).first();
-      return row?.file_id;
+      if (!row?.file_id) return null;
+      return await readPrivateFile(env, account, row.file_id, { headOnly: true }) ? row.file_id : null;
     },
-    async readImage(ref) {
-      const file = await readPrivateFile(env, account, ref);
-      if (!file) throw new Error("Image unavailable");
-      return new Blob([await file.arrayBuffer()], {type:file.httpMetadata?.contentType});
-    },
+    readImage: ref => readPreviewImage(env, accountId, ref),
     async storeImage(blob) {
       const ref = await writePrivateFile(env, account, await blob.arrayBuffer(), blob.type);
       try {

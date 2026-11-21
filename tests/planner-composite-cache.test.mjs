@@ -17,7 +17,7 @@ test("a composited preview is specific to the profile, original photo, wardrobe 
   const key = (profile, effective, items) => previewSelection(slots, true, items, profile, effective);
   const effective = { ...slots, top };
   const first = key("face", effective, [product]);
-  assert.equal(JSON.parse(first)[0], "photo-v5");
+  assert.equal(JSON.parse(first)[0], "photo-v6");
   const previousComposite = previewSelection(slots, true, [product], "face", effective, "photo-v4");
   assert.deepEqual(JSON.parse(previousComposite), ["photo-v4", ...JSON.parse(first).slice(1)]);
   const identityOnly = previewSelection(slots, true, [product], "face", effective, undefined, true);
@@ -52,18 +52,18 @@ test("Saved resolves the composite of its actual base coverage and available war
     INSERT INTO generation_runs (id,user_id,request_id) VALUES (1,1,1);
     INSERT INTO outfit_options (id,user_id,run_id,position,title) VALUES (1,1,1,1,'Dinner');
     INSERT INTO private_files (file_id,user_id,state) VALUES
-      ('face',1,'ready'),('shirt',1,'ready'),('jacket',1,'ready'),('complete',1,'ready'),('old-render',1,'ready');
-    INSERT INTO profiles (user_id,face_photo_file_id) VALUES (1,'face');
+      ('private/1/10000000-0000-4000-8000-000000000001',1,'ready'),('shirt',1,'ready'),('jacket',1,'ready'),('complete',1,'ready'),('old-render',1,'ready');
+    INSERT INTO profiles (user_id,face_photo_file_id) VALUES (1,'private/1/10000000-0000-4000-8000-000000000001');
     INSERT INTO wardrobe_items (id,user_id,category,name,image_file_id,confirmed_at) VALUES
       (13,1,'top','Shirt','shirt',CURRENT_TIMESTAMP),(14,1,'outerwear','Jacket','jacket',CURRENT_TIMESTAMP);
     INSERT INTO saved_looks (id,user_id,source_option_id,name,use_profile_photo) VALUES (1,1,1,'Dinner',1);
     INSERT INTO saved_look_items(user_id,saved_look_id,slot,item_id,item_name) VALUES (1,1,'outerwear',14,'Jacket');
   `);
-  database.prepare("UPDATE private_files SET base_coverage=? WHERE file_id='face'").run(coverage);
+  database.prepare("UPDATE private_files SET base_coverage=? WHERE file_id='private/1/10000000-0000-4000-8000-000000000001'").run(coverage);
   const slots = { outerwear: jacket };
-  const complete = previewSelection(slots, true, [], "face", { ...slots, top });
+  const complete = previewSelection(slots, true, [], "private/1/10000000-0000-4000-8000-000000000001", { ...slots, top });
   const insert = database.prepare("INSERT INTO planner_previews VALUES (1,1,?,?)");
-  insert.run(JSON.stringify(["inventory-v3", true, "face", [["outerwear", "14", "jacket", "Jacket"]], []]), "old-render");
+  insert.run(JSON.stringify(["inventory-v3", true, "private/1/10000000-0000-4000-8000-000000000001", [["outerwear", "14", "jacket", "Jacket"]], []]), "old-render");
   const db = { prepare(sql) { return { bind(...params) {
     return { all: async () => ({ results: database.prepare(sql).all(...params) }) };
   } }; } };
