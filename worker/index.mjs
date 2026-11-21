@@ -1,14 +1,18 @@
+import { wardrobeApi } from "./wardrobe-api.mjs";
 import { Auth } from "@auth/core";
 import Google from "@auth/core/providers/google";
-
-import { resolveAccount } from "./wardrobe-account.mjs";
-import { wardrobeApi } from "./wardrobe-api.mjs";
+import { retryPrivateFileCleanup, servePrivateFile } from "./private-files.mjs";
 
 const origin = "https://mbti-closet.stonyimpala.chatgpt.site";
 const authPath = "/api/auth";
 const accountPath = "/api/account";
+const filesPath = "/api/files";
 
-function auth(request, env) {
+function validSubject(subject) {
+  return typeof subject === "string" && subject.length > 0;
+}
+
+function auth(request, env, readSubject = () => {}) {
   return Auth(request, {
     basePath: authPath,
     // The Worker rejects unexpected origins before calling Auth.js.
@@ -25,11 +29,26 @@ function auth(request, env) {
       }),
     ],
     callbacks: {
-      jwt({ token, account }) {
-        if (account?.provider === "google") token.googleSubject = account.providerAccountId;
-        return token;
-      },
       redirect: ({ baseUrl }) => baseUrl,
+      async jwt({ token, account, profile }) {
+        if (account) {
+          const subject = profile?.sub;
+          if (account.provider !== "google" || !validSubject(subject) || account.providerAccountId !== subject) {
+            return null;
+          }
+          await env.DB.prepare(
+            `INSERT INTO users (auth_provider, auth_subject, email) VALUES ('google', ?, ?)
+             ON CONFLICT (auth_provider, auth_subject) DO UPDATE SET email = excluded.email`,
+          ).bind(subject, token.email ?? null).run();
+          token.googleSubject = subject;
+        }
+        // Older sessions carry an Auth.js-generated identifier rather than Google's subject.
+        return validSubject(token.googleSubject) ? token : null;
+      },
+      session({ session, token }) {
+        readSubject(token.googleSubject);
+        return session;
+      },
     },
     // Provider errors may include sensitive request details.
     logger: {
@@ -37,6 +56,41 @@ function auth(request, env) {
       warn: (code) => console.warn("Authentication warning", code),
     },
   });
+}
+
+function authConfigured(env) {
+  return Boolean(env.AUTH_SECRET && env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
+}
+
+async function readAccountSession(request, env) {
+  let subject;
+  const sessionRequest = new Request(origin + authPath + "/session", {
+    headers: { Cookie: request.headers.get("Cookie") ?? "" },
+  });
+  const response = await auth(sessionRequest, env, (value) => {
+    subject = value;
+  });
+  const account = response.ok && validSubject(subject)
+    ? await env.DB.prepare("SELECT id FROM users WHERE auth_provider = 'google' AND auth_subject = ?").bind(subject).first()
+    : null;
+  return { account, response };
+}
+
+export async function resolveAccount(request, env) {
+  if (!authConfigured(env)) return null;
+  const { account } = await readAccountSession(request, env);
+  return account;
+}
+
+async function serveAccount(request, env, ctx) {
+  const { account, response } = await readAccountSession(request, env);
+  if (!response.ok) return response;
+  const session = await response.json();
+  if (!session || !account) return Response.json(null, response);
+  ctx?.waitUntil(retryPrivateFileCleanup(env, account).catch((error) => {
+    console.error("Private file cleanup failed", error.name);
+  }));
+  return Response.json({ ...session, user: { ...session.user, id: account.id } }, response);
 }
 
 function privateResponse(response) {
@@ -69,11 +123,14 @@ function serveAsset(request, pathname) {
   });
 }
 
-export default {
-  async fetch(request, env) {
+const worker = {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const { pathname } = url;
-    if (!pathname.startsWith("/api/")) {
+    const authRoute = pathname === authPath || pathname.startsWith(authPath + "/");
+    const fileRoute = pathname === filesPath || pathname.startsWith(filesPath + "/");
+    const wardrobeRoute = pathname.startsWith("/api/wardrobe/") || pathname === "/api/profile" || pathname === "/api/profile/photo";
+    if (!authRoute && !fileRoute && !wardrobeRoute && pathname !== accountPath) {
       return serveAsset(request, pathname);
     }
     if (url.origin !== origin) {
@@ -82,32 +139,38 @@ export default {
     if (!["GET", "HEAD"].includes(request.method) && request.headers.get("Origin") !== origin) {
       return privateResponse(new Response("Forbidden", { status: 403 }));
     }
-    if (!env.AUTH_SECRET || !env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
-      return privateResponse(new Response("Sign-in is unavailable", { status: 503 }));
+    const allowedMethods = wardrobeRoute ? ["GET", "POST", "DELETE", "PUT", "PATCH"] : fileRoute ? ["GET", "HEAD"] : authRoute ? ["GET", "POST"] : ["POST"];
+    if (!allowedMethods.includes(request.method)) {
+      return privateResponse(new Response(null, { status: 405, headers: { Allow: allowedMethods.join(", ") } }));
     }
-    if (!pathname.startsWith(authPath + "/") && pathname !== authPath && pathname !== accountPath) {
-      try {
-        const account = await resolveAccount(request, env);
-        if (!account) return privateResponse(Response.json({ error: "Sign in again to open your wardrobe." }, { status: 401 }));
-        return privateResponse(await wardrobeApi(request, env, account.id));
-      } catch (error) {
-        console.error("Wardrobe request failed", error.name);
-        return privateResponse(Response.json({ error: "Wardrobe service is unavailable. Try again." }, { status: 503 }));
+    if (fileRoute) {
+      const requestOrigin = request.headers.get("Origin");
+      const fetchSite = request.headers.get("Sec-Fetch-Site");
+      if ((requestOrigin && requestOrigin !== origin) || (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none")) {
+        return privateResponse(new Response(null, { status: 403 }));
       }
     }
-    if (pathname === accountPath) {
-      if (request.method !== "POST") {
-        return privateResponse(new Response(null, { status: 405, headers: { Allow: "POST" } }));
-      }
-      // Expose only the session endpoint through a non-cacheable same-origin POST.
-      const sessionRequest = new Request(origin + authPath + "/session", {
-        headers: { Cookie: request.headers.get("Cookie") ?? "" },
-      });
-      return privateResponse(await auth(sessionRequest, env));
-    }
-    if (pathname === authPath + "/session") {
+    const authAction = authRoute && pathname.slice(authPath.length).split("/").find(Boolean);
+    if (authAction === "session") {
       return privateResponse(new Response(null, { status: 404 }));
     }
-    return privateResponse(await auth(request, env));
+    if (!authConfigured(env)) {
+      return privateResponse(new Response(request.method === "HEAD" ? null : "Sign-in is unavailable", { status: 503 }));
+    }
+    if (authRoute) return privateResponse(await auth(request, env));
+    try {
+      if (pathname === accountPath) return privateResponse(await serveAccount(request, env, ctx));
+      const account = await resolveAccount(request, env);
+      if (!account) return privateResponse(new Response(null, { status: 401 }));
+      if (wardrobeRoute) return privateResponse(await wardrobeApi(request, env, account.id));
+      const fileId = pathname.slice(filesPath.length + 1);
+      if (!fileId || fileId.includes("/")) return privateResponse(new Response(null, { status: 404 }));
+      return privateResponse(await servePrivateFile(request, env, account, fileId));
+    } catch (error) {
+      console.error("Private endpoint failed", error.name);
+      return privateResponse(new Response(null, { status: 503 }));
+    }
   },
 };
+
+export default worker;
