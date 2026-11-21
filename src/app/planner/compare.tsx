@@ -18,7 +18,7 @@ type Generation = {
 };
 
 const secondaryButton =
-  "inline-flex min-h-11 items-center justify-center rounded-full border border-[#d9ccd8] px-5 py-2 text-sm font-semibold text-[#542f51] transition hover:bg-[#f6edf6] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#672f61] disabled:cursor-wait disabled:opacity-60";
+  "inline-flex min-h-11 items-center justify-center rounded-full border border-divider px-5 py-2 text-sm font-semibold text-secondary transition hover:bg-selected focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:cursor-wait disabled:opacity-60";
 
 function GarmentTile({ garment, slot }: { garment?: Garment; slot: string }) {
   const [imageFailed, setImageFailed] = useState(false);
@@ -27,7 +27,7 @@ function GarmentTile({ garment, slot }: { garment?: Garment; slot: string }) {
 
   return (
     <li className="min-w-0">
-      <div className="relative flex aspect-[7/6] items-center justify-center overflow-hidden rounded-xl bg-[#f4efeb]">
+      <div className="relative flex aspect-[7/6] items-center justify-center overflow-hidden rounded-xl bg-selected">
         {src && !imageFailed ? (
           <Image
             src={src}
@@ -38,15 +38,15 @@ function GarmentTile({ garment, slot }: { garment?: Garment; slot: string }) {
             onError={() => setImageFailed(true)}
           />
         ) : (
-          <span className="px-2 text-center text-xs capitalize text-[#64565d]">
+          <span className="px-2 text-center text-xs capitalize text-supporting">
             {garment?.color || slotLabel}
           </span>
         )}
       </div>
-      <p className="mt-2 text-xs font-medium capitalize text-[#6c5a67]">
+      <p className="mt-2 text-xs font-medium capitalize text-supporting">
         {slotLabel}
       </p>
-      <p className="mt-0.5 break-words text-sm font-semibold text-[#2a2229]">
+      <p className="mt-0.5 break-words text-sm font-semibold text-text">
         {garment?.name || "Item unavailable"}
       </p>
     </li>
@@ -65,10 +65,10 @@ function LookCard({
   onChoose: (look: Look) => void;
 }) {
   return (
-    <article className="flex min-w-0 flex-col rounded-2xl border border-[#e7dce4] bg-white p-4 shadow-sm sm:p-5">
-      <h2 className="font-serif text-2xl text-[#2a2229]">Look {index + 1}</h2>
+    <article className="flex min-w-0 flex-col rounded-2xl border border-divider bg-surface p-4 shadow-sm sm:p-5">
+      <h2 className="font-heading text-2xl text-text">Look {index + 1}</h2>
       {look.occasion && (
-        <p className="mt-1 text-sm text-[#6c5a67]">{look.occasion}</p>
+        <p className="mt-1 text-sm text-supporting">{look.occasion}</p>
       )}
       <ul className="mt-4 grid grid-cols-2 gap-x-3 gap-y-4">
         {Object.entries(look.slots).map(([slot, garmentId]) => (
@@ -79,14 +79,14 @@ function LookCard({
           />
         ))}
       </ul>
-      <p className="mb-4 mt-5 flex-1 text-sm leading-relaxed text-[#51434d]">
+      <p className="mb-4 mt-5 flex-1 text-sm leading-relaxed text-supporting">
         {look.explanation}
       </p>
       <button
         type="button"
         aria-label={`Choose look ${index + 1}`}
         onClick={() => onChoose(look)}
-        className="min-h-11 w-full rounded-full bg-[#672f61] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#54254f] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#672f61]"
+        className="min-h-11 w-full rounded-full bg-primary px-4 py-2 text-sm font-semibold text-on-primary transition hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary"
       >
         Choose this look
       </button>
@@ -153,13 +153,13 @@ function CompareBrief({ briefId, garments, onChoose, onEdit }: CompareProps) {
   }
 
   return (
-    <section aria-labelledby="compare-heading" className="text-[#2a2229]">
+    <section aria-labelledby="compare-heading" className="text-text">
       <header className="mb-6 flex flex-wrap items-end justify-between gap-4 sm:mb-8">
         <div>
-          <h1 id="compare-heading" className="font-serif text-4xl tracking-tight sm:text-5xl">
+          <h1 id="compare-heading" className="font-heading text-4xl tracking-tight sm:text-5xl">
             Compare looks
           </h1>
-          <p className="mt-2 max-w-xl text-sm leading-relaxed text-[#6c5a67] sm:text-base">
+          <p className="mt-2 max-w-xl text-sm leading-relaxed text-supporting sm:text-base">
             See how the pieces work together and choose what you’d like to wear.
           </p>
         </div>
@@ -184,13 +184,13 @@ function CompareBrief({ briefId, garments, onChoose, onEdit }: CompareProps) {
 
       <div aria-live="polite" className={looks.length ? "mt-5" : ""}>
         {busy && (
-          <p className="flex items-center gap-3 rounded-2xl border border-[#e7dce4] bg-[#faf7f4] p-5 text-sm text-[#51434d]">
-            <span aria-hidden className="size-4 shrink-0 animate-spin rounded-full border-2 border-[#d9ccd8] border-t-[#672f61] motion-reduce:animate-none" />
+          <p className="flex items-center gap-3 rounded-2xl border border-divider bg-canvas p-5 text-sm text-supporting">
+            <span aria-hidden className="size-4 shrink-0 animate-spin rounded-full border-2 border-divider border-t-primary motion-reduce:animate-none" />
             {looks.length ? "Finding more looks…" : "Putting together your looks…"}
           </p>
         )}
         {!busy && (insufficient || failed || empty) && (
-          <p className="rounded-2xl border border-[#e7dce4] bg-[#faf7f4] p-5 text-sm leading-relaxed text-[#51434d]">
+          <p className="rounded-2xl border border-divider bg-canvas p-5 text-sm leading-relaxed text-supporting">
             {result?.message || message}
           </p>
         )}

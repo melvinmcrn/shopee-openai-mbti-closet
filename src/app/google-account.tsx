@@ -84,10 +84,10 @@ export function GoogleAccount() {
       <input type="hidden" name="csrfToken" value={csrfToken} />
       <button
         aria-describedby="google-sign-in-note"
-        className="flex min-h-[54px] w-full items-center justify-center gap-3 rounded-[9px] bg-primary px-5 py-3 text-xl font-bold text-white shadow-sm transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-secondary focus-visible:ring-offset-2 focus-visible:ring-offset-canvas active:scale-[0.99]"
+        className="flex min-h-[54px] w-full items-center justify-center gap-3 rounded-[9px] bg-primary px-5 py-3 text-xl font-bold text-on-primary shadow-sm transition hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-secondary focus-visible:ring-offset-2 focus-visible:ring-offset-canvas active:scale-[0.99]"
         type="submit"
       >
-        <span className="grid size-7 shrink-0 place-items-center rounded-md bg-white">
+        <span className="grid size-7 shrink-0 place-items-center rounded-md bg-surface">
           <Image src="/google-sign-in.png" alt="" width={20} height={20} unoptimized />
         </span>
         Sign in to get started

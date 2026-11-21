@@ -19,9 +19,9 @@ type Profile = EditableProfile & {
 type PendingPhoto = { file: File; previewUrl: string };
 type Notice = { text: string; error?: boolean };
 
-const fieldClass = "mt-2 w-full rounded-lg border border-[#dcd0c5] bg-white px-3 py-2 text-[#25201c]";
-const buttonClass = "w-fit rounded-full border border-[#dcd0c5] px-4 py-2 text-sm font-medium hover:bg-[#f8f0ea] disabled:opacity-50";
-const primaryButtonClass = "w-fit rounded-full bg-[#863420] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#692718] disabled:opacity-50";
+const fieldClass = "mt-2 w-full rounded-lg border border-divider bg-surface px-3 py-2 text-text";
+const buttonClass = "w-fit rounded-full border border-divider px-4 py-2 text-sm font-medium hover:bg-selected disabled:opacity-50";
+const primaryButtonClass = "w-fit rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-on-primary hover:bg-primary-hover disabled:opacity-50";
 
 function measurement(value: string) {
   return value.trim() ? Number(value) : null;
@@ -35,7 +35,7 @@ async function readProfile(response: Response): Promise<Profile> {
 
 function NoticeMessage({ notice }: { notice: Notice | null }) {
   return (
-    <p role={notice?.error ? "alert" : "status"} className={notice?.error ? "text-sm text-red-800" : "text-sm text-[#65574d]"}>
+    <p role={notice?.error ? "alert" : "status"} className={notice?.error ? "text-sm text-danger" : "text-sm text-supporting"}>
       {notice?.text}
     </p>
   );
@@ -175,10 +175,10 @@ export default function ProfileSettings() {
   const availableStyles = new Set([...styleOptions, ...(profile?.styles ?? [])]);
 
   return (
-    <main className="min-h-screen flex-1 bg-[#f8f4ef] px-5 py-8 text-[#25201c] sm:px-8 sm:py-12">
+    <main className="min-h-screen flex-1 bg-selected px-5 py-8 text-text sm:px-8 sm:py-12">
       <div className="mx-auto flex max-w-2xl flex-col gap-7">
         {profile && (
-          <Link className="w-fit text-sm font-medium text-[#65574d] underline underline-offset-4" href={profile.setupCompletedAt ? "/planner" : "/profile/ready"}>
+          <Link className="w-fit text-sm font-medium text-supporting underline underline-offset-4" href={profile.setupCompletedAt ? "/planner" : "/profile/ready"}>
             {profile.setupCompletedAt ? "← Back to planner" : "← Back to planner setup"}
           </Link>
         )}
@@ -201,7 +201,7 @@ export default function ProfileSettings() {
         )}
         {profile && (
           <>
-            <section aria-labelledby="face-photo-heading" className="rounded-2xl border border-[#dcd0c5] bg-white p-5 sm:p-6">
+            <section aria-labelledby="face-photo-heading" className="rounded-2xl border border-divider bg-surface p-5 sm:p-6">
               <h2 id="face-photo-heading" className="text-lg font-semibold">Private face photo</h2>
               <div className="mt-4 flex flex-wrap items-center gap-4">
                 {photoUrl ? (
@@ -211,22 +211,22 @@ export default function ProfileSettings() {
                     width={104}
                     height={104}
                     unoptimized
-                    className="size-26 rounded-xl bg-[#f8f0ea] object-cover"
+                    className="size-26 rounded-xl bg-selected object-cover"
                   />
                 ) : (
-                  <span className="flex size-26 items-center justify-center rounded-xl bg-[#f8f0ea] px-2 text-center text-sm text-[#65574d]">No face photo</span>
+                  <span className="flex size-26 items-center justify-center rounded-xl bg-selected px-2 text-center text-sm text-supporting">No face photo</span>
                 )}
                 <div className="flex min-w-0 flex-1 basis-48 flex-col items-start gap-2">
                   <label className="text-sm font-medium" htmlFor="face-photo">{profile.facePhotoUrl ? "Change face photo" : "Choose a face photo"}</label>
                   <input
                     id="face-photo"
-                    className="max-w-full text-sm file:mr-2 file:rounded-full file:border file:border-[#dcd0c5] file:px-3 file:py-1.5 file:font-medium disabled:opacity-50"
+                    className="max-w-full text-sm file:mr-2 file:rounded-full file:border file:border-divider file:px-3 file:py-1.5 file:font-medium disabled:opacity-50"
                     type="file"
                     accept="image/jpeg,image/png,image/webp"
                     onChange={changePhoto}
                     disabled={busy !== null}
                   />
-                  {pendingPhoto && <p className="max-w-full wrap-anywhere text-sm text-[#65574d]">{pendingPhoto.file.name}</p>}
+                  {pendingPhoto && <p className="max-w-full wrap-anywhere text-sm text-supporting">{pendingPhoto.file.name}</p>}
                   <div className="flex flex-wrap gap-2">
                     {pendingPhoto && (
                       <>
@@ -252,10 +252,10 @@ export default function ProfileSettings() {
               <NoticeMessage notice={photoNotice} />
             </section>
 
-            <form onSubmit={saveProfile} className="grid gap-5 rounded-2xl border border-[#dcd0c5] bg-white p-5 sm:p-6">
+            <form onSubmit={saveProfile} className="grid gap-5 rounded-2xl border border-divider bg-surface p-5 sm:p-6">
               <fieldset disabled={busy !== null} className="grid gap-3">
                 <legend className="mb-2 text-lg font-semibold">Optional measurements</legend>
-                <p className="text-sm text-[#65574d]">Leave a field blank to clear it when you save.</p>
+                <p className="text-sm text-supporting">Leave a field blank to clear it when you save.</p>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="text-sm font-medium">
                     Height (cm)
@@ -268,14 +268,14 @@ export default function ProfileSettings() {
                 </div>
               </fieldset>
 
-              <div className="border-t border-[#dcd0c5] pt-5">
+              <div className="border-t border-divider pt-5">
                 <fieldset disabled={busy !== null}>
                   <legend className="mb-3 text-lg font-semibold">Preferred styles</legend>
                   <div className="flex flex-wrap gap-2">
                     {[...availableStyles].map((style) => (
-                      <label key={style} className="flex cursor-pointer items-center gap-2 rounded-full border border-[#dcd0c5] px-3 py-2 text-sm has-checked:border-[#863420] has-checked:bg-[#f8f0ea]">
+                      <label key={style} className="flex cursor-pointer items-center gap-2 rounded-full border border-divider px-3 py-2 text-sm has-checked:border-secondary has-checked:bg-selected">
                         <input
-                          className="accent-[#863420]"
+                          className="accent-primary"
                           type="checkbox"
                           checked={styles.includes(style)}
                           onChange={(event) => {

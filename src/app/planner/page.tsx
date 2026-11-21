@@ -57,7 +57,7 @@ export default function PlannerPage() {
     ? <WearEntry id={wearId} onBack={() => go("saved/" + savedId)} />
     : <Detail id={savedId} onWear={id => go("saved/" + savedId + "/" + id)} onBack={() => go("saved")} />;
   else if (!garments) content = loadError
-    ? <div role="alert">{loadError} <Link className="underline" href="/">Account</Link> · <button onClick={() => {setLoadError(""); setReload(n => n + 1);}}>Retry</button></div>
+    ? <div className="text-danger" role="alert">{loadError} <Link className="underline" href="/">Account</Link> · <button onClick={() => {setLoadError(""); setReload(n => n + 1);}}>Retry</button></div>
     : <p role="status">Opening your closet…</p>;
   else if (screen === "occasion") content = <Occasion key={brief.id || "new"} brief={brief} onBack={() => go("home")} onNext={saved => { setBrief(saved); go("style"); }} />;
   else if (screen === "style" && brief.id) content = <Style brief={brief} onBack={() => go("occasion")} onNext={saved => { setBrief(saved); go("compare"); }} />;
@@ -65,9 +65,9 @@ export default function PlannerPage() {
   else if (screen === "refine" && look) content = <Refine look={look} slots={slots} garments={garments} onChange={setSlots} onBack={() => go("compare")} onPreview={() => go("preview")} onSaved={id => go("saved/" + id)} />;
   else if (screen === "preview" && look) content = <Preview look={look} slots={slots} garments={garments} onBack={() => go("refine")} />;
   else content = <PlannerHome garments={garments} onNew={start} onSaved={() => go("saved")} />;
-  return <main className="min-h-screen bg-[#fcf9f7] px-5 py-6 text-[#302331] sm:px-10">
+  return <main className="min-h-screen bg-canvas px-5 py-6 text-text sm:px-10">
     <div className="mx-auto max-w-4xl">
-      <nav aria-label="Planner navigation" className="mb-7 flex items-center gap-5 border-b border-[#ded2d8] pb-4 text-sm font-medium">
+      <nav aria-label="Planner navigation" className="mb-7 flex items-center gap-5 border-b border-divider pb-4 text-sm font-medium">
         <a href="#home" className="mr-auto text-lg font-semibold">Closet</a>
         <a href="#saved">Saved</a><Link href="/">Account</Link>
       </nav>

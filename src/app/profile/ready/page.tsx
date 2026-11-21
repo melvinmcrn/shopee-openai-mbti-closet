@@ -27,7 +27,7 @@ type SetupState =
   | { status: "error" }
   | { status: "loaded"; data: Setup };
 
-const cardClass = "rounded-2xl border border-neutral-200 p-5 sm:p-6 dark:border-neutral-800";
+const cardClass = "rounded-2xl border border-divider bg-surface p-5 sm:p-6";
 const linkClass =
   "inline-flex min-h-11 items-center rounded text-sm font-medium underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-4";
 
@@ -39,13 +39,13 @@ function SetupSummary({ profile, items }: Setup) {
     <div className="grid gap-4 sm:grid-cols-2">
       <section className={cardClass} aria-labelledby="wardrobe-heading">
         <h2 id="wardrobe-heading" className="text-lg font-semibold">Wardrobe</h2>
-        <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+        <p className="mt-2 text-sm text-supporting">
           {items.length === 1 ? "1 saved item" : `${items.length} saved items`}
         </p>
         {preview.length > 0 && (
           <ul className="mt-3 grid gap-1 text-sm break-words">
             {preview.map((item) => <li key={item.id}>{item.name}</li>)}
-            {remaining > 0 && <li className="text-neutral-600 dark:text-neutral-400">+{remaining} more</li>}
+            {remaining > 0 && <li className="text-supporting">+{remaining} more</li>}
           </ul>
         )}
         <Link href="/closet" className={`mt-2 ${linkClass}`}>Open closet</Link>
@@ -54,11 +54,11 @@ function SetupSummary({ profile, items }: Setup) {
       <section className={cardClass} aria-labelledby="details-heading">
         <h2 id="details-heading" className="text-lg font-semibold">Personal details</h2>
         <dl className="mt-3 grid grid-cols-[1fr_auto] gap-x-4 gap-y-2 text-sm">
-          <dt className="text-neutral-600 dark:text-neutral-400">Height</dt>
+          <dt className="text-supporting">Height</dt>
           <dd>{profile.heightCm == null ? "Not added" : `${profile.heightCm} cm`}</dd>
-          <dt className="text-neutral-600 dark:text-neutral-400">Weight</dt>
+          <dt className="text-supporting">Weight</dt>
           <dd>{profile.weightKg == null ? "Not added" : `${profile.weightKg} kg`}</dd>
-          <dt className="text-neutral-600 dark:text-neutral-400">Face photo</dt>
+          <dt className="text-supporting">Face photo</dt>
           <dd>{profile.facePhotoUrl ? "Added" : "Not added"}</dd>
         </dl>
         <Link href="/profile/settings" className={`mt-2 ${linkClass}`}>
@@ -73,14 +73,14 @@ function SetupSummary({ profile, items }: Setup) {
             {profile.styles.map((style) => (
               <li
                 key={style}
-                className="max-w-full rounded-full bg-neutral-100 px-3 py-1 text-sm break-words dark:bg-neutral-800"
+                className="max-w-full rounded-full bg-selected px-3 py-1 text-sm break-words"
               >
                 {style}
               </li>
             ))}
           </ul>
         ) : (
-          <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">No styles selected</p>
+          <p className="mt-2 text-sm text-supporting">No styles selected</p>
         )}
         <Link href="/profile/style" className={`mt-2 ${linkClass}`}>Edit style preferences</Link>
       </section>
@@ -150,7 +150,7 @@ export default function ProfileReadyPage() {
       {setup.status === "loading" && <p role="status">Loading your setup…</p>}
       {setup.status === "error" && (
         <div>
-          <p role="alert">Your setup could not be loaded.</p>
+          <p className="text-danger" role="alert">Your setup could not be loaded.</p>
           <button
             type="button"
             className={linkClass}
@@ -171,11 +171,11 @@ export default function ProfileReadyPage() {
               type="button"
               onClick={openPlanner}
               disabled={finishing}
-              className="min-h-11 rounded-full bg-neutral-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-neutral-700 focus-visible:outline-2 focus-visible:outline-offset-4 disabled:opacity-60 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
+              className="min-h-11 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-on-primary hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-secondary disabled:opacity-60"
             >
               {finishing ? "Opening planner…" : "Open planner"}
             </button>
-            {finishError && <p role="alert" className="text-sm text-red-700 dark:text-red-400">Setup could not be completed. Please try again.</p>}
+            {finishError && <p role="alert" className="text-sm text-danger">Setup could not be completed. Please try again.</p>}
           </div>
         </>
       )}

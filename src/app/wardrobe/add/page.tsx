@@ -145,6 +145,8 @@ export default function AddWardrobePhotoPage() {
     }
   }
 
+  const primaryAction = "rounded-full bg-primary px-5 py-2.5 font-semibold text-on-primary hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary";
+
   return (
     <main className="wardrobe-page mx-auto w-full max-w-xl px-5 py-10 sm:px-8 sm:py-14">
       <header className="mb-7 space-y-3">
@@ -156,12 +158,12 @@ export default function AddWardrobePhotoPage() {
       </header>
 
       <form onSubmit={submitPhoto} className="space-y-5">
-        <div className="rounded-3xl border border-current/15 p-5 sm:p-6">
+        <div className="rounded-3xl border border-divider bg-surface p-5 sm:p-6">
           {photo && (
             <figure className="mb-5 space-y-2">
               <Image
                 alt="Selected garment photo"
-                className="mx-auto max-h-64 w-full rounded-2xl bg-current/5 object-contain"
+                className="mx-auto max-h-64 w-full rounded-2xl bg-selected object-contain"
                 height={256}
                 src={photo.preview}
                 unoptimized
@@ -171,23 +173,23 @@ export default function AddWardrobePhotoPage() {
             </figure>
           )}
           <div className="flex flex-wrap gap-3">
-            <label className="relative inline-flex cursor-pointer items-center rounded-full border border-current/25 px-4 py-2 text-sm font-medium focus-within:outline-2 focus-within:outline-offset-2 has-disabled:cursor-not-allowed has-disabled:opacity-60">
+            <label className="relative inline-flex cursor-pointer items-center rounded-full border border-divider px-4 py-2 text-sm font-medium focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-secondary has-disabled:cursor-not-allowed has-disabled:opacity-60">
               {photo ? "Choose another photo" : "Choose photo"}
               <input type="file" accept={imageTypes.join(",")} className="sr-only" disabled={busy} onChange={choosePhoto} />
             </label>
-            <label className="relative inline-flex cursor-pointer items-center rounded-full border border-current/25 px-4 py-2 text-sm font-medium focus-within:outline-2 focus-within:outline-offset-2 has-disabled:cursor-not-allowed has-disabled:opacity-60">
+            <label className="relative inline-flex cursor-pointer items-center rounded-full border border-divider px-4 py-2 text-sm font-medium focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-secondary has-disabled:cursor-not-allowed has-disabled:opacity-60">
               Take photo
               <input type="file" accept="image/*" capture="environment" className="sr-only" disabled={busy} onChange={choosePhoto} />
             </label>
           </div>
-          <p className="mt-3 text-sm">JPEG, PNG, or WebP · Up to 8 MB</p>
+          <p className="mt-3 text-sm text-supporting">JPEG, PNG, or WebP · Up to 8 MB</p>
         </div>
 
-        {error && <p role="alert">{error}</p>}
+        {error && <p className="text-danger" role="alert">{error}</p>}
         <div className="flex flex-wrap items-center gap-3">
           {phase !== "ready" && (
             <button
-              className="rounded-full border border-current/25 px-5 py-2.5 font-medium disabled:cursor-not-allowed disabled:opacity-60"
+              className={`${primaryAction} disabled:cursor-not-allowed disabled:opacity-60`}
               disabled={!photo || busy}
               type="submit"
             >
@@ -195,7 +197,7 @@ export default function AddWardrobePhotoPage() {
             </button>
           )}
           {photo?.id && (phase === "ready" || phase === "extraction-failed") && (
-            <Link className="rounded-full border border-current/25 px-5 py-2.5 font-medium" href={reviewHref}>
+            <Link className={phase === "ready" ? primaryAction : "rounded-full border border-divider px-5 py-2.5 font-medium"} href={reviewHref}>
               {phase === "ready" ? "Review item" : "Enter details manually"}
             </Link>
           )}
@@ -205,7 +207,7 @@ export default function AddWardrobePhotoPage() {
         </p>
       </form>
 
-      <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-current/15 pt-6">
+      <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-divider pt-6">
         <p>Want to try a ready-made wardrobe?</p>
         <button
           className="font-medium underline underline-offset-4 disabled:cursor-not-allowed disabled:opacity-60"
@@ -216,7 +218,7 @@ export default function AddWardrobePhotoPage() {
           {addingSample ? "Loading sample wardrobe…" : "Use sample wardrobe"}
         </button>
       </div>
-      {sampleMessage && <p className="mt-3" role="alert">{sampleMessage}</p>}
+      {sampleMessage && <p className="mt-3 text-danger" role="alert">{sampleMessage}</p>}
     </main>
   );
 }

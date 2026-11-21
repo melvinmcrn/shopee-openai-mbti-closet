@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { styleOptions } from "../style-options";
 
-const primaryButton = "inline-flex min-h-11 items-center justify-center rounded-full bg-[#25201c] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#463a32] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9c3c24] disabled:opacity-50";
-const secondaryButton = "inline-flex min-h-11 items-center justify-center rounded-full border border-[#c9bcb0] bg-white px-5 py-2.5 text-sm font-semibold text-[#25201c] hover:border-[#25201c] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9c3c24]";
+const primaryButton = "inline-flex min-h-11 items-center justify-center rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-on-primary hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:opacity-50";
+const secondaryButton = "inline-flex min-h-11 items-center justify-center rounded-full border border-divider bg-surface px-5 py-2.5 text-sm font-semibold text-text hover:border-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary";
 
 export default function ConfirmStylePage() {
   const router = useRouter();
@@ -86,14 +86,14 @@ export default function ConfirmStylePage() {
   }
 
   return (
-    <main className="min-h-screen flex-1 bg-[#f8f4ef] px-5 py-10 text-[#25201c] sm:px-8 sm:py-14">
+    <main className="min-h-screen flex-1 bg-selected px-5 py-10 text-text sm:px-8 sm:py-14">
       <div className="mx-auto max-w-2xl">
-        <header className="border-b border-[#dcd0c5] pb-7">
-          <Link className="text-sm font-semibold text-[#863420] hover:underline" href="/wardrobe/confirm">
+        <header className="border-b border-divider pb-7">
+          <Link className="text-sm font-semibold text-secondary hover:underline" href="/wardrobe/confirm">
             <span aria-hidden="true">← </span>Confirm items
           </Link>
           <h1 className="mt-5 text-4xl font-semibold tracking-tight sm:text-5xl">Confirm style</h1>
-          <p className="mt-3 max-w-lg leading-relaxed text-[#65574d]">
+          <p className="mt-3 max-w-lg leading-relaxed text-supporting">
             Choose the styles you like to wear regularly. You can update your choices in Settings.
           </p>
         </header>
@@ -101,7 +101,7 @@ export default function ConfirmStylePage() {
         {status === "loading" && <p className="py-8" role="status">Loading style preferences…</p>}
         {status === "error" && (
           <div className="space-y-4 py-8">
-            <p role="alert">Could not load your style preferences.</p>
+            <p className="text-danger" role="alert">Could not load your style preferences.</p>
             <button
               className={secondaryButton}
               type="button"
@@ -122,17 +122,17 @@ export default function ConfirmStylePage() {
         )}
         {status === "ready" && (
           <form className="mt-6 space-y-6" onSubmit={saveStyles}>
-            <fieldset disabled={saving} className="rounded-2xl border border-[#dcd0c5] bg-white p-5 sm:p-6">
+            <fieldset disabled={saving} className="rounded-2xl border border-divider bg-surface p-5 sm:p-6">
               <legend className="sr-only">Style preferences</legend>
-              <p className="mb-4 text-sm text-[#65574d]">Select any that fit.</p>
+              <p className="mb-4 text-sm text-supporting">Select any that fit.</p>
               <div className="grid gap-3 sm:grid-cols-2">
                 {options.map((style) => (
                   <label
-                    className="flex min-h-12 cursor-pointer items-center gap-3 rounded-xl border border-[#dcd0c5] px-4 py-3 text-sm font-semibold hover:border-[#863420] has-checked:border-[#863420] has-checked:bg-[#f8f0ea] has-disabled:cursor-default"
+                    className="flex min-h-12 cursor-pointer items-center gap-3 rounded-xl border border-divider px-4 py-3 text-sm font-semibold hover:border-secondary has-checked:border-secondary has-checked:bg-selected has-disabled:cursor-default"
                     key={style}
                   >
                     <input
-                      className="size-4 shrink-0 accent-[#863420] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9c3c24]"
+                      className="size-4 shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary"
                       type="checkbox"
                       checked={selectedStyles.includes(style)}
                       onChange={(event) => selectStyle(style, event.currentTarget.checked)}
@@ -142,8 +142,8 @@ export default function ConfirmStylePage() {
                 ))}
               </div>
             </fieldset>
-            {saveError && <p className="text-sm text-[#a02f20]" role="alert">{saveError}</p>}
-            <div className="flex border-t border-[#dcd0c5] pt-6">
+            {saveError && <p className="text-sm text-danger" role="alert">{saveError}</p>}
+            <div className="flex border-t border-divider pt-6">
               <button className={primaryButton} disabled={saving} type="submit">
                 {saving ? "Saving…" : "Save and continue"}
                 {!saving && <span aria-hidden="true" className="ml-2">→</span>}

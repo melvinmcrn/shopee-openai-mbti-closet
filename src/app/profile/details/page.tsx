@@ -9,8 +9,9 @@ const photoTypes = ["image/jpeg", "image/png", "image/webp"];
 const maxPhotoBytes = 8 * 1024 * 1024;
 const nextStep = "/wardrobe/add";
 
-const secondaryButton = "rounded-full border border-current/25 px-4 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60";
-const measurementInput = "w-full rounded-xl border border-current/25 bg-transparent px-3 py-2.5 text-base focus-visible:outline-2 focus-visible:outline-offset-2";
+const secondaryButton = "rounded-full border border-divider px-4 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60";
+const primaryButton = "rounded-full bg-primary px-4 py-2 text-sm font-semibold text-on-primary hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:cursor-not-allowed disabled:opacity-60";
+const measurementInput = "w-full rounded-xl border border-divider bg-surface px-3 py-2.5 text-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary";
 
 type Profile = {
   heightCm: number | null;
@@ -155,7 +156,7 @@ export default function ProfileDetailsPage() {
         <div className="mb-4">
           {loadError ? (
             <>
-              <p role="alert">{loadError}</p>
+              <p className="text-danger" role="alert">{loadError}</p>
               <button
                 className="mt-2 text-sm font-medium underline underline-offset-4"
                 onClick={() => {
@@ -184,14 +185,14 @@ export default function ProfileDetailsPage() {
             </label>
           </div>
 
-          <section aria-labelledby="photo-title" className="space-y-3 rounded-3xl border border-current/15 p-5 sm:p-6">
+          <section aria-labelledby="photo-title" className="space-y-3 rounded-3xl border border-divider bg-surface p-5 sm:p-6">
             <h2 className="text-lg font-semibold" id="photo-title">Face photo</h2>
-            <p id="photo-info" className="text-sm">Your photo is private. Choose a JPEG, PNG, or WebP up to 8 MB.</p>
+            <p id="photo-info" className="text-sm text-supporting">Your photo is private. Choose a JPEG, PNG, or WebP up to 8 MB.</p>
 
             {visiblePhotoUrl && (
               <Image
                 alt={localPhotoUrl ? "Selected face photo" : "Saved face photo"}
-                className="size-28 rounded-2xl bg-current/5 object-cover"
+                className="size-28 rounded-2xl bg-selected object-cover"
                 height={112}
                 src={visiblePhotoUrl}
                 unoptimized
@@ -201,7 +202,7 @@ export default function ProfileDetailsPage() {
             {photoChange === "remove" && <p className="text-sm" role="status">Your photo will be removed when you save.</p>}
 
             <div className="flex flex-wrap items-center gap-3">
-              <label className="relative inline-flex cursor-pointer rounded-full border border-current/25 px-4 py-2 text-sm font-medium focus-within:outline-2 focus-within:outline-offset-2 has-disabled:cursor-not-allowed">
+              <label className="relative inline-flex cursor-pointer rounded-full border border-divider px-4 py-2 text-sm font-medium focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-secondary has-disabled:cursor-not-allowed">
                 {visiblePhotoUrl ? "Choose another photo" : "Choose photo"}
                 <input type="file" accept={photoTypes.join(",")} aria-describedby="photo-info" className="sr-only" onChange={choosePhoto} />
               </label>
@@ -219,10 +220,10 @@ export default function ProfileDetailsPage() {
           </section>
         </fieldset>
 
-        {formError && <p role="alert">{formError}</p>}
+        {formError && <p className="text-danger" role="alert">{formError}</p>}
 
         <div className="flex flex-wrap items-center gap-3">
-          <button className={secondaryButton} disabled={!profile || saving} type="submit">
+          <button className={primaryButton} disabled={!profile || saving} type="submit">
             {saving ? "Saving…" : "Save and continue"}
           </button>
           <button

@@ -17,15 +17,15 @@ type ItemsResult<T> = { items: T[] } | { error: string };
 
 const slotOrder = ["top", "bottom", "dress", "shoes", "outerwear", "accessory"];
 const secondaryButton =
-  "inline-flex min-h-11 items-center justify-center rounded-full border border-[#d9ccd8] px-5 py-2 text-sm font-semibold text-[#542f51] transition hover:bg-[#f6edf6] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#672f61] disabled:opacity-60";
+  "inline-flex min-h-11 items-center justify-center rounded-full border border-divider px-5 py-2 text-sm font-semibold text-secondary transition hover:bg-selected focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:opacity-60";
 
 function SavedGarment({ slot, garment }: { slot: string; garment: Garment }) {
   const [imageFailed, setImageFailed] = useState(false);
   const slotLabel = slot.replace(/[-_]/g, " ");
 
   return (
-    <li className="min-w-0 overflow-hidden rounded-2xl border border-[#e7dce4] bg-white">
-      <div className="relative grid aspect-[7/6] place-items-center bg-[#f4efeb]">
+    <li className="min-w-0 overflow-hidden rounded-2xl border border-divider bg-surface">
+      <div className="relative grid aspect-[7/6] place-items-center bg-selected">
         {garment.imageRef && !imageFailed ? (
           <Image
             src={imageUrl(garment.imageRef)}
@@ -37,15 +37,15 @@ function SavedGarment({ slot, garment }: { slot: string; garment: Garment }) {
             onError={() => setImageFailed(true)}
           />
         ) : (
-          <span aria-hidden="true" className="px-2 text-center text-xs capitalize text-[#64565d]">
+          <span aria-hidden="true" className="px-2 text-center text-xs capitalize text-supporting">
             {garment.color || slotLabel}
           </span>
         )}
       </div>
       <div className="p-3">
-        <p className="text-xs font-medium capitalize text-[#6c5a67]">{slotLabel}</p>
+        <p className="text-xs font-medium capitalize text-supporting">{slotLabel}</p>
         <p className="mt-1 wrap-break-word text-sm font-semibold">{garment.name}</p>
-        {garment.color && <p className="mt-1 text-xs capitalize text-[#6c5a67]">{garment.color}</p>}
+        {garment.color && <p className="mt-1 text-xs capitalize text-supporting">{garment.color}</p>}
       </div>
     </li>
   );
@@ -82,7 +82,7 @@ function useLookItems<T>(action: "wearList" | "shopping", lookId: string) {
 function SectionError({ error, retry, label }: { error: string; retry: () => void; label: string }) {
   return (
     <div className="space-y-2">
-      <p role="alert" className="text-sm text-[#a42d40]">{error}</p>
+      <p role="alert" className="text-sm text-danger">{error}</p>
       <button type="button" className={secondaryButton} onClick={retry}>{label}</button>
     </div>
   );
@@ -134,7 +134,7 @@ function WearHistory({ lookId, onWear }: { lookId: string; onWear: DetailProps["
   }
 
   return (
-    <section aria-labelledby="saved-wear-title" className="space-y-4 rounded-2xl border border-[#e7dce4] bg-white p-4 sm:p-6">
+    <section aria-labelledby="saved-wear-title" className="space-y-4 rounded-2xl border border-divider bg-surface p-4 sm:p-6">
       <h2 id="saved-wear-title" className="text-lg font-semibold">Wear history</h2>
       <form className="flex flex-wrap items-end gap-3" onSubmit={logWear}>
         <label className="flex flex-col gap-1 text-sm font-medium">
@@ -145,32 +145,32 @@ function WearHistory({ lookId, onWear }: { lookId: string; onWear: DetailProps["
             value={date}
             disabled={saving}
             onChange={(event) => setDate(event.target.value)}
-            className="min-h-11 rounded-xl border border-[#d9ccd8] bg-white px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#672f61]"
+            className="min-h-11 rounded-xl border border-divider bg-surface px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary"
           />
         </label>
         <button
           type="submit"
           disabled={saving}
-          className="inline-flex min-h-11 items-center justify-center rounded-full bg-[#672f61] px-5 py-2 text-sm font-semibold text-white transition hover:bg-[#54254f] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#672f61] disabled:opacity-60"
+          className="inline-flex min-h-11 items-center justify-center rounded-full bg-primary px-5 py-2 text-sm font-semibold text-on-primary transition hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:opacity-60"
         >
           {saving ? "Logging…" : "Log wear"}
         </button>
       </form>
-      {saveError && <p role="alert" className="text-sm text-[#a42d40]">{saveError}</p>}
-      {!result && <p role="status" className="text-sm text-[#6c5a67]">Loading wear history…</p>}
+      {saveError && <p role="alert" className="text-sm text-danger">{saveError}</p>}
+      {!result && <p role="status" className="text-sm text-supporting">Loading wear history…</p>}
       {result && "error" in result && (
         <SectionError error={result.error} retry={retry} label="Retry wear history" />
       )}
       {result && "items" in result && (result.items.length ? (
-        <ul className="divide-y divide-[#e7dce4]">
+        <ul className="divide-y divide-divider">
           {result.items.map((entry) => (
             <li key={entry.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
               <div className="min-w-0">
                 <p className="text-sm font-semibold">
                   <time dateTime={entry.date}>{formatWearDate(entry.date)}</time>
                 </p>
-                {entry.rating != null && <p className="text-sm text-[#6c5a67]">Rated {entry.rating}/5</p>}
-                {entry.note && <p className="wrap-break-word text-sm text-[#6c5a67]">{entry.note}</p>}
+                {entry.rating != null && <p className="text-sm text-supporting">Rated {entry.rating}/5</p>}
+                {entry.note && <p className="wrap-break-word text-sm text-supporting">{entry.note}</p>}
               </div>
               <button
                 type="button"
@@ -185,7 +185,7 @@ function WearHistory({ lookId, onWear }: { lookId: string; onWear: DetailProps["
           ))}
         </ul>
       ) : (
-        <p className="text-sm text-[#6c5a67]">No wears logged yet.</p>
+        <p className="text-sm text-supporting">No wears logged yet.</p>
       ))}
     </section>
   );
@@ -230,10 +230,10 @@ function ShoppingSuggestion({
     <li className="space-y-2 py-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 space-y-1">
-          {item.sponsored && <p className="text-xs font-semibold text-[#6c5a67]">Sponsored</p>}
+          {item.sponsored && <p className="text-xs font-semibold text-supporting">Sponsored</p>}
           {href ? (
             <a
-              className="wrap-break-word text-sm font-semibold text-[#542f51] underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#672f61]"
+              className="wrap-break-word text-sm font-semibold text-secondary underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary"
               href={href}
               target="_blank"
               rel={item.sponsored ? "sponsored noopener noreferrer" : "noopener noreferrer"}
@@ -254,7 +254,7 @@ function ShoppingSuggestion({
           {pending ? "Hiding…" : "Hide"}
         </button>
       </div>
-      {error && <p role="alert" className="text-sm text-[#a42d40]">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
     </li>
   );
 }
@@ -267,14 +267,14 @@ function ShoppingSuggestions({ lookId }: { lookId: string }) {
     : undefined;
 
   return (
-    <section aria-labelledby="saved-shopping-title" className="space-y-4 rounded-2xl border border-[#e7dce4] bg-white p-4 sm:p-6">
+    <section aria-labelledby="saved-shopping-title" className="space-y-4 rounded-2xl border border-divider bg-surface p-4 sm:p-6">
       <h2 id="saved-shopping-title" className="text-lg font-semibold">Shopping suggestions</h2>
-      {!result && <p role="status" className="text-sm text-[#6c5a67]">Loading shopping suggestions…</p>}
+      {!result && <p role="status" className="text-sm text-supporting">Loading shopping suggestions…</p>}
       {result && "error" in result && (
         <SectionError error={result.error} retry={retry} label="Retry shopping suggestions" />
       )}
       {suggestions && (suggestions.length ? (
-        <ul className="divide-y divide-[#e7dce4]">
+        <ul className="divide-y divide-divider">
           {suggestions.map((item) => (
             <ShoppingSuggestion
               key={item.id}
@@ -285,7 +285,7 @@ function ShoppingSuggestions({ lookId }: { lookId: string }) {
           ))}
         </ul>
       ) : (
-        <p role="status" className="text-sm text-[#6c5a67]">No shopping suggestions for this look.</p>
+        <p role="status" className="text-sm text-supporting">No shopping suggestions for this look.</p>
       ))}
     </section>
   );
@@ -318,20 +318,20 @@ function SavedDetail({ id, onWear, onBack }: DetailProps) {
     : [];
 
   return (
-    <section aria-labelledby="saved-detail-title" className="space-y-6 text-[#2a2229]">
+    <section aria-labelledby="saved-detail-title" className="space-y-6 text-text">
       <header>
         <button type="button" className={secondaryButton} onClick={onBack}>
           <span aria-hidden="true" className="mr-2">←</span>Saved looks
         </button>
-        <h1 id="saved-detail-title" className="mt-4 font-serif text-4xl tracking-tight sm:text-5xl">
+        <h1 id="saved-detail-title" className="mt-4 font-heading text-4xl tracking-tight sm:text-5xl">
           {look?.occasion || "Saved look"}
         </h1>
       </header>
 
-      {!result && <p role="status" className="text-sm text-[#6c5a67]">Opening your saved look…</p>}
+      {!result && <p role="status" className="text-sm text-supporting">Opening your saved look…</p>}
       {error && (
         <div className="space-y-3">
-          <p role="alert" className="text-sm text-[#a42d40]">{error}</p>
+          <p role="alert" className="text-sm text-danger">{error}</p>
           <button
             type="button"
             className={secondaryButton}
@@ -356,7 +356,7 @@ function SavedDetail({ id, onWear, onBack }: DetailProps) {
             </ul>
           </section>
           {look.explanation && (
-            <p className="max-w-2xl text-sm leading-relaxed text-[#51434d]"><strong>Original suggestion</strong> · {look.explanation}</p>
+            <p className="max-w-2xl text-sm leading-relaxed text-supporting"><strong>Original suggestion</strong> · {look.explanation}</p>
           )}
           <WearHistory lookId={look.id} onWear={onWear} />
           <ShoppingSuggestions lookId={look.id} />

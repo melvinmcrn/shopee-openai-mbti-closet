@@ -28,9 +28,9 @@ type DraftItem = {
 
 type ItemEdits = Pick<DraftItem, "name" | "category" | "garmentType" | "color">;
 
-const primaryButton = "inline-flex min-h-11 items-center justify-center rounded-full bg-[#25201c] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#463a32] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9c3c24] disabled:opacity-50";
-const secondaryButton = "inline-flex min-h-11 items-center justify-center rounded-full border border-[#c9bcb0] bg-white px-5 py-2.5 text-sm font-semibold text-[#25201c] hover:border-[#25201c] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9c3c24]";
-const fieldClass = "mt-1 block min-h-11 w-full rounded-lg border border-[#c9bcb0] bg-white px-3 py-2 text-base text-[#25201c] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9c3c24] disabled:opacity-60";
+const primaryButton = "inline-flex min-h-11 items-center justify-center rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-on-primary hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:opacity-50";
+const secondaryButton = "inline-flex min-h-11 items-center justify-center rounded-full border border-divider bg-surface px-5 py-2.5 text-sm font-semibold text-text hover:border-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary";
+const fieldClass = "mt-1 block min-h-11 w-full rounded-lg border border-divider bg-surface px-3 py-2 text-base text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:opacity-60";
 
 export default function ConfirmWardrobeItemsPage() {
   const [items, setItems] = useState<DraftItem[]>([]);
@@ -127,14 +127,14 @@ export default function ConfirmWardrobeItemsPage() {
   }
 
   return (
-    <main className="min-h-screen flex-1 bg-[#f8f4ef] px-5 py-10 text-[#25201c] sm:px-8 sm:py-14">
+    <main className="min-h-screen flex-1 bg-selected px-5 py-10 text-text sm:px-8 sm:py-14">
       <div className="mx-auto max-w-5xl">
-        <header className="border-b border-[#dcd0c5] pb-7">
-          <Link className="text-sm font-semibold text-[#863420] hover:underline" href="/wardrobe/add">
+        <header className="border-b border-divider pb-7">
+          <Link className="text-sm font-semibold text-secondary hover:underline" href="/wardrobe/add">
             <span aria-hidden="true">← </span>Add items
           </Link>
           <h1 className="mt-5 text-4xl font-semibold tracking-tight sm:text-5xl">Confirm items</h1>
-          <p className="mt-3 max-w-lg leading-relaxed text-[#65574d]">
+          <p className="mt-3 max-w-lg leading-relaxed text-supporting">
             Review the photos and details. Confirm each item you want to add to your wardrobe.
           </p>
         </header>
@@ -142,7 +142,7 @@ export default function ConfirmWardrobeItemsPage() {
         {status === "loading" && <p className="py-8" role="status">Loading draft items…</p>}
         {status === "error" && (
           <div className="space-y-4 py-8">
-            <p role="alert">Could not load your draft items.</p>
+            <p className="text-danger" role="alert">Could not load your draft items.</p>
             <button
               type="button"
               className={secondaryButton}
@@ -187,13 +187,13 @@ export default function ConfirmWardrobeItemsPage() {
                 {items.map((item) => (
                   <form
                     key={item.id}
-                    className="overflow-hidden rounded-2xl border border-[#dcd0c5] bg-white"
+                    className="overflow-hidden rounded-2xl border border-divider bg-surface"
                     onSubmit={(event) => {
                       event.preventDefault();
                       void confirmItems([item]);
                     }}
                   >
-                    <div className="relative aspect-[4/3] bg-[#eee5db]">
+                    <div className="relative aspect-[4/3] bg-selected">
                       {item.imageUrl ? (
                         <Image
                           unoptimized
@@ -203,16 +203,16 @@ export default function ConfirmWardrobeItemsPage() {
                           className="object-contain p-4"
                         />
                       ) : (
-                        <p className="grid h-full place-items-center text-sm text-[#65574d]">No photo available</p>
+                        <p className="grid h-full place-items-center text-sm text-supporting">No photo available</p>
                       )}
                     </div>
                     <fieldset className="space-y-4 p-4" disabled={saving}>
                       <legend className="sr-only">{item.name || "Wardrobe item"} details</legend>
                       {!item.extractionSource && String(item.id) === manualItemId && (
-                        <p className="text-sm text-[#65574d]">Original photo · Automatic extraction did not complete.</p>
+                        <p className="text-sm text-supporting">Original photo · Automatic extraction did not complete.</p>
                       )}
                       {item.extractionSource === "luna" && (
-                        <p className="text-sm text-[#65574d]">Garment cutout and AI-suggested details. You can edit them before saving.</p>
+                        <p className="text-sm text-supporting">Garment cutout and AI-suggested details. You can edit them before saving.</p>
                       )}
                       {item.extractionSource === "fixture" && <p className="text-sm">Demo fixture cutout</p>}
                       <label className="block text-sm font-semibold">
@@ -251,7 +251,7 @@ export default function ConfirmWardrobeItemsPage() {
                           onChange={(event) => editItem(item.id, { color: event.target.value })}
                         />
                       </label>
-                      {errors[item.id] && <p className="text-sm text-[#a02f20]" role="alert">{errors[item.id]}</p>}
+                      {errors[item.id] && <p className="text-sm text-danger" role="alert">{errors[item.id]}</p>}
                       <button type="submit" className={`${primaryButton} w-full`}>
                         {saving ? "Confirming…" : "Confirm item"}
                       </button>
@@ -261,7 +261,7 @@ export default function ConfirmWardrobeItemsPage() {
               </div>
             )}
 
-            <nav aria-label="Wardrobe setup" className="mt-5 flex flex-wrap gap-3 border-t border-[#dcd0c5] pt-6">
+            <nav aria-label="Wardrobe setup" className="mt-5 flex flex-wrap gap-3 border-t border-divider pt-6">
               <Link className={secondaryButton} href="/wardrobe/add">Add more items</Link>
               <Link className={primaryButton} href="/profile/style">
                 Continue to style profile<span aria-hidden="true" className="ml-2">→</span>
