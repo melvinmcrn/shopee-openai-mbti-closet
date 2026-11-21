@@ -4,11 +4,18 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
+import { normalizeUpload } from "./normalize-upload.mjs";
 
 const imageTypes = ["image/jpeg", "image/png", "image/webp"];
 const maxImageBytes = 8 * 1024 * 1024;
 const uploadError = "The photo could not be uploaded. Try again.";
 const extractionError = "The garment details could not be read. Your photo is saved and ready for manual review.";
+const extractionMessages = new Map([
+  ["extraction_unavailable", "Automatic garment extraction is unavailable right now."],
+  ["unsupported_photo", "This photo format could not be processed. Try a clearer JPEG or PNG."],
+  ["garment_not_found", "No garment could be isolated. Try a clearer photo of one item."],
+  ["invalid_extraction", "The garment outline could not be used. Try a clearer photo."],
+]);
 const sampleError = "The sample wardrobe could not be loaded. Try again.";
 
 const actionLabels = {
@@ -43,7 +50,9 @@ export default function AddWardrobePhotoPage() {
   }, [preview]);
 
   const busy = phase === "uploading" || phase === "extracting" || addingSample;
-  const reviewHref = photo?.id ? `/wardrobe/confirm?item=${photo.id}` : "/wardrobe/confirm";
+  const reviewHref = photo?.id
+    ? `/wardrobe/confirm?item=${photo.id}${phase === "extraction-failed" ? "&review=manual" : ""}`
+    : "/wardrobe/confirm";
 
   function choosePhoto(event: ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0];
@@ -67,9 +76,17 @@ export default function AddWardrobePhotoPage() {
     let itemId = photo.id;
     if (itemId === null) {
       setPhase("uploading");
+      let image: File;
+      try {
+        image = await normalizeUpload(photo.file);
+      } catch {
+        setPhase("upload-failed");
+        setError("This WebP could not be prepared for extraction. Choose a JPEG or PNG photo instead.");
+        return;
+      }
       try {
         const form = new FormData();
-        form.set("image", photo.file);
+        form.set("image", image);
         form.set("draftKey", photo.draftKey);
         const response = await fetch("/api/wardrobe/upload", { method: "POST", body: form });
         if (!response.ok) {
@@ -95,9 +112,10 @@ export default function AddWardrobePhotoPage() {
       const response = await fetch(`/api/wardrobe/items/${itemId}/extract`, { method: "POST" });
       if (!response.ok) {
         const result = (await response.json().catch(() => null)) as { code?: string } | null;
-        setError(result?.code === "extraction_unavailable"
-          ? "Automatic garment details are unavailable. Your photo is saved and you can enter its details in review."
-          : extractionError);
+        const message = result?.code ? extractionMessages.get(result.code) : undefined;
+        setError(response.status === 401
+          ? "Your session expired. Sign in again to read or review the draft."
+          : message ? `${message} The original is saved as a draft for manual review.` : extractionError);
         setPhase("extraction-failed");
         return;
       }
@@ -134,7 +152,7 @@ export default function AddWardrobePhotoPage() {
           MBTI Closet
         </Link>
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Add wardrobe photos</h1>
-        <p>Use a clear photo of one garment. You’ll review its details before adding it to your closet.</p>
+        <p>Use a clear photo of one garment. We’ll isolate the garment and suggest its details for you to review before saving.</p>
       </header>
 
       <form onSubmit={submitPhoto} className="space-y-5">
