@@ -2,8 +2,9 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { SignOutButton } from "../sign-out-button";
+import { normalizeProfilePhoto, profilePhotoAccept, profilePhotoRequirements } from "../wardrobe/add/normalize-upload.mjs";
 import { styleOptions } from "../profile/style-options";
 
 type EditableProfile = {
@@ -17,7 +18,7 @@ type Profile = EditableProfile & {
   setupCompletedAt: string | null;
 };
 
-type PendingPhoto = { file: File; previewUrl: string };
+type PendingPhoto = { file: File; originalName: string; previewUrl: string };
 type Notice = { text: string; error?: boolean };
 
 const fieldClass = "mt-2 w-full rounded-lg border border-divider bg-surface px-3 py-2 text-text";
@@ -30,7 +31,12 @@ function measurement(value: string) {
 
 async function readProfile(response: Response): Promise<Profile> {
   if (response.status === 401) throw new Error("Sign in with Google to access your profile.");
-  if (!response.ok) throw new Error("We couldn’t update your profile. Try again.");
+  if (!response.ok) {
+    const details = await response.json().catch(() => null);
+    if (typeof details?.error === "string") throw new Error(details.error);
+    if (response.status === 413) throw new Error("This photo is too large to upload.");
+    throw new Error("We couldn’t update your profile. Try again.");
+  }
   return response.json();
 }
 
@@ -51,7 +57,9 @@ export default function AccountPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
-  const [busy, setBusy] = useState<"profile" | "photo" | null>(null);
+  const [busy, setBusy] = useState<"profile" | "photo" | "preparing" | null>(null);
+  const preparingRef = useRef<AbortController | null>(null);
+  useEffect(() => () => preparingRef.current?.abort(), []);
   const [profileNotice, setProfileNotice] = useState<Notice | null>(null);
   const [photoNotice, setPhotoNotice] = useState<Notice | null>(null);
 
@@ -132,16 +140,29 @@ export default function AccountPage() {
     }
   }
 
-  function changePhoto(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.currentTarget.files?.[0];
+  async function changePhoto(event: ChangeEvent<HTMLInputElement>) {
+    const original = event.currentTarget.files?.[0];
     event.currentTarget.value = "";
-    if (!file) return;
-    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 8 * 1024 * 1024) {
-      setPhotoNotice({ text: "Choose a JPEG, PNG, or WebP image up to 8 MB.", error: true });
-      return;
+    if (!original || busy || preparingRef.current) return;
+
+    const controller = new AbortController();
+    preparingRef.current = controller;
+    setBusy("preparing");
+    setPendingPhoto(null);
+    setPhotoNotice({ text: "Preparing photo…" });
+    try {
+      const file = await normalizeProfilePhoto(original);
+      if (controller.signal.aborted) return;
+      setPendingPhoto({ file, originalName: original.name, previewUrl: URL.createObjectURL(file) });
+      setPhotoNotice(null);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setPhotoNotice({ text: error instanceof Error ? error.message : "Choose another photo.", error: true });
+      }
+    } finally {
+      preparingRef.current = null;
+      if (!controller.signal.aborted) setBusy(null);
     }
-    setPhotoNotice(null);
-    setPendingPhoto({ file, previewUrl: URL.createObjectURL(file) });
   }
 
   async function savePhoto(method: "PUT" | "DELETE") {
@@ -207,7 +228,7 @@ export default function AccountPage() {
           <>
             <section aria-labelledby="face-photo-heading" className="rounded-2xl border border-divider bg-surface p-5 sm:p-6">
               <h2 id="face-photo-heading" className="text-lg font-semibold">Private profile picture</h2>
-              <p id="face-photo-use" className="mt-1 text-sm text-supporting">When you create a try-on, OpenAI uses this photo to show the outfit on you.</p>
+              <p id="face-photo-use" className="mt-1 text-sm text-supporting">When you create a try-on, OpenAI uses this photo to show the outfit on you. {profilePhotoRequirements}</p>
               <div className="mt-4 flex flex-wrap items-center gap-4">
                 {photoUrl ? (
                   <Image
@@ -228,11 +249,11 @@ export default function AccountPage() {
                     aria-describedby="face-photo-use"
                     className="max-w-full text-sm file:mr-2 file:rounded-full file:border file:border-divider file:px-3 file:py-1.5 file:font-medium disabled:opacity-50"
                     type="file"
-                    accept="image/jpeg,image/png,image/webp"
+                    accept={profilePhotoAccept}
                     onChange={changePhoto}
                     disabled={busy !== null}
                   />
-                  {pendingPhoto && <p className="max-w-full wrap-anywhere text-sm text-supporting">{pendingPhoto.file.name}</p>}
+                  {pendingPhoto && <p className="max-w-full wrap-anywhere text-sm text-supporting">{pendingPhoto.originalName}</p>}
                   <div className="flex flex-wrap gap-2">
                     {pendingPhoto && (
                       <>

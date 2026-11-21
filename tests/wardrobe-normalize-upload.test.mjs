@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeUpload } from "../src/app/wardrobe/add/normalize-upload.mjs";
+import { normalizeProfilePhoto, normalizeUpload } from "../src/app/wardrobe/add/normalize-upload.mjs";
 
 test("JPEG and PNG are preserved", async () => {
   for (const type of ["image/jpeg", "image/png"]) {
@@ -12,7 +12,7 @@ test("JPEG and PNG are preserved", async () => {
 test("phone captures become JPEGs for preview and upload, including untyped HEIF files and large Android JPEGs", async (t) => {
   const bitmap = { width: 3000, height: 4000, close() {} };
   const canvas = {
-    getContext: () => ({ drawImage() {} }),
+    getContext: () => ({ drawImage() {}, fillRect() {} }),
     toBlob: (resolve, type) => resolve(new Blob(["encoded"], { type })),
   };
   t.mock.method(globalThis, "createImageBitmap", async () => bitmap);
@@ -28,6 +28,25 @@ test("phone captures become JPEGs for preview and upload, including untyped HEIF
     assert.deepEqual([canvas.width, canvas.height], [768, 1024]);
     assert.ok(image.size < 8 * 1024 * 1024);
   }
+});
+
+test("profile photos always upload the decoded pixels, including small JPEGs with trailing data", async (t) => {
+  const original = new File([Uint8Array.of(255, 216, 255, 217, 0)], "camera.jpg", { type: "image/jpeg" });
+  const bitmap = { width: 3200, height: 2400, close() {} };
+  t.mock.method(globalThis, "createImageBitmap", async (file) => {
+    assert.equal(file, original);
+    return bitmap;
+  });
+  const encoded = Uint8Array.of(255, 216, 255, 217);
+  const canvas = {
+    getContext: () => ({ drawImage() {}, fillRect() {} }),
+    toBlob: (resolve, type) => resolve(new Blob([encoded], { type })),
+  };
+  t.mock.method(globalThis.document, "createElement", () => canvas);
+  const photo = await normalizeProfilePhoto(original);
+  assert.deepEqual([canvas.width, canvas.height], [1600, 1200]);
+  assert.equal(photo.type, "image/jpeg");
+  assert.deepEqual(new Uint8Array(await photo.arrayBuffer()), encoded);
 });
 
 test("a JPEG camera file without a MIME type is uploaded as a JPEG", async () => {

@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
-import { normalizeUpload, photoAccept, photoRequirements } from "../../wardrobe/add/normalize-upload.mjs";
+import { normalizeProfilePhoto, profilePhotoAccept, profilePhotoRequirements } from "../../wardrobe/add/normalize-upload.mjs";
 
 const nextStep = "/wardrobe/add";
 
@@ -79,10 +79,10 @@ export default function ProfileDetailsPage() {
     setPreparing(true);
     setFormError("");
     try {
-      const file = await normalizeUpload(original);
+      const file = await normalizeProfilePhoto(original);
       if (!controller.signal.aborted) setPhotoChange({ file, url: URL.createObjectURL(file) });
-    } catch {
-      if (!controller.signal.aborted) setFormError(`We couldn’t prepare this photo. ${photoRequirements}. Try another photo.`);
+    } catch (error) {
+      if (!controller.signal.aborted) setFormError(error instanceof Error ? error.message : "Choose another photo.");
     } finally {
       preparingRef.current = null;
       if (!controller.signal.aborted) setPreparing(false);
@@ -117,8 +117,7 @@ export default function ProfileDetailsPage() {
       if (photoChange) {
         failureMessage = "Your profile photo could not be saved. Try again.";
         const body = new FormData();
-        const suffix = photoChange.file.type === "image/png" ? "png" : "jpg";
-        body.set("image", photoChange.file, `profile-photo.${suffix}`);
+        body.set("image", photoChange.file, "profile-photo.jpg");
         const response = await fetch("/api/profile/photo", { method: "PUT", body });
         if (response.status === 413) {
           setFormError("This photo is too large to upload. Choose a smaller version and try again.");
@@ -218,7 +217,7 @@ export default function ProfileDetailsPage() {
             <h2 className="text-lg font-semibold" id="photo-title">Profile photo (required)</h2>
             <p id="photo-info" className="text-sm text-supporting">
               Choose a clear photo of your face. It’s stored privately and sent to OpenAI only when you
-              request an outfit preview. {photoRequirements}.
+              request an outfit preview. {profilePhotoRequirements}
             </p>
 
             {visiblePhotoUrl && (
@@ -234,7 +233,7 @@ export default function ProfileDetailsPage() {
             <div className="flex flex-wrap items-center gap-3">
               <label className={photoButton}>
                 Upload photo
-                <input type="file" accept={photoAccept} aria-describedby="photo-info" className="sr-only" onChange={choosePhoto} />
+                <input type="file" accept={profilePhotoAccept} aria-describedby="photo-info" className="sr-only" onChange={choosePhoto} />
               </label>
               <label className={photoButton}>
                 Take photo
