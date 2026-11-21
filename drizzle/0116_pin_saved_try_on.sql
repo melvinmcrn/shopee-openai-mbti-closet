@@ -9,8 +9,10 @@ CREATE INDEX saved_looks_by_preview_file ON saved_looks(pinned_preview_file_id)
 CREATE TABLE saved_look_catalog_items (
     saved_look_id BIGINT NOT NULL REFERENCES saved_looks(id) ON DELETE CASCADE,
     item_id TEXT NOT NULL REFERENCES clothes_image_database(item_id) ON DELETE CASCADE,
+    search_group TEXT,
+    search_term TEXT,
     catalog_slot TEXT CHECK (catalog_slot IN ('top','bottom','dress','shoes','outerwear','accessory')),
-    wardrobe_gap TEXT CHECK (wardrobe_gap IN ('top','bottom')),
+    wardrobe_gap TEXT CHECK (wardrobe_gap IN ('top','bottom','shoes','outerwear')),
     PRIMARY KEY (saved_look_id, item_id)
 ) WITHOUT ROWID;
 --> statement-breakpoint

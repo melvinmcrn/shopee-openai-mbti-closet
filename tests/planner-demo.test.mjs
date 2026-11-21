@@ -83,7 +83,11 @@ test("generation adds one occasion option and keeps its sourced pieces through s
       VALUES (?,1,?,?,?,?,CURRENT_TIMESTAMP)`).run(blouse.id, blouse.name, blouse.category, blouse.color, blouse.imageRef);
     const pick = database.prepare("SELECT item_id, url FROM clothes_catalog WHERE search_term='women pants' LIMIT 1").get();
     const env = { DB: d1Binding(database) };
-    const planned = { slots: { top: blouse.id }, catalogSlots: { bottom: pick.item_id }, explanation: "Styled for a gallery opening." };
+    database.prepare(`INSERT INTO clothes_listing_details (item_id, search_group, search_term, image_url, ocr_image, is_mall)
+      VALUES (?, 'occasion-variant', 'women pants', 'https://down-th.img.susercontent.com/file/variant', 'variant.jpg', 0)`).run(pick.item_id);
+    const planned = { slots: { top: blouse.id },
+      catalogSlots: { bottom: { id: pick.item_id, searchGroup: "occasion-variant", searchTerm: "women pants" } },
+      explanation: "Styled for a gallery opening." };
     const dependencies = {
       generateLooks: async () => ({ status: "ready", looks: [{ slots: { top: blouse.id }, explanation: "Closet option" }] }),
       generateOccasionLook: t.mock.fn(async () => planned),
@@ -99,6 +103,7 @@ test("generation adds one occasion option and keeps its sourced pieces through s
     assert.equal((await dispatch("option", { id: extra.id })).kind, "occasion");
     const [product] = await dispatch("enhancements", { optionId: extra.id, slots: extra.slots });
     assert.equal(product.id, pick.item_id);
+    assert.equal(product.ocrImage, "variant.jpg");
     assert.equal(product.url, new URL(pick.url).href);
     const saved = await dispatch("save", { optionId: extra.id, slots: extra.slots });
     assert.deepEqual(saved.enhancements.map(item => item.id), [pick.item_id]);

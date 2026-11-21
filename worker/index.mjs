@@ -1,3 +1,4 @@
+import { readWorkerCatalogFallback } from "../src/app/api/_server/catalog-photo.mjs";
 import { handleApi } from "../src/app/api/_server/handle-api.mjs";
 
 function serveAsset(request, pathname) {
@@ -20,12 +21,13 @@ function serveAsset(request, pathname) {
   });
 }
 
-export default {
+const worker = {
   fetch(request, env, ctx) {
     const { pathname } = new URL(request.url);
     if (pathname === "/api" || pathname.startsWith("/api/")) {
       return handleApi(request, {
         ...env,
+        readCatalogFallback: (key, itemId) => readWorkerCatalogFallback(env, key, itemId),
         readSampleImage(slug) {
           const [, encoded] = SITE_ASSETS[`/sample-wardrobe/${slug}.webp`];
           return Uint8Array.from(atob(encoded), (byte) => byte.charCodeAt(0));
@@ -35,3 +37,5 @@ export default {
     return serveAsset(request, pathname === "/planner/" || pathname === "/planner" ? "/planner.html" : pathname);
   },
 };
+
+export default worker;

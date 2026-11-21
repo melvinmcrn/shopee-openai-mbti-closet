@@ -3,15 +3,22 @@
 import Image from "next/image";
 import { useState } from "react";
 
+const suggestedItem = {
+  top: "Suggested top", bottom: "Suggested bottoms", shoes: "Suggested shoes", outerwear: "Suggested jacket",
+};
+
 export type CatalogProduct = {
   id: string;
   title: string;
   url: string;
   imageUrl: string;
+  searchGroup?: string;
+  searchTerm?: string;
+  ocrImage?: string;
   price: number;
   currency: string;
-  wardrobeGap?: "top" | "bottom";
   catalogSlot?: string;
+  wardrobeGap?: keyof typeof suggestedItem;
 };
 
 export function EnhancementProduct({ product, sponsored = false }: { product: CatalogProduct; sponsored?: boolean }) {
@@ -33,7 +40,7 @@ export function EnhancementProduct({ product, sponsored = false }: { product: Ca
         <p className="flex flex-wrap items-center gap-x-1 text-xs font-semibold text-secondary">
           <span aria-hidden="true">✨</span>
           <span>Elevate your look</span>
-          {product.wardrobeGap && <span>· {product.wardrobeGap === "top" ? "Suggested top" : "Suggested pants"}</span>}
+          {product.wardrobeGap && <span>· {product.wardrobeGap === "bottom" && product.searchTerm?.endsWith(" pants") ? "Suggested pants" : suggestedItem[product.wardrobeGap]}</span>}
           {product.catalogSlot && <span>· <span className="capitalize">{product.catalogSlot}</span></span>}
           {sponsored && <span>· Sponsored</span>}
         </p>

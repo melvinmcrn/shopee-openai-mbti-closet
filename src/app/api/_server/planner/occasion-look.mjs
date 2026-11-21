@@ -1,19 +1,11 @@
-import { basicTerms, listingUrl } from "./catalog-product.mjs";
+import { catalogTerms, listingUrl } from "./catalog-product.mjs";
 import { requestDecision } from "./decision.mjs";
 
 // Search terms come from the imported listing metadata. Garment categories are
 // intentionally broader; the matching decision still needs evidence in the title.
-const catalogTerms = {
-  top: basicTerms.top,
-  bottom: [...basicTerms.bottom, "men shorts", "women shorts", "women skirt"],
-  dress: ["dress", "women dress"],
-  shoes: ["men shoes", "women shoes", "women high heels", "sneaker"],
-  outerwear: ["men jacket"],
-  accessory: ["men fashion accessories", "women fashion accessories", "men necklace", "women necklace",
-    "women earrings", "men watch", "women watch"],
-};
-const categories = Object.keys(catalogTerms);
-const slotByTerm = new Map(Object.entries(catalogTerms).flatMap(([slot, terms]) => terms.map(term => [term, slot])));
+const occasionTerms = { ...catalogTerms, dress: ["dress", "women dress"] };
+const categories = Object.keys(occasionTerms);
+const slotByTerm = new Map(Object.entries(occasionTerms).flatMap(([slot, terms]) => terms.map(term => [term, slot])));
 const explanations = {
   polished: "A clean, polished silhouette suits the dressier setting.",
   movement: "A relaxed fit leaves room to move throughout the occasion.",
@@ -95,20 +87,21 @@ function wardrobeCandidates(garments) {
 }
 
 async function catalogCandidates(db, missing) {
-  const terms = Object.keys(missing).flatMap(slot => catalogTerms[slot]);
+  const terms = Object.keys(missing).flatMap(slot => occasionTerms[slot]);
   const { results } = await db.prepare(`
-    SELECT product.item_id, product.shop_id, product.name, product.search_term, product.url, product.image_url
+    SELECT product.item_id, product.shop_id, product.name, product.search_group, product.search_term, product.url, product.image_url
     FROM clothes_catalog AS product WHERE product.search_term IN (${terms.map(() => "?").join(", ")})
-    ORDER BY product.item_id, product.search_term
+      AND trim(product.ocr_image) <> ''
+    ORDER BY product.item_id, product.search_term, product.search_group
   `).bind(...terms).all();
-  const byId = new Map();
+  const listings = [];
   for (const row of results) {
     const category = slotByTerm.get(row.search_term);
     const name = text(row.name, 240);
-    if (!missing[category] || !name || !row.image_url || !listingUrl(row) || byId.has(row.item_id)) continue;
-    byId.set(row.item_id, { category, id: row.item_id, name, searchTerm: row.search_term });
+    if (!missing[category] || !name || !row.image_url || !listingUrl(row)) continue;
+    listings.push({ category, id: row.item_id, name, searchGroup: row.search_group, searchTerm: row.search_term });
   }
-  return [...byId.values()];
+  return listings;
 }
 
 // Round-robin pages across desired pieces so that one large category does not
@@ -154,7 +147,12 @@ async function matchPieces(env, source, desired, candidates, slots, request) {
       if (answer.choice === "none") continue;
       const chosen = group.candidates.find(candidate => candidate.value === answer.choice);
       if (!chosen) throw new Error("Invalid candidate.");
-      slots[group.category] ??= chosen.id;
+      if (source === "catalog") {
+        if (Object.values(slots).some(item => item.id === chosen.id)) continue;
+        slots[group.category] ??= { id: chosen.id, searchGroup: chosen.searchGroup, searchTerm: chosen.searchTerm };
+      } else {
+        slots[group.category] ??= chosen.id;
+      }
     }
   }
 }

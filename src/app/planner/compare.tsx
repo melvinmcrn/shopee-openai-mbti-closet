@@ -24,7 +24,7 @@ type Generation = {
 };
 
 export type Comparison = { looks: Look[]; result?: Generation; request?: Promise<Generation> };
-type PhotoState = { attempt: number; status?: "ready" | "failed" };
+type PhotoState = { attempt: number; status?: "ready" | "failed"; message?: string };
 const secondaryButton =
   "inline-flex min-h-11 items-center justify-center rounded-full border border-divider px-5 py-2 text-sm font-semibold text-secondary transition hover:bg-selected focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:cursor-wait disabled:opacity-60";
 
@@ -44,13 +44,14 @@ function LookCard({ look, index, loadTryOn, attempt, onStatus, onChoose }: {
       if (!active) return;
       if (result) setCompleted(result);
       else onStatus(look.id, { attempt, status: "failed" });
-    }).catch(() => {
-      if (active) onStatus(look.id, { attempt, status: "failed" });
+    }).catch(error => {
+      if (active) onStatus(look.id, { attempt, status: "failed", message: error instanceof Error ? error.message : undefined });
     });
     return () => { active = false; };
   }, [look, loadTryOn, attempt, onStatus]);
   if (!completed) return null;
   const occasion = look.kind === "occasion";
+  const studio = completed.useProfilePhoto === false && !look.slots.other;
   return (
     <article hidden={!visible} className="min-w-0 rounded-2xl border border-divider bg-surface p-2 sm:p-3">
       <h2 className="mb-2 px-1 font-heading text-lg text-text sm:text-2xl">
@@ -58,7 +59,7 @@ function LookCard({ look, index, loadTryOn, attempt, onStatus, onChoose }: {
       </h2>
       <button
         type="button" aria-label={occasion ? "Choose occasion look" : `Choose look ${index + 1}`}
-        aria-describedby={completed.useProfilePhoto === false ? `model-${look.id}` : undefined}
+        aria-describedby={studio ? `model-${look.id}` : undefined}
         disabled={!visible} onClick={() => onChoose(completed)}
         className="group flex w-full flex-col items-stretch gap-3 rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary"
       >
@@ -66,7 +67,7 @@ function LookCard({ look, index, loadTryOn, attempt, onStatus, onChoose }: {
           width={512} height={768} loading="eager" unoptimized className="aspect-[2/3] w-full rounded-xl bg-selected object-contain"
           onLoad={() => { setVisible(true); onStatus(look.id, { attempt, status: "ready" }); }}
           onError={() => { setVisible(false); onStatus(look.id, { attempt, status: "failed" }); }} />
-        {completed.useProfilePhoto === false &&
+        {studio &&
           <span id={`model-${look.id}`} className="text-xs text-supporting">Studio model</span>}
         <span className="flex min-h-11 items-center justify-center rounded-full bg-primary px-4 py-2 text-sm font-semibold text-on-primary transition group-hover:bg-primary-hover">
           Choose this look
@@ -119,6 +120,7 @@ function CompareBrief({ briefId, comparison, notice, onComparison, garments, onC
   const pending = looks.some(look => !photos[look.id]?.status);
   const ready = looks.some(look => photos[look.id]?.status === "ready");
   const failedPhotos = looks.filter(look => photos[look.id]?.status === "failed");
+  const failureMessages = [...new Set(failedPhotos.map(look => photos[look.id].message).filter(Boolean))];
   const insufficient = result?.status === "insufficient";
   const needsCloset = insufficient && !looks.length && !garments.length;
   const generationFailed = result?.status === "failed" || (result?.status === "ready" && !result.looks?.length);
@@ -160,7 +162,10 @@ function CompareBrief({ briefId, comparison, notice, onComparison, garments, onC
             result?.message || "We couldn’t build any looks for this brief. Try again."}</p>
         )}
         {!generating && !pending && failedPhotos.length > 0 && (
-          <p>{ready ? "Some outfit photos couldn’t be completed." : "No completed outfit photos are available for this brief."}</p>
+          <>
+            <p>{ready ? "Some outfit photos couldn’t be completed." : "No completed outfit photos are available for this brief."}</p>
+            {failureMessages.map(message => <p key={message}>{message}</p>)}
+          </>
         )}
       </div>
       <div className="mt-4 flex flex-wrap gap-3">

@@ -1,10 +1,16 @@
+import { catalogListingKey } from "../../../planner/catalog-listing.mjs";
+import { getGarments } from "./garments.mjs";
 import { saveBrief, getBrief } from "./brief.mjs";
 import { readOption, generateOptions } from "./options.mjs";
 import { wearAction } from "./wear.mjs";
 import { evaluateEnhancements, shoppingAction, suggestionsForLook } from "./shopping.mjs";
+import { readBaseCoverage } from "./base-coverage.mjs";
+import { combineBaseCoverage, effectiveWardrobeSlots } from "./wardrobe-completion.mjs";
 import { generatePreview } from "./preview.mjs";
 import { previewFiles, previewSelection, profilePhotoRef } from "./preview-files.mjs";
 import { saveLook, listLooks, getLook, snapshotSlots } from "./saved.mjs";
+
+export { getGarments };
 
 export class PlannerError extends Error {
   constructor(status, message) {
@@ -16,17 +22,6 @@ export class PlannerError extends Error {
 function found(value) {
   if (!value) throw new PlannerError(404, "This item could not be found.");
   return value;
-}
-
-export async function getGarments(env, accountId) {
-  const { results } = await env.DB.prepare(`
-    SELECT id, name, category, color, image_file_id AS imageRef FROM wardrobe_items
-    WHERE user_id = ? AND confirmed_at IS NOT NULL AND archived_at IS NULL
-    AND image_file_id IS NOT NULL
-    ORDER BY id
-  `).bind(accountId).all();
-  return results.map(row => ({ ...row, id: String(row.id), accountId: String(accountId),
-    color: row.color ?? "", imageRef: row.imageRef ?? "", active: true, confirmed: true }));
 }
 
 async function option(db, accountId, id) {
@@ -46,18 +41,24 @@ function requestedSlots(source, input) {
 function matchesRequestedProducts(input, products) {
   const expected = input.catalogItemIds ?? (input.catalogItemId === undefined ? undefined :
     input.catalogItemId == null ? [] : [input.catalogItemId]);
+  if (input.catalogListings !== undefined) {
+    const listings = input.catalogListings;
+    if (!Array.isArray(listings) || new Set(listings).size !== products.length ||
+        listings.length !== products.length || !products.every(product => listings.includes(catalogListingKey(product)))) return false;
+  }
   if (expected === undefined) return true;
   if (!Array.isArray(expected) || expected.length !== products.length) return false;
   const ids = new Set(expected);
   return ids.size === products.length && products.every(product => ids.has(product.id));
 }
 
-async function renderPreview(env, accountId, optionId, slots, personal, ref, products, overrides) {
-  const files = overrides ?? previewFiles(env, accountId, optionId, slots, personal, products, ref);
+async function renderPreview(env, accountId, optionId, slots, profileRef, products, effective, base, overrides, identityOnly = false) {
+  const personal = Boolean(profileRef);
+  const files = overrides ?? previewFiles(env, accountId, optionId, slots, personal, products, profileRef, effective, identityOnly);
   const cached = await files.cachedImage?.();
   if (cached) return { imageRef: cached };
-  return generatePreview(env, accountId, Object.values(slots), personal,
-    { ...files, profilePhotoRef: () => ref }, products);
+  return generatePreview(env, accountId, Object.values(effective), personal,
+    { ...files, profilePhotoRef: () => profileRef }, products, base);
 }
 
 export async function dispatchPlanner(env, accountId, action, input = {}, dependencies = {}) {
@@ -69,6 +70,17 @@ export async function dispatchPlanner(env, accountId, action, input = {}, depend
   const db = env.DB;
   const photo = () => dependencies.preview?.profilePhotoRef ? dependencies.preview.profilePhotoRef() : profilePhotoRef(db, accountId);
   const wardrobe = () => (dependencies.getGarments ?? getGarments)(env, accountId);
+  async function basePhotos(ref, slots) {
+    const read = dependencies.readBaseCoverage ?? readBaseCoverage;
+    const originalRef = slots.other?.imageRef;
+    const [profile, original] = await Promise.all([ref, originalRef].map(id =>
+      id ? read(env, accountId, id) : null));
+    return { profile, original, coverage: combineBaseCoverage(profile, original) };
+  }
+  async function savedCoverage(look) {
+    const ref = look.useProfilePhoto ? await photo() : null;
+    return (await basePhotos(ref, look.slots)).coverage;
+  }
   switch (action) {
     case "wardrobe": return wardrobe();
     case "saveBrief": return found(await saveBrief(db, accountId, input));
@@ -86,39 +98,54 @@ export async function dispatchPlanner(env, accountId, action, input = {}, depend
       const noWardrobePieces = !Object.keys(source.slots).length && requested && typeof requested === "object" &&
         !Array.isArray(requested) && !Object.keys(requested).length;
       const slots = noWardrobePieces ? {} : snapshotSlots(requested, garments);
-      const products = await evaluateEnhancements(env, accountId, source, slots, garments, dependencies.shoppingFetch);
+      const ref = input.useProfilePhoto === false ? null : await photo();
+      if (action === "preview" && !ref && (input.useProfilePhoto === true || (noWardrobePieces && source.kind !== "occasion"))) {
+        throw new PlannerError(400, "Add a profile photo to generate this try-on.");
+      }
+      const base = source.kind === "occasion" ? {} : await basePhotos(ref, slots);
+      const evaluate = dependencies.evaluateEnhancements ?? evaluateEnhancements;
+      const products = await evaluate(env, accountId, source, slots, garments, dependencies.shoppingFetch, base.coverage);
       if (action === "enhancements") return products;
       if (action === "enhancement") return products[0] ?? null;
       if (!matchesRequestedProducts(input, products)) return { imageRef: null };
-      const ref = input.useProfilePhoto === false ? null : await photo();
-      if (!ref && (input.useProfilePhoto === true || (noWardrobePieces && source.kind !== "occasion"))) {
-        throw new PlannerError(400, "Add a profile photo to generate this try-on.");
-      }
-      const useProfilePhoto = Boolean(ref);
-      const result = await renderPreview(env, accountId, source.id, slots, useProfilePhoto, ref, products, dependencies.preview);
-      return result.imageRef ? { ...result, useProfilePhoto } : result;
+      const effective = effectiveWardrobeSlots(slots, garments, base.coverage);
+      const result = await renderPreview(env, accountId, source.id, slots, ref, products, effective, base, dependencies.preview);
+      if (!result.imageRef) return result;
+      const added = Object.keys(effective).length !== Object.keys(slots).length;
+      return { ...result, useProfilePhoto: Boolean(ref), ...(added ? {
+        effectiveSlots: Object.fromEntries(Object.entries(effective).map(([slot, item]) => [slot, String(item.id)])),
+      } : {}) };
     }
     case "shopping": case "hide":
-      return shoppingAction(env, accountId, action, input, dependencies.shoppingFetch, wardrobe);
+      return shoppingAction(env, accountId, action, input, dependencies.shoppingFetch, wardrobe, savedCoverage);
     case "savedPreview": {
       const look = found(await getLook(db, accountId, input.id));
-      const suggestions = await suggestionsForLook(env, accountId, look, wardrobe, dependencies.shoppingFetch);
+      if (look.hasPinnedPreview && look.previewRef) {
+        return { imageRef: matchesRequestedProducts(input, look.enhancements) ? look.previewRef : null };
+      }
+      const [ref, garments] = await Promise.all([look.useProfilePhoto ? photo() : null, wardrobe()]);
+      const identityOnly = Boolean(ref && look.hasPinnedPreview && !look.retainProfileClothes);
+      const base = look.kind === "occasion" ? {} : await basePhotos(identityOnly ? null : ref, look.slots);
+      const suggestions = await suggestionsForLook(env, accountId, look, () => garments, dependencies.shoppingFetch, () => base.coverage);
       const products = suggestions.map(suggestion => ({ ...suggestion, id: suggestion.catalogItemId }));
       if (!matchesRequestedProducts(input, products)) return { imageRef: null };
-      if (look.previewRef && (look.hasPinnedPreview ||
-          previewSelection(look.slots, false, look.enhancements) === previewSelection(look.slots, false, products))) {
+      if (look.previewRef && !base.coverage &&
+          previewSelection(look.slots, false, look.enhancements) === previewSelection(look.slots, false, products)) {
         return { imageRef: look.previewRef };
       }
-      const ref = look.useProfilePhoto ? await photo() : null;
-      const personal = Boolean(ref);
-      const result = await renderPreview(env, accountId, look.optionId, look.slots, personal, ref, products, dependencies.preview);
+      const frozen = look.kind === "occasion" || look.hasPinnedPreview;
+      const effective = frozen ? look.slots : effectiveWardrobeSlots(look.slots, garments, base.coverage);
+      const result = await renderPreview(env, accountId, look.optionId, look.slots, ref, products, effective, base, dependencies.preview, identityOnly);
       if (result.imageRef) {
-        // Visibility and listing photos can change while the image provider is running.
-        const current = (await getLook(db, accountId, look.id))?.enhancements;
-        if (!current) return { imageRef: null };
-        if (previewSelection(look.slots, personal, current, ref) !== previewSelection(look.slots, personal, products, ref)) {
-          return { imageRef: null };
-        }
+        // Visibility, face photos and wardrobe pieces may change while the provider is running.
+        const [current, latestRef, latestWardrobe] = await Promise.all([
+          getLook(db, accountId, look.id, base.coverage), look.useProfilePhoto ? photo() : null,
+          !frozen && base.coverage ? wardrobe() : garments,
+        ]);
+        const expected = previewSelection(look.slots, Boolean(ref), products, ref, effective);
+        const latest = current && previewSelection(current.slots, Boolean(latestRef), current.enhancements, latestRef,
+          frozen ? current.slots : effectiveWardrobeSlots(current.slots, latestWardrobe, base.coverage));
+        if (latest !== expected) return { imageRef: null };
         if (!look.hasPinnedPreview && look.useProfilePhoto && !ref) {
           await db.prepare("UPDATE saved_looks SET use_profile_photo=0 WHERE user_id=? AND id=?")
             .bind(accountId, look.id).run();

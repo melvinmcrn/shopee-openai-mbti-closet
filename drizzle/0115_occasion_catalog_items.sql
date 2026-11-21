@@ -5,6 +5,8 @@ CREATE TABLE outfit_option_catalog_items (
     option_id BIGINT NOT NULL,
     slot TEXT NOT NULL CHECK (slot IN ('top', 'bottom', 'dress', 'shoes', 'outerwear', 'accessory')),
     item_id TEXT NOT NULL REFERENCES clothes_image_database(item_id) ON DELETE CASCADE,
+    search_group TEXT,
+    search_term TEXT,
     PRIMARY KEY (option_id, slot),
     UNIQUE (option_id, item_id),
     FOREIGN KEY (user_id, option_id) REFERENCES outfit_options(user_id, id) ON DELETE CASCADE

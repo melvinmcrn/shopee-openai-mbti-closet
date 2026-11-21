@@ -4,7 +4,7 @@ export type Garment = { id: string; name: string; color: string; category: strin
 export const occasionLookLabel = "Styled for your occasion";
 type LookKind = "occasion";
 export type Look = { kind?: LookKind; id: string; profileRef?: string; occasion: string; explanation: string; slots: Record<string, string> };
-export type CompletedLook = Look & { imageRef: string; products: CatalogProduct[]; useProfilePhoto?: boolean };
+export type CompletedLook = Look & { imageRef: string; products: CatalogProduct[]; effectiveSlots?: Record<string, string>; useProfilePhoto?: boolean };
 export type Brief = { id?: string; occasion: string; timing: string; location: string; formality: string; comfort: string; preferences: string[] };
 export type SavedLook = { kind?: LookKind; enhancements: CatalogProduct[]; id: string; optionId: string; useProfilePhoto: boolean; previewRef: string | null; hasPinnedPreview?: boolean; occasion: string; explanation: string; createdAt: string; slots: Record<string, Garment>; originalSlots: Record<string, Garment> };
 
@@ -18,10 +18,11 @@ export class PlannerApiError extends Error {
   }
 }
 
-export async function api<T>(action: string, input: object = {}): Promise<T> {
+export async function api<T>(action: string, input: object = {}, signal?: AbortSignal): Promise<T> {
   const response = await fetch("/api/planner", {
     method: "POST",
     cache: "no-store",
+    signal,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action, input }),
   });

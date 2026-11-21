@@ -75,15 +75,29 @@
     {
       "idx": 10,
       "version": "6",
-      "when": 1795250982000,
-      "tag": "0113_occasion_catalog_items",
+      "when": 1795250539001,
+      "tag": "0113_photo_coverage",
       "breakpoints": true
     },
     {
       "idx": 11,
       "version": "6",
+      "when": 1795250539002,
+      "tag": "0114_catalog_listing_selection",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1795251550000,
+      "tag": "0115_occasion_catalog_items",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
       "when": 1795251551000,
-      "tag": "0114_pin_saved_try_on",
+      "tag": "0116_pin_saved_try_on",
       "breakpoints": true
     }
   ]

@@ -1,3 +1,5 @@
+import { retainedBaseCategories } from "./wardrobe-completion.mjs";
+
 export function listingUrl({ url, shop_id, item_id }) {
   if (!/^\d+$/.test(shop_id) || !/^\d+$/.test(item_id)) return null;
   try {
@@ -16,89 +18,118 @@ export function catalogProduct(row) {
   const url = row?.item_id && listingUrl(row);
   return url ? {
     id: row.item_id, title: row.title, url,
-    imageUrl: row.imageUrl, category: row.category, price: row.price, currency: row.currency,
+    imageUrl: row.imageUrl, category: row.searchTerm, price: row.price, currency: row.currency,
+    searchGroup: row.searchGroup, searchTerm: row.searchTerm, ocrImage: row.ocrImage,
   } : null;
 }
 
-export function enhancementSelection(slots, gap) {
+export function enhancementSelection(slots, gap, coverage) {
   const items = Object.entries(slots)
     .map(([slot, item]) => [slot, String(item.id)])
     .sort(([a], [b]) => a.localeCompare(b));
-  return JSON.stringify(gap ? [gap, items] : items);
+  if (!coverage) return JSON.stringify(gap ? [gap, items] : items);
+  return JSON.stringify(["photo", coverage.top, coverage.bottom, coverage.dress, coverage.shoes, coverage.outerwear, gap, items]);
 }
 
 export const productColumns = `product.item_id, product.shop_id, product.name AS title, product.url,
-  product.search_term AS category, product.price, product.currency, product.image_url AS imageUrl`;
+  product.search_term AS searchTerm, product.search_group AS searchGroup, product.ocr_image AS ocrImage,
+  product.price, product.currency, product.image_url AS imageUrl`;
 
-export const searchableProduct = `EXISTS (
-  SELECT 1 FROM clothes_listing_details d WHERE d.item_id = product.item_id
-)`;
-
-export const basicTerms = {
-  top: ["men shirt", "men sweater", "men tank top", "women sweater", "women tank top"],
-  bottom: ["business men pants", "business women pants", "men pants", "women pants"],
-};
-
-export function missingBasics(slots, garments) {
-  if (slots.dress) return [];
-  return Object.keys(basicTerms).filter(slot =>
-    !slots[slot] && !garments.some(garment => garment.category === slot));
+// Older picks store only the product ID. Its original catalog search identifies that listing.
+export function listingJoin(source, idColumn, hasSearch = true) {
+  const group = hasSearch ? `COALESCE(${source}.search_group, original.search_group)` : "original.search_group";
+  const term = hasSearch ? `COALESCE(${source}.search_term, original.search_term)` : "original.search_term";
+  return `LEFT JOIN clothes_image_database original ON original.item_id = ${source}.${idColumn}
+    LEFT JOIN clothes_catalog product ON product.item_id = original.item_id
+      AND product.search_group = ${group} AND product.search_term = ${term} AND trim(product.ocr_image) <> ''`;
 }
 
-// One lookup for the saved list. A hidden or retired saved listing suppresses
-// that gap only, leaving other approved pieces visible.
-async function readLegacyProducts(db, accountId, selectionsByLook) {
+export const catalogTerms = {
+  top: ["men shirt", "men sweater", "men tank top", "women sweater", "women tank top"],
+  bottom: ["business men pants", "business women pants", "men pants", "women pants", "men shorts", "women shorts", "women skirt"],
+  shoes: ["men shoes", "sneaker", "women shoes", "women high heels"],
+  outerwear: ["men jacket"],
+  accessory: ["men fashion accessories", "men necklace", "men watch", "women fashion accessories", "women necklace", "women earrings", "women watch"],
+};
+
+export function shoppingIntents(slots, garments, base) {
+  const coverage = retainedBaseCategories(base, slots);
+  const owns = category => garments.some(item => item.category === category);
+  const top = slots.top || coverage?.top;
+  const bottom = slots.bottom || coverage?.bottom;
+  const dress = slots.dress || coverage?.dress || (coverage && !top && !bottom && owns("dress"));
+  const gaps = [];
+  if (!dress && !top && !owns("top")) gaps.push("top");
+  if (!dress && !bottom && !owns("bottom")) gaps.push("bottom");
+  if (!coverage) return gaps.length ? gaps : [null];
+  if (coverage.top && coverage.bottom && !slots.outerwear && !coverage.outerwear) gaps.push("outerwear");
+  if (!slots.shoes && !coverage.shoes && !owns("shoes")) gaps.push("shoes");
+  return gaps.length ? gaps : [null];
+}
+
+// Load saved and draft decisions together so the list can display a try-on that
+// finished before a look was saved. A hidden saved suggestion overrides its draft.
+async function readLegacyProducts(db, accountId, selectionsByLook, coverageByLook) {
   const { results: owned } = await db.prepare(`
     SELECT DISTINCT category FROM wardrobe_items WHERE user_id = ? AND confirmed_at IS NOT NULL
-      AND archived_at IS NULL AND image_file_id IS NOT NULL AND category IN ('top','bottom')
+      AND archived_at IS NULL AND image_file_id IS NOT NULL AND category IN ('top','bottom','dress','shoes')
   `).bind(accountId).all();
-  const loadPicks = gapColumn => db.prepare(`
+  const targets = {};
+  for (const [id, selection] of Object.entries(selectionsByLook)) {
+    const slots = Object.fromEntries(JSON.parse(selection).map(([slot, item]) => [slot, { id: item }]));
+    const coverage = coverageByLook[id];
+    for (const gap of shoppingIntents(slots, owned, coverage)) {
+      (targets[id] ??= {})[enhancementSelection(slots, gap, coverage)] = gap;
+    }
+    targets[id] ??= {};
+  }
+  const selections = [...new Set(Object.values(targets).flatMap(Object.keys))];
+  const loadPicks = (hasSearch, hasGap) => db.prepare(`
     WITH targets AS (
-      SELECT look.id, look.user_id, look.source_option_id, slot.value AS items
-      FROM json_each(?) AS slot JOIN saved_looks look ON look.id = CAST(slot.key AS BIGINT)
-      WHERE look.user_id = ?
+      SELECT look.id, look.user_id, look.source_option_id FROM json_each(?) AS slot
+      JOIN saved_looks look ON look.id = CAST(slot.key AS BIGINT) WHERE look.user_id = ?
     ), picks AS (
-      SELECT t.id AS look_id, s.catalog_item_id AS item_id, s.hidden_at, ${gapColumn} AS wardrobe_gap,
-             CASE WHEN s.catalog_item_id IS NULL THEN 1 ELSE 2 END AS saved
+      SELECT t.id AS look_id, s.catalog_item_id AS item_id, s.hidden_at, ${hasGap ? "s.wardrobe_gap" : "CAST(NULL AS TEXT)"} AS wardrobe_gap,
+        ${hasSearch ? "s.search_group, s.search_term" : "CAST(NULL AS TEXT) AS search_group, CAST(NULL AS TEXT) AS search_term"},
+        CAST(NULL AS TEXT) AS selection, CASE WHEN s.catalog_item_id IS NULL THEN 1 ELSE 2 END AS saved
       FROM targets t JOIN shopping_suggestions s ON s.saved_look_id = t.id
       WHERE s.catalog_item_id IS NOT NULL OR s.hidden_at IS NOT NULL
       UNION ALL
-      SELECT t.id, e.item_id, NULL,
-        CASE WHEN e.selection = t.items THEN NULL
-             WHEN e.selection = '["top",' || t.items || ']' THEN 'top' ELSE 'bottom' END, 0
+      SELECT t.id, e.item_id, NULL, NULL, ${hasSearch ? "e.search_group, e.search_term" : "NULL, NULL"}, e.selection, 0
       FROM targets t JOIN outfit_enhancements e ON e.option_id = t.source_option_id AND e.user_id = t.user_id
-      WHERE e.selection IN (t.items, '["top",' || t.items || ']', '["bottom",' || t.items || ']')
+      WHERE e.selection IN (SELECT value FROM json_each(?))
     )
-    SELECT picks.look_id, picks.hidden_at, picks.wardrobe_gap, picks.saved, ${productColumns}
-    FROM picks LEFT JOIN clothes_image_database product ON product.item_id = picks.item_id AND ${searchableProduct}
-    ORDER BY picks.saved DESC
-  `).bind(JSON.stringify(selectionsByLook), accountId).all();
-  let picksResult;
+    SELECT picks.look_id, picks.hidden_at, picks.wardrobe_gap, picks.selection, picks.saved, ${productColumns}
+    FROM picks ${listingJoin("picks", "item_id")} ORDER BY picks.saved DESC
+  `).bind(JSON.stringify(selectionsByLook), accountId, JSON.stringify(selections)).all();
+  let rows;
   try {
-    picksResult = await loadPicks("s.wardrobe_gap");
+    rows = (await loadPicks(true, true)).results;
   } catch (error) {
-    // Before migration 0110 each saved look could have one general suggestion.
-    if (!/no such column: s\.wardrobe_gap|column s\.wardrobe_gap does not exist/i.test(error.message)) throw error;
-    picksResult = await loadPicks("CAST(NULL AS TEXT)");
+    // Saved looks are also readable on databases predating the catalog pick and gap migrations.
+    if (!/no such column: [es]\.(search_group|search_term|wardrobe_gap)|column [es]\.(search_group|search_term|wardrobe_gap) does not exist/i.test(error.message)) throw error;
+    try { rows = (await loadPicks(false, true)).results; }
+    catch (legacyError) {
+      if (!/no such column: s\.wardrobe_gap|column s\.wardrobe_gap does not exist/i.test(legacyError.message)) throw legacyError;
+      rows = (await loadPicks(false, false)).results;
+    }
   }
 
-  const byLook = new Map();
-  for (const row of picksResult.results) {
-    const key = String(row.look_id);
-    if (!byLook.has(key)) byLook.set(key, new Map());
-    const picks = byLook.get(key);
-    if (!picks.has(row.wardrobe_gap)) picks.set(row.wardrobe_gap, row);
+  const picks = new Map();
+  for (const row of rows) {
+    const id = String(row.look_id);
+    const targetsForLook = targets[id];
+    const gap = row.saved ? row.wardrobe_gap : targetsForLook[row.selection];
+    if (gap === undefined || (gap && !Object.values(targetsForLook).includes(gap))) continue;
+    if (!picks.has(id)) picks.set(id, new Map());
+    if (!picks.get(id).has(gap)) picks.get(id).set(gap, row);
   }
   const products = new Map();
-  for (const [id, picks] of byLook) {
-    const slots = Object.fromEntries(JSON.parse(selectionsByLook[id]));
-    const gaps = missingBasics(slots, owned);
-    if (!gaps.length || picks.get(null)?.saved) gaps.push(null);
+  for (const [id, byGap] of picks) {
     const selected = [];
-    for (const gap of gaps) {
-      const row = picks.get(gap);
-      const product = !row?.hidden_at && catalogProduct(row);
-      if (product) selected.push(gap ? { ...product, wardrobeGap: gap } : product);
+    for (const [gap, row] of byGap) {
+      const item = !row.hidden_at && catalogProduct(row);
+      if (item) selected.push(gap ? { ...item, wardrobeGap: gap } : item);
     }
     products.set(id, selected);
   }
@@ -115,7 +146,7 @@ export async function readOptionProducts(db, accountId, optionId) {
     SELECT chosen.slot, ${productColumns}
     FROM outfit_option_catalog_items chosen
     JOIN outfit_options o ON o.user_id = chosen.user_id AND o.id = chosen.option_id AND o.look_kind = 'occasion'
-    JOIN clothes_image_database product ON product.item_id = chosen.item_id AND ${searchableProduct}
+    ${listingJoin("chosen", "item_id")}
     WHERE chosen.user_id = ? AND chosen.option_id = ?
     ORDER BY chosen.slot
   `).bind(accountId, optionId).all();
@@ -124,20 +155,23 @@ export async function readOptionProducts(db, accountId, optionId) {
 
 // A generated preview may predate changes elsewhere in the wardrobe. Read the
 // decisions for that exact option/selection, without running a new shopping search.
-export async function approvedPreviewProducts(db, accountId, option, slots) {
+export async function approvedPreviewProducts(db, accountId, option, slots, ids) {
   if (option.kind === "occasion") return readOptionProducts(db, accountId, option.id);
-  const general = enhancementSelection(slots);
-  const top = enhancementSelection(slots, "top");
-  const bottom = enhancementSelection(slots, "bottom");
+  if (!ids.length) return [];
   const { results } = await db.prepare(`
     SELECT e.selection, ${productColumns}
-    FROM outfit_enhancements e JOIN clothes_image_database product ON product.item_id = e.item_id AND ${searchableProduct}
-    WHERE e.user_id = ? AND e.option_id = ? AND e.selection IN (?, ?, ?)
-  `).bind(accountId, option.id, general, top, bottom).all();
+    FROM outfit_enhancements e ${listingJoin("e", "item_id")}
+    WHERE e.user_id = ? AND e.option_id = ? AND e.item_id IN (SELECT value FROM json_each(?))
+  `).bind(accountId, option.id, JSON.stringify(ids)).all();
+  const expected = enhancementSelection(slots);
   return results.flatMap(row => {
     const product = catalogProduct(row);
     if (!product) return [];
-    return row.selection === general ? product : { ...product, wardrobeGap: row.selection === top ? "top" : "bottom" };
+    const key = JSON.parse(row.selection);
+    const hasGap = typeof key[0] === "string";
+    if (JSON.stringify(hasGap ? key.at(-1) : key) !== expected) return [];
+    const gap = key[0] === "photo" ? key.at(-2) : hasGap ? key[0] : null;
+    return gap ? { ...product, wardrobeGap: gap } : product;
   });
 }
 
@@ -147,7 +181,7 @@ async function readPinnedProducts(db, accountId, ids) {
   const { results } = await db.prepare(`
     SELECT look.id AS look_id, chosen.catalog_slot, chosen.wardrobe_gap, ${productColumns}
     FROM saved_looks look JOIN saved_look_catalog_items chosen ON chosen.saved_look_id = look.id
-    JOIN clothes_image_database product ON product.item_id = chosen.item_id AND ${searchableProduct}
+    ${listingJoin("chosen", "item_id")}
     WHERE look.user_id = ? AND look.id IN (SELECT value FROM json_each(?))
       AND NOT EXISTS (SELECT 1 FROM saved_look_hidden_catalog_items hidden
         WHERE hidden.saved_look_id = look.id AND hidden.item_id = chosen.item_id)
@@ -173,7 +207,7 @@ async function readOccasionSavedProducts(db, accountId, selectionsByLook) {
       JOIN saved_looks look ON look.id = CAST(slot.key AS BIGINT) AND look.user_id = ?
       JOIN outfit_options o ON o.user_id = look.user_id AND o.id = look.source_option_id AND o.look_kind = 'occasion'
       LEFT JOIN outfit_option_catalog_items chosen ON chosen.user_id = o.user_id AND chosen.option_id = o.id
-      LEFT JOIN clothes_image_database product ON product.item_id = chosen.item_id AND ${searchableProduct}
+      ${listingJoin("chosen", "item_id")}
       LEFT JOIN saved_look_hidden_catalog_items hidden ON hidden.saved_look_id = look.id AND hidden.item_id = chosen.item_id
       ORDER BY look.id, chosen.slot
     `).bind(JSON.stringify(selectionsByLook), accountId).all());
@@ -194,11 +228,11 @@ async function readOccasionSavedProducts(db, accountId, selectionsByLook) {
   return products;
 }
 
-export async function readSavedCatalog(db, accountId, selectionsByLook, pinnedIds = []) {
+export async function readSavedCatalog(db, accountId, selectionsByLook, pinnedIds = [], coverageByLook = {}) {
   const occasion = await readOccasionSavedProducts(db, accountId, selectionsByLook);
   const pinned = await readPinnedProducts(db, accountId, pinnedIds);
   const legacy = Object.fromEntries(Object.entries(selectionsByLook).filter(([id]) => !occasion.has(id) && !pinned.has(id)));
-  const products = Object.keys(legacy).length ? await readLegacyProducts(db, accountId, legacy) : new Map();
+  const products = Object.keys(legacy).length ? await readLegacyProducts(db, accountId, legacy, coverageByLook) : new Map();
   for (const [id, selected] of occasion) products.set(id, selected);
   for (const [id, selected] of pinned) products.set(id, selected);
   return { products, occasion };

@@ -39,12 +39,15 @@ async function storeOptions(db, accountId, runId, occasion, garments, looks, off
       `).bind(accountId, accountId, runId, position, slot, accountId, item.id, slot, item.imageRef,
         item.name, item.category, item.color, item.imageRef));
     }
-    for (const [slot, productId] of Object.entries(look.catalogSlots ?? {})) {
+    for (const [slot, listing] of Object.entries(look.catalogSlots ?? {})) {
+      const { id, searchGroup = null, searchTerm = null } = typeof listing === "string" ? { id: listing } : listing;
       writes.push(db.prepare(`
-        INSERT INTO outfit_option_catalog_items (user_id, option_id, slot, item_id)
+        INSERT INTO outfit_option_catalog_items (user_id, option_id, slot, item_id, search_group, search_term)
         VALUES (?, (SELECT id FROM outfit_options WHERE user_id=? AND run_id=? AND position=?), ?,
-          (SELECT item_id FROM clothes_listing_details WHERE item_id=? LIMIT 1))
-      `).bind(accountId, accountId, runId, position, slot, productId));
+          (SELECT product.item_id FROM clothes_catalog product JOIN clothes_image_database original ON original.item_id=product.item_id
+           WHERE product.item_id=? AND product.search_group=COALESCE(?, original.search_group)
+           AND product.search_term=COALESCE(?, original.search_term) AND trim(product.ocr_image) <> ''), ?, ?)
+      `).bind(accountId, accountId, runId, position, slot, id, searchGroup, searchTerm, searchGroup, searchTerm));
     }
   }
   const results = await db.batch(writes);

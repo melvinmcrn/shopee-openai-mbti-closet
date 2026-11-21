@@ -28,7 +28,8 @@ export function Refine({ look, garments, onSaved, onStale, onBack }: RefineProps
     return () => { mounted.current = false; };
   }, []);
   const garmentsById = new Map(garments.map((garment) => [garment.id, garment]));
-  const visibleSlots = slotOrder.filter(slot => look.slots[slot]);
+  const renderedSlots = look.effectiveSlots ?? look.slots;
+  const visibleSlots = slotOrder.filter(slot => renderedSlots[slot]);
 
   async function save() {
     if (savePending.current) return;
@@ -76,10 +77,10 @@ export function Refine({ look, garments, onSaved, onStale, onBack }: RefineProps
           <Image src={imageUrl(look.imageRef)} alt="Full-body try-on of your selected look"
             width={512} height={768} unoptimized loading="eager"
             className="aspect-[2/3] w-full rounded-2xl bg-selected object-contain" />
-          {look.useProfilePhoto === false && <figcaption className="mt-2 text-xs text-supporting">Studio model</figcaption>}
+          {look.useProfilePhoto === false && !look.slots.other && <figcaption className="mt-2 text-xs text-supporting">Studio model</figcaption>}
         </figure>
         <div className="min-w-0 space-y-5">
-          <WardrobePhotos garments={visibleSlots.flatMap(slot => garmentsById.get(look.slots[slot]) ?? [])} />
+          <WardrobePhotos garments={visibleSlots.flatMap(slot => garmentsById.get(renderedSlots[slot]) ?? [])} />
           {look.products.length > 0 && (
             <ul aria-label="Suggested items" className="space-y-3">
               {look.products.map(product => <li key={product.id}><EnhancementProduct product={product} /></li>)}

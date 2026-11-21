@@ -15,7 +15,7 @@ const garment = (id, category, name, changes = {}) => ({
   id, category, name, color: "", imageRef: `photo-${id}`, accountId: "1", confirmed: true, active: true, ...changes,
 });
 const listing = (id, term, name, changes = {}) => ({
-  item_id: id, shop_id: "17", search_term: term, name,
+  item_id: id, shop_id: "17", search_group: "women", search_term: term, name,
   url: `https://shopee.co.th/product/17/${id}`, image_url: "https://down-th.img.susercontent.com/file/abc", ...changes,
 });
 
@@ -77,7 +77,7 @@ test("designs only from the brief, then resolves owned matches before querying e
   assert.doesNotMatch(JSON.stringify(catalog), /Bad redirect|Mismatched SKU|Another navy sweater/);
   assert.equal(catalog.groups.find(group => group.category === "bottom").desired, pieces[1].description);
   assert.deepEqual(result.slots, { top: "2" });
-  assert.deepEqual(result.catalogSlots, { bottom: "92" });
+  assert.deepEqual(result.catalogSlots, { bottom: { id: "92", searchGroup: "women", searchTerm: "women pants" } });
   assert.match(result.explanation, /polished/i);
   assert.doesNotMatch(result.explanation, /bracelet/i);
 });
@@ -132,7 +132,10 @@ test("can assemble a complete catalog-only look and omit an unavailable accessor
   const ai = provider(pieces, group => group.category === "accessory" ? "none" : group.candidates[0].value, "tonal");
   const result = await generateOccasionLook(env, brief, [], ai.request);
   assert.deepEqual(result.slots, {});
-  assert.deepEqual(result.catalogSlots, { top: "20", bottom: "21" });
+  assert.deepEqual(result.catalogSlots, {
+    top: { id: "20", searchGroup: "women", searchTerm: "women sweater" },
+    bottom: { id: "21", searchGroup: "women", searchTerm: "business women pants" },
+  });
   assert.match(result.explanation, /palette|tones|color/i);
   assert.doesNotMatch(result.explanation, /bracelet|earrings|studs/i);
   assert.equal(ai.calls.length, 2);
@@ -154,7 +157,7 @@ test("only offers trusted listings from the imported catalog, including previous
     database.exec(readFileSync(new URL(file, migrations), "utf8"));
   }
   const DB = { prepare: sql => ({ bind: (...values) => ({ all: async () => ({ results: database.prepare(sql).all(...values) }) }) }) };
-  const selected = database.prepare("SELECT name, item_id FROM clothes_catalog WHERE search_term = ? LIMIT 1");
+  const selected = database.prepare("SELECT name, item_id, search_group, search_term FROM clothes_catalog WHERE search_term = ? LIMIT 1");
   const jacket = selected.get("men jacket");
   const sneakers = selected.get("sneaker");
   const names = [jacket.name, sneakers.name].map(name => name.replace(/\s+/gu, " ").trim());
@@ -164,7 +167,11 @@ test("only offers trusted listings from the imported catalog, including previous
     group.candidates.find(candidate => names.some(name => name.startsWith(candidate.name)))?.value ?? "none");
   const result = await generateOccasionLook({ DB, OPENAI_API_KEY: "test" }, brief, [garment("31", "dress", design[0].description)], ai.request);
   assert.deepEqual(result.slots, { dress: "31" });
-  assert.deepEqual(result.catalogSlots, { outerwear: jacket.item_id, shoes: sneakers.item_id });
+  for (const [slot, row] of Object.entries({ outerwear: jacket, shoes: sneakers })) {
+    assert.equal(result.catalogSlots[slot].id, row.item_id);
+    assert.ok(database.prepare("SELECT 1 FROM clothes_catalog WHERE item_id=? AND search_group=? AND search_term=?")
+      .get(row.item_id, result.catalogSlots[slot].searchGroup, result.catalogSlots[slot].searchTerm));
+  }
 });
 
 test("an unavailable provider or a mixed-owner wardrobe yields no catalog purchases", async () => {

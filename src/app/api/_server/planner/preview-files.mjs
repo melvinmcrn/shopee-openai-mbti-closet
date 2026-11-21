@@ -1,14 +1,32 @@
 import { readPrivateFile, writePrivateFile, deletePrivateFile } from "../private-files.mjs";
 
-export const currentInventoryVersion = "inventory-v4";
+export const currentInventoryVersion = "photo-v5";
 
-export function previewSelection(slots, personal, products = [], profileRef = null, version = currentInventoryVersion) {
-  const entries = Object.entries(slots).sort(([a], [b]) => a.localeCompare(b))
+function garmentReferences(slots) {
+  return Object.entries(slots).sort(([a], [b]) => a.localeCompare(b))
     .map(([slot, item]) => [slot, String(item.id), item.imageRef, item.name]);
-  const listings = (Array.isArray(products) ? products : products ? [products] : [])
-    .map(p => [p.id, p.imageUrl, p.title, p.category])
-    .sort(([a], [b]) => a.localeCompare(b));
-  return JSON.stringify([version, personal, personal ? profileRef : null, entries, listings]);
+}
+
+export function previewSelection(slots, personal, products = [], profileRef = null, effectiveSlots = slots,
+  version = currentInventoryVersion, identityOnly = false) {
+  // The original saved-photo reader passed the inventory version in argument five.
+  if (typeof effectiveSlots === "string") {
+    version = effectiveSlots;
+    effectiveSlots = slots;
+  }
+  const items = Array.isArray(products) ? products : products ? [products] : [];
+  const original = garmentReferences(slots);
+  const header = [version, personal, personal ? profileRef : null, original];
+  const legacyInventory = version === "inventory-v3" || version === "inventory-v4";
+  const listings = items.map(product => {
+    const fields = [String(product.id), product.imageUrl, product.title, product.category];
+    return legacyInventory ? fields : [...fields, product.searchGroup, product.searchTerm, product.ocrImage];
+  }).sort(([a], [b]) => a.localeCompare(b));
+  if (legacyInventory) return JSON.stringify([...header, listings]);
+  const composite = [...header, garmentReferences(effectiveSlots), listings];
+  // A changed portrait may supply only the person's likeness in a revised saved look.
+  if (version === currentInventoryVersion && identityOnly) composite.push(true);
+  return JSON.stringify(composite);
 }
 
 export async function profilePhotoRef(db, accountId) {
@@ -16,9 +34,9 @@ export async function profilePhotoRef(db, accountId) {
   return row?.ref ?? null;
 }
 
-export function previewFiles(env, accountId, optionId, slots, personal, products, profileRef) {
+export function previewFiles(env, accountId, optionId, slots, personal, products, profileRef, effectiveSlots = slots, identityOnly = false) {
   const account = { id: accountId };
-  const selection = previewSelection(slots, personal, products, profileRef);
+  const selection = previewSelection(slots, personal, products, profileRef, effectiveSlots, currentInventoryVersion, identityOnly);
   return {
     async cachedImage() {
       const row = await env.DB.prepare("SELECT file_id FROM planner_previews WHERE user_id=? AND option_id=? AND selection=?")

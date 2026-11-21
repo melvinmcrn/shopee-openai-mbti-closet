@@ -189,6 +189,7 @@ def provider_calls(context, base):
 
 def run_flow(browser, device, base):
     context, page = mobile_session(browser, device, base, "first-session")
+    page.clock.install()
     product_photo = Path(__file__).resolve().parents[1] / "Shopee Database/clothes_image_database/b6326a099e743eebc194.jpg"
     page.route("https://down-th.img.susercontent.com/file/**", lambda route: route.fulfill(path=product_photo))
     page.goto(f"{base}/planner/")
@@ -211,9 +212,43 @@ def run_flow(browser, device, base):
     retry = page.get_by_role("button", name="Retry photos", exact=True)
     expect(page.get_by_text("No completed outfit photos are available for this brief.", exact=True)).to_be_visible()
     expect(retry).to_be_visible()
-    # One decision failed and the dress failed its inventory audit.
     expect_photo_overview(page)
-    expect(page.get_by_role("button", name=re.compile("^Choose "))).to_have_count(0)
+    choices = page.get_by_role("button", name=re.compile("^Choose "))
+    expect(choices).to_have_count(0)
+
+    stalled = []
+    def stall_preview(route):
+        payload = route.request.post_data_json
+        if payload["action"] == "preview" and "top" in payload["input"]["slots"]:
+            stalled.append(route)
+        else:
+            route.continue_()
+
+    page.route("**/api/planner", stall_preview)
+    with page.expect_request(lambda req: req.url.endswith("/api/planner") and req.post_data_json["action"] == "preview"
+                             and "top" in req.post_data_json["input"]["slots"]):
+        retry.tap()
+    expect(page.get_by_role("status")).to_contain_text("Creating")
+    expect(choices).to_have_count(0)
+    page.clock.fast_forward(5 * 60 * 1000)
+    expect(page.get_by_text(re.compile("took too long", re.I))).to_be_visible()
+    expect(retry).to_be_visible()
+    assert len(stalled) == 1
+    stalled[0].abort()
+    page.unroute("**/api/planner", stall_preview)
+
+    def invalid_preview(route):
+        if route.request.post_data_json["action"] == "preview":
+            route.fulfill(json={"imageRef": ""})
+        else:
+            route.continue_()
+
+    page.route("**/api/planner", invalid_preview)
+    retry.tap()
+    expect(page.get_by_text(re.compile("couldn.t open the try-on photo", re.I))).to_be_visible()
+    expect(choices).to_have_count(0)
+    expect(retry).to_be_visible()
+    page.unroute("**/api/planner", invalid_preview)
     retry.tap()
     first = page.get_by_role("article").filter(has=page.get_by_role("button", name="Choose look 1"))
     generated = first.get_by_role("img", name="Full-body virtual try-on of this outfit")
@@ -347,14 +382,19 @@ def check_two_catalog_basics(browser, device, base, session):
     else:
         expect(page.get_by_role("group", name="Selected wardrobe photos")).to_have_count(0)
     links = page.get_by_role("link", name=re.compile("Buy on Shopee"))
-    expect(links).to_have_count(2)
-    by_gap = {gap: links.filter(has_text=gap).get_attribute("href") for gap in ("Suggested top", "Suggested pants")}
-    assert len(set(by_gap.values())) == 2
+    gaps = ["Suggested top", "Suggested pants"]
+    if session == "profile-only":
+        gaps.append("Suggested shoes")
+    expect(links).to_have_count(len(gaps))
+    by_gap = {gap: links.filter(has_text=gap).get_attribute("href") for gap in gaps}
+    assert len(set(by_gap.values())) == len(gaps)
     source = Path(__file__).resolve().parents[1] / "Shopee Database/new_clothes_sample_full.csv"
     with source.open(encoding="utf-8-sig", newline="") as catalog:
         by_url = {unquote(row["url"]): row for row in csv.DictReader(catalog)}
     assert by_url[unquote(by_gap["Suggested top"])]["search_term"] == "women sweater"
     assert by_url[unquote(by_gap["Suggested pants"])]["search_term"] == "women pants"
+    if session == "profile-only":
+        assert by_url[unquote(by_gap["Suggested shoes"])]["search_term"] == "women shoes"
     save_chosen_photo(page, initial, by_gap.values())
     expect_heading(page, "Museum visit")
     expect(page.get_by_role("img", name="Full-body AI try-on for Museum visit")).to_have_js_property("src", initial)
@@ -362,14 +402,17 @@ def check_two_catalog_basics(browser, device, base, session):
     top = shopping.get_by_role("listitem").filter(has_text="Suggested top")
     top.get_by_role("button", name=re.compile("^Hide ")).tap()
     expect(page.locator(f'img[src$="{urlparse(initial).path}"]')).to_have_count(0)
-    expect(shopping.get_by_role("link")).to_have_count(1)
-    expect(shopping.get_by_role("link")).to_have_attribute("href", by_gap["Suggested pants"])
+    remaining = sorted(url for gap, url in by_gap.items() if gap != "Suggested top")
+    visible = shopping.get_by_role("link")
+    expect(visible).to_have_count(len(remaining))
+    assert sorted(visible.evaluate_all("links => links.map(link => link.getAttribute('href'))")) == remaining
     page.get_by_role("navigation", name="Main navigation").get_by_role("link", name="Saved", exact=True).tap()
     expect_heading(page, "Saved looks")
     expect(page.locator(f'img[src$="{urlparse(initial).path}"]')).to_have_count(0)
     saved = page.get_by_role("article")
-    expect(saved.get_by_role("link", name=re.compile("Buy on Shopee"))).to_have_count(1)
-    expect(saved.get_by_role("link", name=re.compile("Buy on Shopee"))).to_have_attribute("href", by_gap["Suggested pants"])
+    saved_links = saved.get_by_role("link", name=re.compile("Buy on Shopee"))
+    expect(saved_links).to_have_count(len(remaining))
+    assert sorted(saved_links.evaluate_all("links => links.map(link => link.getAttribute('href'))")) == remaining
     if session == "other-account":
         expect(saved.get_by_role("img", name="Private scarf")).to_be_visible()
     context.close()

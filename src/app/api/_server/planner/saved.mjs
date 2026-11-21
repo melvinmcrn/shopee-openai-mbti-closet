@@ -1,4 +1,6 @@
-import { approvedPreviewProducts, enhancementSelection, readOptionProducts, readSavedCatalog, searchableProduct } from "./catalog-product.mjs";
+import { approvedPreviewProducts, enhancementSelection, readOptionProducts, readSavedCatalog } from "./catalog-product.mjs";
+import { getGarments } from "./garments.mjs";
+import { combineBaseCoverage, effectiveWardrobeSlots } from "./wardrobe-completion.mjs";
 import { currentInventoryVersion, previewSelection } from "./preview-files.mjs";
 
 const slotNames = new Set(["top", "bottom", "dress", "shoes", "outerwear", "accessory", "other"]);
@@ -58,7 +60,7 @@ function selectSlots(table, lookKey, lookId) {
   )`;
 }
 
-async function readLooks(db, accountId, id) {
+async function readLooks(db, accountId, id, knownCoverage) {
   // The optional photo mode is absent before migration 0109; the mapping treats it as null.
   const { results } = await db.prepare(`
     SELECT look.*, profile.face_photo_file_id AS profile_ref,
@@ -78,34 +80,72 @@ async function readLooks(db, accountId, id) {
 
   if (!results.length) return [];
   const selections = results.map(row => JSON.parse(row.slots));
-  const { products, occasion } = await readSavedCatalog(db, accountId, Object.fromEntries(
-    results.map((row, i) => [row.id, enhancementSelection(selections[i])])
-  ), results.filter(row => row.pinned_preview_file_id).map(row => String(row.id)));
+  const usesProfile = row => row.use_profile_photo == null ? Boolean(row.profile_ref) : row.use_profile_photo === 1;
+  const photoRefs = new Set();
+  for (const [index, row] of results.entries()) {
+    if (usesProfile(row) && row.profile_ref) photoRefs.add(row.profile_ref);
+    if (selections[index].other?.imageRef) photoRefs.add(selections[index].other.imageRef);
+  }
+  // Reading file.* keeps old databases with no base_coverage column readable.
+  const coverageByRef = new Map();
+  if (photoRefs.size) {
+    const { results: files } = await db.prepare(`
+      SELECT file.* FROM private_files AS file
+      WHERE file.user_id = ? AND file.state = 'ready'
+        AND file.file_id IN (SELECT value FROM json_each(?))
+    `).bind(accountId, JSON.stringify([...photoRefs])).all();
+    for (const file of files) {
+      if (file.base_coverage) coverageByRef.set(file.file_id, JSON.parse(file.base_coverage));
+    }
+  }
+  const coverageByLook = Object.fromEntries(results.map((row, i) => [row.id, combineBaseCoverage(
+    usesProfile(row) ? coverageByRef.get(row.profile_ref) : null,
+    coverageByRef.get(selections[i].other?.imageRef)
+  )]));
+  if (knownCoverage !== undefined) coverageByLook[id] = knownCoverage;
+  const [{ products, occasion }, wardrobe] = await Promise.all([
+    readSavedCatalog(db, accountId, Object.fromEntries(
+      results.map((row, i) => [row.id, enhancementSelection(selections[i])])
+    ), results.filter(row => row.pinned_preview_file_id).map(row => String(row.id)), coverageByLook),
+    Object.values(coverageByLook).some(Boolean) ? getGarments({ DB: db }, accountId) : [],
+  ]);
   return results.map((row, i) => {
     const slots = selections[i];
     const enhancements = products.get(String(row.id)) ?? [];
-    const personal = row.use_profile_photo == null ? Boolean(row.profile_ref) : row.use_profile_photo === 1;
+    const personal = usesProfile(row);
     const originalSlots = JSON.parse(row.original_slots);
     const pinned = row.pinned_preview_file_id;
     const previews = JSON.parse(row.previews);
+    const frozen = pinned || occasion.has(String(row.id));
+    const coverage = coverageByLook[row.id];
+    const effective = frozen ? slots : effectiveWardrobeSlots(slots, wardrobe, coverage);
     const renderMode = pinned ? personal && Boolean(row.profile_ref) : personal;
-    const selection = previewSelection(slots, renderMode, enhancements, row.profile_ref);
+    const evidence = pinned ? JSON.parse(row.pinned_preview_selection) : null;
+    const retainProfileClothes = !evidence || evidence[2] === row.profile_ref;
+    const identityOnly = Boolean(renderMode && row.profile_ref && !retainProfileClothes);
+    const selection = previewSelection(slots, renderMode, enhancements, row.profile_ref, effective, currentInventoryVersion, identityOnly);
     let previewRef = previews[selection] ?? null;
     if (pinned) {
-      const [version, , originalProfile] = JSON.parse(row.pinned_preview_selection);
-      if (previewSelection(slots, personal, enhancements, originalProfile, version) === row.pinned_preview_selection) {
+      const [version, , originalProfile, requested] = evidence;
+      const explicit = Object.fromEntries(requested.map(([slot]) => [slot, slots[slot]]));
+      if (previewSelection(explicit, personal, enhancements, originalProfile, slots, version) === row.pinned_preview_selection) {
         previewRef = pinned;
       }
     } else if (!previewRef) {
-      const legacy = previewSelection(slots, personal, enhancements, row.profile_ref, "inventory-v3");
-      previewRef = previews[legacy] ?? null;
+      previewRef = previews[previewSelection(slots, personal, enhancements, row.profile_ref, effective, "photo-v4")] ?? null;
+      if (!previewRef && !Object.values(coverage ?? {}).some(Boolean) && Object.keys(effective).length === Object.keys(slots).length) {
+        for (const version of ["inventory-v4", "inventory-v3"]) {
+          const legacy = previewSelection(slots, personal, enhancements, row.profile_ref, slots, version);
+          if (previews[legacy]) { previewRef = previews[legacy]; break; }
+        }
+      }
     }
     return {
       id: String(row.id),
       optionId: String(row.source_option_id),
       ...(occasion.has(String(row.id)) ? { kind: "occasion" } : {}),
       useProfilePhoto: personal,
-      ...(pinned ? { hasPinnedPreview: true } : {}),
+      ...(pinned ? { hasPinnedPreview: true, retainProfileClothes } : {}),
       previewRef,
       enhancements,
       enhancement: enhancements[0] ?? null,
@@ -122,7 +162,7 @@ function stalePreview() {
   return Object.assign(new Error("This try-on no longer matches the selected items. Reopen the outfit and try again."), { status: 409 });
 }
 
-async function verifyPreview(db, accountId, option, slots, rendered) {
+async function verifyPreview(db, accountId, option, slots, garments, rendered) {
   const { previewRef, catalogItemIds } = rendered;
   if (typeof previewRef !== "string" || !previewRef || !Array.isArray(catalogItemIds) ||
       catalogItemIds.some(id => typeof id !== "string") || new Set(catalogItemIds).size !== catalogItemIds.length) {
@@ -137,14 +177,25 @@ async function verifyPreview(db, accountId, option, slots, rendered) {
   let recorded;
   try { recorded = JSON.parse(row.selection); } catch { throw stalePreview(); }
   if (!Array.isArray(recorded)) throw stalePreview();
-  const [version, personal, profileRef] = recorded;
-  if (version !== currentInventoryVersion || typeof personal !== "boolean" || (personal && !profileRef)) throw stalePreview();
-  const approved = await approvedPreviewProducts(db, accountId, option, slots);
-  const products = catalogItemIds.map(id => approved.find(product => product.id === id));
-  if (products.some(product => !product) || row.selection !== previewSelection(slots, personal, products, profileRef)) {
+  const [version, personal, profileRef, , effectiveRefs, listings] = recorded;
+  if (version !== currentInventoryVersion || typeof personal !== "boolean" || (personal && !profileRef) ||
+      !Array.isArray(effectiveRefs) || !Array.isArray(listings)) throw stalePreview();
+  let effective;
+  try {
+    effective = effectiveRefs.length ? snapshotSlots(Object.fromEntries(effectiveRefs.map(([slot, id]) => [slot, id])), garments) : {};
+  } catch {
     throw stalePreview();
   }
-  return { file: previewRef, selection: row.selection, personal, products };
+  const approved = await approvedPreviewProducts(db, accountId, option, slots, catalogItemIds);
+  const products = catalogItemIds.map(id => {
+    const listing = listings.find(([itemId]) => itemId === id);
+    return approved.find(p => p.id === id && listing && p.searchGroup === listing[4] && p.searchTerm === listing[5] &&
+      p.ocrImage === listing[6] && p.imageUrl === listing[1]);
+  });
+  if (products.some(product => !product) || row.selection !== previewSelection(slots, personal, products, profileRef, effective)) {
+    throw stalePreview();
+  }
+  return { file: previewRef, selection: row.selection, personal, products, effective };
 }
 
 export async function saveLook(db, accountId, sourceOption, slots, garments, useProfilePhoto = false, rendered) {
@@ -160,9 +211,9 @@ export async function saveLook(db, accountId, sourceOption, slots, garments, use
     if (rendered && error instanceof TypeError) throw stalePreview();
     throw error;
   }
-  const pin = rendered ? await verifyPreview(db, accountId, sourceOption, snapshot, rendered) : null;
-  if (catalogOnly) {
-    const products = pin?.products ?? await readOptionProducts(db, accountId, optionId);
+  const pin = rendered ? await verifyPreview(db, accountId, sourceOption, snapshot, garments, rendered) : null;
+  if (catalogOnly && !pin) {
+    const products = await readOptionProducts(db, accountId, optionId);
     const base = new Set(products.map(product => product.catalogSlot ?? product.wardrobeGap));
     if (!base.has("dress") && !(base.has("top") && base.has("bottom"))) {
       throw new TypeError("The catalog pieces for this outfit are unavailable.");
@@ -180,18 +231,19 @@ export async function saveLook(db, accountId, sourceOption, slots, garments, use
   if (pin?.products.length) {
     // The D1 catalog table is WITHOUT ROWID so this insert preserves the saved
     // look's ID for the wardrobe snapshot in the same atomic batch.
-    const values = pin.products.map(() => "(?, ?, ?, ?, ?, ?)").join(", ");
+    const values = pin.products.map(() => "(?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
     writes.push(db.prepare(`
-      WITH desired(item_id, catalog_slot, wardrobe_gap, title, image_url, category) AS (VALUES ${values}),
+      WITH desired(item_id, catalog_slot, wardrobe_gap, title, image_url, search_group, search_term, ocr_image) AS (VALUES ${values}),
            new_look AS MATERIALIZED (SELECT last_insert_rowid() AS id)
-      INSERT INTO saved_look_catalog_items (saved_look_id, item_id, catalog_slot, wardrobe_gap)
+      INSERT INTO saved_look_catalog_items (saved_look_id, item_id, catalog_slot, wardrobe_gap, search_group, search_term)
       SELECT new_look.id,
-        (SELECT product.item_id FROM clothes_image_database product WHERE product.item_id = desired.item_id
+        (SELECT product.item_id FROM clothes_catalog product WHERE product.item_id = desired.item_id
           AND product.name = desired.title AND product.image_url = desired.image_url
-          AND product.search_term = desired.category AND ${searchableProduct}),
-        desired.catalog_slot, desired.wardrobe_gap FROM desired CROSS JOIN new_look
+          AND product.search_term = desired.search_term AND product.search_group = desired.search_group
+          AND product.ocr_image = desired.ocr_image),
+        desired.catalog_slot, desired.wardrobe_gap, desired.search_group, desired.search_term FROM desired CROSS JOIN new_look
     `).bind(...pin.products.flatMap(product => [product.id, product.catalogSlot ?? null, product.wardrobeGap ?? null,
-      product.title, product.imageUrl, product.category])));
+      product.title, product.imageUrl, product.searchGroup, product.searchTerm, product.ocrImage])));
   }
   writes.push(
     db.prepare(`
@@ -205,7 +257,7 @@ export async function saveLook(db, accountId, sourceOption, slots, garments, use
         json_extract(slot.value, '$.color'),
         json_extract(slot.value, '$.imageRef')
       FROM new_look CROSS JOIN json_each(?2) AS slot
-    `).bind(accountId, JSON.stringify(snapshot)),
+    `).bind(accountId, JSON.stringify(pin?.effective ?? snapshot)),
   );
   try {
     const [insert] = await db.batch(writes);
@@ -220,9 +272,9 @@ export function listLooks(db, accountId) {
   return readLooks(db, accountId);
 }
 
-export async function getLook(db, accountId, id) {
+export async function getLook(db, accountId, id, knownCoverage) {
   const savedId = numericId(id);
   if (savedId === null) return null;
-  const [look] = await readLooks(db, accountId, savedId);
+  const [look] = await readLooks(db, accountId, savedId, knownCoverage);
   return look ?? null;
 }

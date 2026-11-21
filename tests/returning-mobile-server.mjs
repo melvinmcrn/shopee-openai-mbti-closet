@@ -70,8 +70,8 @@ const image = Buffer.from(
   "base64",
 );
 const tryOnJpeg = jpeg.encode({ width: 1, height: 1, data: Buffer.from([255, 255, 255, 255]) }).data.toString("base64");
-function listingJpeg(itemId) {
-  const color = createHash("sha256").update(itemId).digest().subarray(0, 3);
+function listingJpeg(photoKey) {
+  const color = createHash("sha256").update(photoKey).digest().subarray(0, 3);
   return jpeg.encode({ width: 1, height: 1, data: Buffer.from([...color, 255]) }).data;
 }
 const enhancedTryOn = jpeg.encode({ width: 1, height: 1, data: Buffer.from([255, 0, 0, 255]) }).data.toString("base64");
@@ -85,6 +85,12 @@ const env = {
   DB: db,
   BUCKET: {
     get: async id => {
+      if (id.startsWith("clothes_image_database/")) {
+        const row = database.prepare("SELECT 1 FROM clothes_listing_details WHERE ocr_image=?").get(id);
+        if (!row) return null;
+        const photo = new Blob([listingJpeg(id)], { type: "image/jpeg" });
+        return { size: photo.size, httpMetadata: { contentType: photo.type }, arrayBuffer: () => photo.arrayBuffer() };
+      }
       const file = photos.get(id);
       return file && {
         ...file, size: file.body.byteLength,
@@ -141,12 +147,6 @@ function outfitExtractionFixture() {
 
 async function decisionsFixture(url, options) {
   if (String(url).startsWith("https://api.openai.com/")) providerCalls++;
-  if (String(url).startsWith("https://down-th.img.susercontent.com/file/")) {
-    const product = database.prepare("SELECT item_id FROM clothes_image_database WHERE image_url = ?").get(String(url));
-    assert.ok(product, "try-on must fetch the product image from the catalog");
-    assert.equal(options.redirect, "error");
-    return new Response(listingJpeg(product.item_id), { headers: { "content-type": "image/jpeg" } });
-  }
   if (url === "https://api.openai.com/v1/images/edits") {
     assert.equal(options.body.get("output_format"), "jpeg");
     const prompt = options.body.get("prompt");
@@ -161,10 +161,10 @@ async function decisionsFixture(url, options) {
       (listings.length === labels.length && !prompt.includes("Preserve the face"));
     const expectedPerson = usesStudioModel ? await readSampleImage("studio-model") : face;
     assert.deepEqual(Buffer.from(await references[0].arrayBuffer()), Buffer.from(expectedPerson));
-    for (const { index, selectedItem } of listings) {
-      const product = database.prepare("SELECT item_id FROM clothes_image_database WHERE name=?").get(selectedItem);
+    for (const { index, selectedItem, category } of listings) {
+      const product = database.prepare("SELECT ocr_image FROM clothes_catalog WHERE name=? AND search_term=?").get(selectedItem, category);
       assert.ok(product);
-      assert.deepEqual(Buffer.from(await references[index].arrayBuffer()), listingJpeg(product.item_id));
+      assert.deepEqual(Buffer.from(await references[index].arrayBuffer()), listingJpeg(product.ocr_image));
     }
     if (prompt.includes("Private scarf")) assert.equal(listings.length, 2);
     return Response.json({ data: [{ b64_json: listings.length ? enhancedTryOn : tryOnJpeg }] });
@@ -181,15 +181,21 @@ async function decisionsFixture(url, options) {
       return Response.json({ status: "completed", output: [{ type: "message", role: "assistant", status: "completed",
         content: [{ type: "output_text", text: JSON.stringify({ priority: "polished", pieces }) }] }] });
     }
+    if (text?.format?.name === "visible_clothing") {
+      assert.equal(input[0].content[0].image_url, "data:image/jpeg;base64," + Buffer.from(face).toString("base64"));
+      const coverage = { top: false, bottom: false, dress: false, outerwear: false, shoes: false };
+      return Response.json({ status: "completed", output: [{ type: "message", role: "assistant", status: "completed",
+        content: [{ type: "output_text", text: JSON.stringify(coverage) }] }] });
+    }
     const pieces = input[0].content.filter(part => part.type === "input_text" && part.text.startsWith("{"))
       .map(part => JSON.parse(part.text));
     for (const [i, part] of input[0].content.entries()) {
       if (part.type !== "input_text" || !part.text.startsWith("{")) continue;
       const piece = JSON.parse(part.text);
       if (piece.source !== "catalog") continue;
-      const product = database.prepare("SELECT item_id FROM clothes_image_database WHERE name=?").get(piece.name);
+      const product = database.prepare("SELECT ocr_image FROM clothes_catalog WHERE name=? AND search_term=?").get(piece.name, piece.category);
       assert.ok(product);
-      assert.equal(input[0].content[i + 1].image_url, "data:image/jpeg;base64," + listingJpeg(product.item_id).toString("base64"));
+      assert.equal(input[0].content[i + 1].image_url, "data:image/jpeg;base64," + listingJpeg(product.ocr_image).toString("base64"));
     }
     const visible_items = pieces.map(piece => piece.reference);
     if (pieces.some(piece => piece.name === "Column dress")) visible_items.push("unlisted");
@@ -212,8 +218,8 @@ async function decisionsFixture(url, options) {
   if (questions.length === 1 && questions[0].name === "catalog_search") {
     const question = questions[0];
     const missing = input[1].content[0].data.missingGarment;
-    const term = missing === "top" ? "women sweater" : missing === "pants" ? "women pants" : "women necklace";
-    const value = question.choices.find(choice => choice.description === term).value;
+    const term = ({ top: "women sweater", pants: "women pants", bottom: "women pants", shoes: "women shoes", outerwear: "men jacket" })[missing] ?? "women necklace";
+    const value = question.choices.find(choice => choice.description.endsWith(" / " + term)).value;
     return Response.json({ answers: [{ name: question.name, type: "choice", choice: value }] });
   }
   if (questions.length === 1 && questions[0].name === "shopee_product") {
