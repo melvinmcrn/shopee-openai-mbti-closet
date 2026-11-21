@@ -110,8 +110,10 @@ function readMetadata(output) {
   return parsed;
 }
 
+const filteredCodes = new Set(["content_filter", "content_policy_violation", "moderation_blocked"]);
+
 function requireCompleted(response) {
-  if (response?.incomplete_details?.reason === "content_filter" || response?.error?.code === "content_policy_violation") {
+  if (response?.incomplete_details?.reason === "content_filter" || filteredCodes.has(response?.error?.code)) {
     throw invalidExtraction("provider_filtered");
   }
   if (response?.status !== "completed" || !Array.isArray(response.output)) {
@@ -238,7 +240,7 @@ function base64(bytes) {
   return chunks.join("");
 }
 
-async function readBoundedJson(response) {
+async function readBoundedJson(response, limit = maxResponseBytes) {
   const reader = response.body?.getReader();
   if (!reader) throw invalidExtraction("body_missing");
   const text = [];
@@ -249,7 +251,7 @@ async function readBoundedJson(response) {
       const { done, value } = await reader.read();
       if (done) break;
       total += value.byteLength;
-      if (total > maxResponseBytes) throw invalidExtraction("body_size");
+      if (total > limit) throw invalidExtraction("body_size");
       text.push(decoder.decode(value, { stream: true }));
     }
     text.push(decoder.decode());
@@ -360,6 +362,13 @@ async function requestExtraction(photo, apiKey, options) {
   } catch {
     log("provider_transport");
     throw new LunaExtractionError("Extraction could not reach Luna High Fast. Try again or review the photo manually.", "extraction_failed", 502);
+  }
+  if (response.status === 400 || response.status === 403) {
+    const body = await readBoundedJson(response, 16_384).catch(() => null);
+    if (filteredCodes.has(body?.error?.code)) {
+      log("provider_filtered");
+      throw invalidExtraction("provider_filtered");
+    }
   }
   if ([401, 403, 404, 429].includes(response.status)) {
     log("provider_unavailable");
