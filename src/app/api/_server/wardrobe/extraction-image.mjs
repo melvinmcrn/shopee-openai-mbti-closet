@@ -7,6 +7,7 @@ const maxDimension = 1024;
 export const maxCutoutBytes = 8 * 1024 * 1024;
 const maxCutoutDimension = 1536;
 const maxCutoutPixels = 1024 * 1536;
+const maxCutoutChunks = 4096;
 
 export class ExtractionImageError extends Error {
   constructor(message, status = 415) {
@@ -53,29 +54,49 @@ async function decodePng(bytes, validateCutout = false) {
   const width = header.getUint32(16);
   const height = header.getUint32(20);
   const depth = bytes[24];
-  const channels = { 0: 1, 2: 3, 4: 2, 6: 4 }[bytes[25]];
+  const color = bytes[25];
+  const indexed = validateCutout && color === 3;
+  const channels = indexed ? 1 : { 0: 1, 2: 3, 4: 2, 6: 4 }[color];
   if (validateCutout && (width > maxCutoutDimension || height > maxCutoutDimension ||
-      width * height > maxCutoutPixels || (channels !== 2 && channels !== 4))) {
-    throw new ExtractionImageError("Invalid cutout dimensions or missing alpha.");
+      width * height > maxCutoutPixels)) {
+    throw new ExtractionImageError("Invalid cutout dimensions.");
   }
   if (width * height > maxPngPixels || width * height * depth * (channels ?? 1) > 256_000_000) {
     throw new ExtractionImageError("Choose a smaller PNG for automatic extraction.", 413);
   }
-  if (!width || !height || !channels || (depth !== 8 && depth !== 16) || bytes[28] !== 0) {
+  const validDepth = indexed ? [1, 2, 4, 8].includes(depth) : depth === 8 || depth === 16;
+  if (!width || !height || !channels || !validDepth || bytes[28] !== 0) {
     throw new ExtractionImageError("Choose a JPEG or a non-interlaced PNG for automatic extraction.");
   }
 
   const retained = [bytes.subarray(0, 8)];
   const idat = [];
   let ended = false;
+  let chunks = 0;
+  let paletteLength = 0;
+  let transparency = false;
   for (let offset = 8; offset + 12 <= bytes.length;) {
+    if (validateCutout && ++chunks > maxCutoutChunks) break;
     const length = header.getUint32(offset);
     const end = offset + length + 12;
     if (end > bytes.length) break;
     const type = String.fromCharCode(...bytes.subarray(offset + 4, offset + 8));
     if (type === "IHDR" && (offset !== 8 || length !== 13)) break;
     if (offset === 8 && type !== "IHDR") break;
-    if (validateCutout && ["acTL", "fcTL", "fdAT"].includes(type)) break;
+    if (validateCutout) {
+      if (["acTL", "fcTL", "fdAT"].includes(type)) break;
+      if (type === "PLTE" && indexed) {
+        if (idat.length || paletteLength || !length || length % 3 || length / 3 > 2 ** depth) break;
+        paletteLength = length / 3;
+        retained.push(bytes.subarray(offset, end));
+      }
+      if (type === "tRNS") {
+        if (transparency || idat.length || (indexed
+          ? !length || length > paletteLength
+          : (channels !== 1 && channels !== 3) || length !== channels * 2)) break;
+        transparency = true;
+      }
+    }
     if (["IHDR", "IDAT", "tRNS", "IEND"].includes(type)) retained.push(bytes.subarray(offset, end));
     if (type === "IDAT") idat.push(bytes.subarray(offset + 8, end - 4));
     if (type === "IEND") {
@@ -84,11 +105,13 @@ async function decodePng(bytes, validateCutout = false) {
     }
     offset = end;
   }
-  if (!ended || !idat.length) throw new ExtractionImageError("The PNG photo could not be decoded.");
+  if (!ended || !idat.length || (indexed && !paletteLength)) {
+    throw new ExtractionImageError("The PNG photo could not be decoded.");
+  }
 
   // Check compressed data before letting the synchronous decoder allocate its full output.
   // Discard metadata chunks so compressed profiles and text are never decoded.
-  const expected = (width * channels * depth / 8 + 1) * height;
+  const expected = (Math.ceil(width * channels * depth / 8) + 1) * height;
   const reader = new Blob(idat).stream().pipeThrough(new DecompressionStream("deflate")).getReader();
   let inflated = 0;
   for (;;) {
@@ -168,16 +191,37 @@ export async function validateCutoutPng(bytes) {
     throw new ExtractionImageError("Invalid cutout PNG.");
   }
   const png = await decodePng(bytes, true);
-  const opaque = png.depth === 16 ? 65535 : 255;
+  const { width, height, data, channels, depth, palette, transparency } = png;
+  const half = depth === 16 ? 32768 : 128;
   let transparent = 0;
   let solid = 0;
-  for (let i = png.channels - 1; i < png.data.length; i += png.channels) {
-    transparent += Number(png.data[i] === 0);
-    solid += Number(png.data[i] === opaque);
+  if (palette) {
+    const stride = Math.ceil(width * depth / 8);
+    const indexMask = (1 << depth) - 1;
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const bit = x * depth;
+        const index = (data[y * stride + (bit >> 3)] >> (8 - depth - (bit % 8))) & indexMask;
+        if (!palette[index]) throw new ExtractionImageError("Invalid cutout palette index.");
+        const alpha = palette[index][3] ?? 255;
+        transparent += Number(alpha === 0);
+        solid += Number(alpha >= 128);
+      }
+    }
+  } else if (channels === 2 || channels === 4) {
+    for (let i = channels - 1; i < data.length; i += channels) {
+      transparent += Number(data[i] === 0);
+      solid += Number(data[i] >= half);
+    }
+  } else if (transparency) {
+    for (let i = 0; i < data.length; i += channels) {
+      if (data[i] === transparency[0] && (channels === 1 ||
+          (data[i + 1] === transparency[1] && data[i + 2] === transparency[2]))) transparent++;
+      else solid++;
+    }
   }
+
   // A real cutout needs both visible fabric and a genuinely transparent background.
   const minPixels = Math.ceil(png.width * png.height * 0.005);
-  if (transparent < minPixels || solid < minPixels) {
-    throw new ExtractionImageError("The cutout has no usable foreground or transparent background.");
-  }
+  return transparent >= minPixels && solid >= minPixels;
 }
