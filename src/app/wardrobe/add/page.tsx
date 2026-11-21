@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { normalizeUpload } from "./normalize-upload.mjs";
+import { requestWardrobeUpload } from "./request-wardrobe-upload.mjs";
 
 const imageTypes = ["image/jpeg", "image/png", "image/webp"];
 const maxBatchSize = 20;
@@ -21,8 +22,7 @@ const sampleError = "The sample wardrobe could not be loaded. Try again.";
 
 const photoStatuses = {
   queued: "Ready to upload",
-  uploading: "Uploading photo…",
-  extracting: "Reading garment details…",
+  uploading: "Uploading and reading garment details…",
   "upload-failed": "Upload failed",
   "extraction-failed": "Ready for manual review",
   ready: "Ready to review",
@@ -102,11 +102,10 @@ export default function AddWardrobePhotoPage() {
   }
 
   async function processPhoto(photo: Photo) {
-    const { draftKey } = photo;
-    let itemId = photo.id;
-    if (itemId === null) {
-      updatePhoto(draftKey, { status: "uploading", error: undefined });
-      let image: File;
+    const { draftKey, id } = photo;
+    updatePhoto(draftKey, { status: "uploading", error: undefined });
+    let image: File | undefined;
+    if (id === null) {
       try {
         image = await normalizeUpload(photo.file);
       } catch {
@@ -116,45 +115,41 @@ export default function AddWardrobePhotoPage() {
         });
         return;
       }
-
-      try {
-        const form = new FormData();
-        form.set("image", image);
-        form.set("draftKey", draftKey);
-        const response = await fetch("/api/wardrobe/upload", { method: "POST", body: form });
-        if (!response.ok) {
-          updatePhoto(draftKey, {
-            status: "upload-failed",
-            error: response.status === 401 ? "Sign in to upload wardrobe photos." : uploadError,
-          });
-          return;
-        }
-        const { id } = (await response.json()) as { id?: unknown };
-        if (typeof id !== "number" || !Number.isSafeInteger(id) || id < 1) {
-          throw new Error("Invalid upload response");
-        }
-        itemId = id;
-      } catch {
-        updatePhoto(draftKey, { status: "upload-failed", error: uploadError });
-        return;
-      }
     }
 
-    updatePhoto(draftKey, { id: itemId, status: "extracting", error: undefined });
     try {
-      const response = await fetch(`/api/wardrobe/items/${itemId}/extract`, { method: "POST" });
+      const response = await requestWardrobeUpload(draftKey, image);
       if (!response.ok) {
-        const result = (await response.json().catch(() => null)) as { code?: string } | null;
-        const message = result?.code ? extractionMessages.get(result.code) : undefined;
         const error = response.status === 401
-          ? "Your session expired. Sign in again to read or review the draft."
-          : message ?? extractionError;
-        updatePhoto(draftKey, { status: "extraction-failed", error });
+          ? "Sign in again to upload or review wardrobe photos."
+          : response.status === 409
+            ? "This draft changed. Open the wardrobe review page to see its latest details."
+            : id === null ? uploadError : extractionError;
+        updatePhoto(draftKey, { status: id === null ? "upload-failed" : "extraction-failed", error });
         return;
       }
-      updatePhoto(draftKey, { status: "ready" });
+      const result = (await response.json()) as {
+        id?: unknown;
+        extraction?: { status?: unknown; code?: string } | null;
+      };
+      if (typeof result.id !== "number" || !Number.isSafeInteger(result.id) || result.id < 1) {
+        throw new Error("Invalid wardrobe draft response");
+      }
+      if (result.extraction?.status === "ready") {
+        updatePhoto(draftKey, { id: result.id, status: "ready" });
+        return;
+      }
+      const code = result.extraction?.code;
+      updatePhoto(draftKey, {
+        id: result.id,
+        status: "extraction-failed",
+        error: (code && extractionMessages.get(code)) || extractionError,
+      });
     } catch {
-      updatePhoto(draftKey, { status: "extraction-failed", error: extractionError });
+      updatePhoto(draftKey, {
+        status: id === null ? "upload-failed" : "extraction-failed",
+        error: id === null ? uploadError : extractionError,
+      });
     }
   }
 
