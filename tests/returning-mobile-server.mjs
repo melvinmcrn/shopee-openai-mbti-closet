@@ -15,6 +15,7 @@ database.exec(await readFile(new URL("0000_stylist.sql", schema), "utf8"));
 database.exec(`
   INSERT INTO users (id, auth_provider, auth_subject) VALUES
     (1, 'google', 'fixture-returning-user'), (2, 'google', 'fixture-other-account');
+  INSERT INTO profiles (user_id, face_photo_file_id) VALUES (1, 'fixture-face');
   INSERT INTO wardrobe_items (id, user_id, name, category, color, image_file_id, confirmed_at, archived_at) VALUES
     (11, 1, 'Silk blouse', 'top', 'Cream', 'blouse', 'confirmed', NULL),
     (12, 1, 'Wool trousers', 'bottom', 'Navy', 'trousers', 'confirmed', NULL),
@@ -65,22 +66,23 @@ const image = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/f6kAAAAASUVORK5CYII=",
   "base64",
 );
-const tryOnJpeg = jpeg.encode({ width: 1, height: 1, data: Buffer.from([255, 255, 255, 255]) }).data.toString("base64");
-const photos = new Map(["blouse", "trousers", "heels", "flats", "dress"].map(id => [
-  id, { body: image, httpMetadata: { contentType: "image/png" } },
-]));
+const tryOn = jpeg.encode({ data: Buffer.from([200, 160, 120, 255]), width: 1, height: 1 }).data.toString("base64");
+const photos = new Map(["blouse", "trousers", "heels", "flats", "dress"].map(id =>
+  [id, { body: image, httpMetadata: { contentType: "image/png" } }]));
+const face = jpeg.encode({ data: Buffer.from([120, 140, 160, 255]), width: 1, height: 1 }).data;
+photos.set("fixture-face", { body: face, httpMetadata: { contentType: "image/jpeg" } });
 const env = {
   readSampleImage,
   DB: db,
   BUCKET: {
     get: async id => {
-      const photo = photos.get(id);
-      return photo && {
-        ...photo, size: photo.body.byteLength,
-        arrayBuffer: () => new Blob([photo.body]).arrayBuffer(),
+      const file = photos.get(id);
+      return file && {
+        ...file, size: file.body.byteLength,
+        arrayBuffer: () => new Blob([file.body]).arrayBuffer(),
       };
     },
-    put: async (id, body, { httpMetadata }) => { photos.set(id, { body: Buffer.from(body), httpMetadata }); },
+    put: async (id, body, options) => { photos.set(id, { body: Buffer.from(body), ...options }); },
     delete: async id => { photos.delete(id); },
   },
   AUTH_SECRET: crypto.randomUUID(),
@@ -105,12 +107,16 @@ for (const name of ["first-session", "returning-session", "rating-session", "oth
 let enhancementRequests = 0;
 async function decisionsFixture(url, options) {
   if (url === "https://api.openai.com/v1/images/edits") {
-    return Response.json({ data: [{ b64_json: tryOnJpeg }] });
+    assert.equal(options.body.get("output_format"), "jpeg");
+    const [person, ...garments] = options.body.getAll("image[]");
+    assert.deepEqual(Buffer.from(await person.arrayBuffer()), face);
+    assert.ok(garments.length > 0);
+    return Response.json({ data: [{ b64_json: tryOn }] });
   }
   if (url === "https://api.openai.com/v1/responses") {
     return Response.json({
       status: "completed",
-      output: [{ type: "image_generation_call", status: "completed", result: tryOnJpeg }],
+      output: [{ type: "image_generation_call", status: "completed", result: tryOn }],
     });
   }
   assert.equal(url, "https://api.openai.com/v1/decisions");

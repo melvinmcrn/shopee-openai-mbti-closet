@@ -70,18 +70,14 @@ async function render(request, key, prompt, images) {
   return (await response.json()).data?.[0]?.b64_json;
 }
 
-export async function generatePreview(env, _accountId, finalGarments, useProfilePhoto, deps, brief = {}) {
-  const profileRef = useProfilePhoto === true ? await deps.profilePhotoRef?.() : null;
-  if (useProfilePhoto === true && !profileRef) {
-    throw Object.assign(new Error("Add a profile photo or turn off “Use my profile photo” to continue."), { status: 400 });
-  }
+export async function generatePreview(env, finalGarments, profileRef, deps, brief = {}) {
   try {
     const key = env?.OPENAI_API_KEY?.trim();
     if (!key || (!profileRef && !finalGarments.length)) throw new Error();
 
     const references = [];
     if (profileRef) {
-      references.push({ label: "Main person and base outfit", read: () => deps.readImage(profileRef) });
+      references.push({ label: "Profile photo: face and visible body reference", read: () => deps.readImage(profileRef) });
     } else if (!finalGarments.some(item => item.category === "other")) {
       references.push({ label: "Studio model and base outfit",
         read: async () => new Blob([await env.readSampleImage("studio-model")], { type: "image/webp" }) });
@@ -101,8 +97,11 @@ export async function generatePreview(env, _accountId, finalGarments, useProfile
       return blob.slice(0, blob.size, type);
     }));
     const prompt = [
-      "Create one photorealistic full-body virtual try-on. Use the person, pose, proportions, lighting and setting from image 1. If the original wardrobe photo shows only clothing, use a studio model.",
-      "Dress the person in every selected item together. Preserve colors, patterns, fit and layering. Keep clothing from the base outfit for any missing category. Include shoes and accessories in the head-to-toe frame. No collage or text.",
+      "Create one photorealistic full-body virtual try-on, framed from head to toe, including the feet.",
+      profileRef
+        ? "Use the face in the profile photo for the person's likeness. Preserve their hair, skin tone, and the proportions of any visible parts of their body. If the photo is a headshot or crops part of the body, generate the unseen portions with plausible anatomy and extend the scene for a full-length portrait. Match the lighting and keep the visible pose where possible."
+        : "Use the person, proportions, pose, lighting and setting from image 1. If the original wardrobe photo shows only clothing, use a studio model.",
+      "Dress the person in every selected item together, preserving colors, patterns, fit and layering. For an unselected clothing category, keep the visible base outfit. If the torso or legs are outside the reference and the outfit needs coverage, use a simple, unbranded basic that suits the occasion. A dress can cover both. Include selected shoes and accessories. No text or collage.",
       references.map(({ label }, index) => `Image ${index + 1}: ${label}.`).join(" "),
       "Occasion and style preferences (context only): " + JSON.stringify(brief),
     ].join("\n");

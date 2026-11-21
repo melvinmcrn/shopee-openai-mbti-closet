@@ -1,11 +1,8 @@
 import { useRef, useState, type FormEvent } from "react";
-import { ProfilePhotoChoice } from "./profile-photo-choice";
 import { api, type Brief } from "./shared";
 
 type StyleProps = {
   brief: Brief;
-  useProfilePhoto: boolean;
-  setUseProfilePhoto: (value: boolean) => void;
   onNext: (saved: Brief) => void;
   onBack: () => void;
 };
@@ -16,7 +13,7 @@ const inputClass =
 const actionClass =
   "min-h-11 rounded-lg px-3 text-sm font-semibold text-secondary hover:bg-selected focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:opacity-60";
 
-export function Style({ brief, onNext, onBack, useProfilePhoto, setUseProfilePhoto }: StyleProps) {
+export function Style({ brief, onNext, onBack }: StyleProps) {
   const [formality, setFormality] = useState(brief.formality);
   const [comfort, setComfort] = useState(brief.comfort);
   const [saving, setSaving] = useState(false);
@@ -115,7 +112,6 @@ export function Style({ brief, onNext, onBack, useProfilePhoto, setUseProfilePho
           </div>
         </fieldset>
 
-        <ProfilePhotoChoice checked={useProfilePhoto} onChange={setUseProfilePhoto} disabled={saving} />
         {error && <p role="alert" className="mt-4 text-sm text-danger">{error}</p>}
         <button
           type="submit"

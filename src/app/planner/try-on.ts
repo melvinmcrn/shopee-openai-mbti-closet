@@ -1,18 +1,20 @@
 import { api, type Look, type SavedLook } from "./shared";
 
-function keyFor(id: string, slots: Record<string, string>, useProfilePhoto: boolean) {
-  return JSON.stringify([id, Object.keys(slots).sort().map(slot => [slot, slots[slot]]), useProfilePhoto]);
+function selectionKey(look: Look) {
+  return JSON.stringify([look.id, Object.entries(look.slots).sort(([a], [b]) => a.localeCompare(b))]);
 }
 
 export function createTryOnLoader() {
-  const requests = new Map<string, Promise<{ imageRef: string }>>();
+  type TryOn = Promise<{ imageRef: string }>;
+  const requests = new Map<string, TryOn>();
+  const savedSelections = new Map<string, string>();
 
-  function load(look: Look, useProfilePhoto: boolean) {
-    const key = keyFor(look.id, look.slots, useProfilePhoto);
+  function load(look: Look) {
+    const key = selectionKey(look);
     const existing = requests.get(key);
     if (existing) return existing;
     const request = api<{ imageRef: string }>("preview", {
-      optionId: look.id, slots: look.slots, useProfilePhoto,
+      optionId: look.id, slots: look.slots,
     }).catch(error => {
       requests.delete(key);
       throw error;
@@ -21,12 +23,16 @@ export function createTryOnLoader() {
     return request;
   }
 
-  function find(look: SavedLook) {
-    const slots = Object.fromEntries(Object.entries(look.slots).map(([slot, garment]) => [slot, garment.id]));
-    return requests.get(keyFor(look.optionId, slots, look.useProfilePhoto));
+  function rememberSaved(look: Look, savedId: string) {
+    savedSelections.set(savedId, selectionKey(look));
   }
 
-  return Object.assign(load, { find });
+  function find(look: SavedLook) {
+    const key = savedSelections.get(look.id);
+    return key === undefined ? undefined : requests.get(key);
+  }
+
+  return Object.assign(load, { find, rememberSaved });
 }
 
 export type LoadTryOn = ReturnType<typeof createTryOnLoader>;

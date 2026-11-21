@@ -8,8 +8,6 @@ import { imageUrl, type Garment, type Look } from "./shared";
 type PreviewProps = {
   look: Look;
   loadTryOn: LoadTryOn;
-  useProfilePhoto: boolean;
-  setUseProfilePhoto: (value: boolean) => void;
   garments: Garment[];
   onBack: () => void;
 };
@@ -18,7 +16,7 @@ const slotOrder = ["other", "top", "bottom", "dress", "shoes", "outerwear", "acc
 const buttonClass =
   "min-h-11 rounded-xl px-4 py-2 text-sm font-semibold transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:cursor-not-allowed disabled:opacity-60";
 
-export function Preview({ look, loadTryOn, useProfilePhoto, setUseProfilePhoto, garments, onBack }: PreviewProps) {
+export function Preview({ look, loadTryOn, garments, onBack }: PreviewProps) {
   const slots = look.slots;
   const [attempt, setAttempt] = useState(0);
   const [generating, setGenerating] = useState(true);
@@ -29,7 +27,7 @@ export function Preview({ look, loadTryOn, useProfilePhoto, setUseProfilePhoto, 
 
   useEffect(() => {
     let active = true;
-    loadTryOn(look, useProfilePhoto).then(({ imageRef }) => {
+    loadTryOn(look).then(({ imageRef }) => {
       if (active) setPreview(imageRef);
     }).catch(cause => {
       if (active) setError(cause instanceof Error ? cause.message : "Couldn’t generate the try-on.");
@@ -37,7 +35,7 @@ export function Preview({ look, loadTryOn, useProfilePhoto, setUseProfilePhoto, 
       if (active) setGenerating(false);
     });
     return () => { active = false; };
-  }, [look, useProfilePhoto, attempt, loadTryOn]);
+  }, [look, attempt, loadTryOn]);
 
   return (
     <section className="space-y-6 text-text">
@@ -81,20 +79,6 @@ export function Preview({ look, loadTryOn, useProfilePhoto, setUseProfilePhoto, 
 
         <section className="space-y-4 rounded-2xl border border-divider bg-selected p-4 sm:p-6">
           <h2 className="text-lg font-semibold">Outfit try-on</h2>
-          <label className="flex min-h-11 items-start gap-3 rounded-xl border border-divider bg-surface p-3 text-sm">
-            <input
-              type="checkbox"
-              checked={useProfilePhoto}
-              onChange={(event) => setUseProfilePhoto(event.target.checked)}
-              className="mt-0.5 size-4 shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary"
-            />
-            <span>
-              <span className="block font-semibold">Use my profile photo for this preview</span>
-              <span className="mt-1 block text-supporting">
-                With your permission, your profile photo will be sent to OpenAI to generate this try-on.
-              </span>
-            </span>
-          </label>
           {preview ? (
             <div className="relative aspect-3/4 max-h-[36rem] overflow-hidden rounded-xl bg-selected">
               <Image

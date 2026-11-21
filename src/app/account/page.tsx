@@ -207,6 +207,7 @@ export default function AccountPage() {
           <>
             <section aria-labelledby="face-photo-heading" className="rounded-2xl border border-divider bg-surface p-5 sm:p-6">
               <h2 id="face-photo-heading" className="text-lg font-semibold">Private profile picture</h2>
+              <p id="face-photo-use" className="mt-1 text-sm text-supporting">When you create a try-on, OpenAI uses this photo to show the outfit on you.</p>
               <div className="mt-4 flex flex-wrap items-center gap-4">
                 {photoUrl ? (
                   <Image
@@ -224,6 +225,7 @@ export default function AccountPage() {
                   <label className="text-sm font-medium" htmlFor="face-photo">{profile.facePhotoUrl ? "Change face photo" : "Choose a face photo"}</label>
                   <input
                     id="face-photo"
+                    aria-describedby="face-photo-use"
                     className="max-w-full text-sm file:mr-2 file:rounded-full file:border file:border-divider file:px-3 file:py-1.5 file:font-medium disabled:opacity-50"
                     type="file"
                     accept="image/jpeg,image/png,image/webp"

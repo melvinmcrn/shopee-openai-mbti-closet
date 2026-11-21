@@ -11,6 +11,7 @@ export type CatalogProduct = {
   imageUrl: string;
   price: number;
   currency: string;
+  wardrobeGap?: "top" | "bottom";
 };
 
 export function EnhancementProduct({ product, sponsored = false }: { product: CatalogProduct; sponsored?: boolean }) {
@@ -24,7 +25,7 @@ export function EnhancementProduct({ product, sponsored = false }: { product: Ca
         />
       )}
       <div className="min-w-0 flex-1 basis-32 space-y-1">
-        <p className="text-xs font-semibold text-secondary">Optional enhancement{sponsored && " · Sponsored"}</p>
+        <p className="text-xs font-semibold text-secondary">{product.wardrobeGap === "top" ? "Suggested top" : product.wardrobeGap === "bottom" ? "Suggested pants" : "Optional enhancement"}{sponsored && " · Sponsored"}</p>
         <p className="wrap-break-word text-sm font-semibold">{product.title}</p>
         <p className="text-sm">{new Intl.NumberFormat("en", { style: "currency", currency: product.currency }).format(product.price)}</p>
         <a href={product.url} target="_blank" rel={sponsored ? "sponsored noopener noreferrer" : "noopener noreferrer"}
@@ -37,7 +38,7 @@ export function EnhancementProduct({ product, sponsored = false }: { product: Ca
 }
 
 function EnhancementForSelection({ optionId, selection }: { optionId: string; selection: string }) {
-  const [product, setProduct] = useState<CatalogProduct | null>(null);
+  const [products, setProducts] = useState<CatalogProduct[]>([]);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
 
@@ -45,8 +46,8 @@ function EnhancementForSelection({ optionId, selection }: { optionId: string; se
     let active = true;
     // Let rapid swaps settle before evaluating the draft.
     const timer = setTimeout(() => {
-      api<CatalogProduct | null>("enhancement", { optionId, slots: JSON.parse(selection) })
-        .then(result => { if (active) setProduct(result); })
+      api<CatalogProduct[]>("enhancements", { optionId, slots: JSON.parse(selection) })
+        .then(result => { if (active) setProducts(result); })
         .catch(() => { if (active) setFailed(true); });
     }, 150);
     return () => { active = false; clearTimeout(timer); };
@@ -58,11 +59,16 @@ function EnhancementForSelection({ optionId, selection }: { optionId: string; se
       setAttempt(value => value + 1);
     }}>Retry enhancement check</button>
   );
-  return product && <div className="my-3"><EnhancementProduct product={product} /></div>;
+  if (!products.length) return null;
+  return (
+    <section aria-label="Elevate your look" className="my-3 space-y-2">
+      <h3 className="text-sm font-semibold">Elevate your look</h3>
+      {products.map(product => <EnhancementProduct key={product.wardrobeGap ?? product.id} product={product} />)}
+    </section>
+  );
 }
 
 export function LookEnhancement({ optionId, slots }: { optionId: string; slots: Record<string, string> }) {
-  if (!Object.keys(slots).length) return null;
   const selection = JSON.stringify(slots, Object.keys(slots).sort());
   return <EnhancementForSelection key={optionId + selection} optionId={optionId} selection={selection} />;
 }

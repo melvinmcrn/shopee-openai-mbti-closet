@@ -20,6 +20,7 @@ type Suggestion = {
   title: string;
   url: string;
   sponsored: boolean;
+  wardrobeGap?: "top" | "bottom";
   imageUrl?: string;
   price?: number;
   currency?: string;
@@ -290,7 +291,7 @@ function ShoppingSuggestions({ lookId }: { lookId: string }) {
   if (!result || suggestions?.length === 0) return null;
   return (
     <section aria-labelledby="saved-shopping-title" className="space-y-4 rounded-2xl border border-divider bg-surface p-4 sm:p-6">
-      <h2 id="saved-shopping-title" className="text-lg font-semibold">Shop this look</h2>
+      <h2 id="saved-shopping-title" className="text-lg font-semibold">Elevate your look</h2>
       {result && "error" in result && (
         <SectionError error={result.error} retry={retry} label="Retry shopping suggestions" />
       )}

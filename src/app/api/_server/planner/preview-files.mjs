@@ -1,8 +1,13 @@
 import { readPrivateFile, writePrivateFile, deletePrivateFile } from "../private-files.mjs";
 
-export function previewSelection(slots, useProfilePhoto, version = "photo-v2") {
+export function previewSelection(slots, useProfilePhoto, version = useProfilePhoto ? "photo-v3" : "photo-v2") {
   const entries = Object.entries(slots).filter(([, id]) => id != null).sort(([a], [b]) => a.localeCompare(b));
   return JSON.stringify(version ? [version, useProfilePhoto, entries] : [useProfilePhoto, entries]);
+}
+
+export async function profilePhotoRef(db, accountId) {
+  const row = await db.prepare("SELECT face_photo_file_id AS ref FROM profiles WHERE user_id=?").bind(accountId).first();
+  return row?.ref ?? null;
 }
 
 export function previewFiles(env, accountId, optionId, slots, useProfilePhoto) {
@@ -13,10 +18,6 @@ export function previewFiles(env, accountId, optionId, slots, useProfilePhoto) {
       const row = await env.DB.prepare("SELECT file_id FROM planner_previews WHERE user_id=? AND option_id=? AND selection=?")
         .bind(accountId, optionId, selection).first();
       return row?.file_id;
-    },
-    async profilePhotoRef() {
-      const row = await env.DB.prepare("SELECT face_photo_file_id AS ref FROM profiles WHERE user_id=?").bind(accountId).first();
-      return row?.ref;
     },
     async readImage(ref) {
       const file = await readPrivateFile(env, account, ref);

@@ -3,15 +3,12 @@
 import Image from "next/image";
 import { LookEnhancement } from "./enhancement";
 import type { LoadTryOn } from "./try-on";
-import { ProfilePhotoChoice } from "./profile-photo-choice";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api, imageUrl, type Garment, type Look } from "./shared";
 
 type CompareProps = {
   loadTryOn: LoadTryOn;
-  useProfilePhoto: boolean;
-  setUseProfilePhoto: (value: boolean) => void;
   briefId: string;
   garments: Garment[];
   onChoose: (look: Look) => void;
@@ -27,20 +24,19 @@ type Generation = {
 const secondaryButton =
   "inline-flex min-h-11 items-center justify-center rounded-full border border-divider px-5 py-2 text-sm font-semibold text-secondary transition hover:bg-selected focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:cursor-wait disabled:opacity-60";
 
-function StyledImage({ look, useProfilePhoto, loadTryOn }: { look: Look; useProfilePhoto: boolean; loadTryOn: LoadTryOn }) {
+function StyledImage({ look, loadTryOn }: { look: Look; loadTryOn: LoadTryOn }) {
   const [attempt, setAttempt] = useState(0);
   const [generated, setGenerated] = useState("");
   const [error, setError] = useState("");
   useEffect(() => {
     let active = true;
-    if (look.profileRef && !useProfilePhoto) return;
-    loadTryOn(look, useProfilePhoto).then(({ imageRef }) => {
+    loadTryOn(look).then(({ imageRef }) => {
       if (active) setGenerated(imageRef);
     }).catch(cause => {
       if (active) setError(cause instanceof Error ? cause.message : "Couldn’t generate the try-on.");
     });
     return () => { active = false; };
-  }, [look, attempt, useProfilePhoto, loadTryOn]);
+  }, [look, attempt, loadTryOn]);
   return (
     <div>
       <div className="relative grid aspect-[2/3] place-items-center overflow-hidden rounded-xl bg-selected">
@@ -49,7 +45,7 @@ function StyledImage({ look, useProfilePhoto, loadTryOn }: { look: Look; useProf
             onError={() => { setGenerated(""); setError("Couldn’t load the try-on."); }} />
         ) : (
           <p role="status" className="px-5 text-center text-sm text-supporting">
-            {error || ( look.profileRef && !useProfilePhoto ? "Select “Use my profile photo” above to see this try-on." : "Creating your full-body try-on…")}
+            {error || "Creating your full-body try-on…"}
           </p>
         )}
       </div>
@@ -65,20 +61,18 @@ function LookCard({
   look,
   index,
   loadTryOn,
-  useProfilePhoto,
   garments,
   onChoose,
 }: {
   look: Look;
   index: number;
   loadTryOn: LoadTryOn;
-  useProfilePhoto: boolean;
   garments: Map<string, Garment>;
   onChoose: (look: Look) => void;
 }) {
   return (
     <article className="flex min-w-0 flex-col rounded-2xl border border-divider bg-surface p-2 sm:p-3">
-      <StyledImage loadTryOn={loadTryOn} key={String(useProfilePhoto)} look={look} useProfilePhoto={useProfilePhoto} />
+      <StyledImage loadTryOn={loadTryOn} look={look} />
       <div className="flex flex-1 flex-col px-1 pb-1 pt-3 sm:px-2">
         <h2 className="font-heading text-lg text-text sm:text-2xl">Look {index + 1}</h2>
         {Object.keys(look.slots).length > 0 && (
@@ -116,7 +110,7 @@ async function generate(briefId: string, priorLooks: Look[]) {
   }
 }
 
-function CompareBrief({ briefId, garments, onChoose, onEdit, loadTryOn, useProfilePhoto, setUseProfilePhoto }: CompareProps) {
+function CompareBrief({ briefId, garments, onChoose, onEdit, loadTryOn }: CompareProps) {
   const [result, setResult] = useState<Generation>();
   const [looks, setLooks] = useState<Look[]>([]);
   const [busy, setBusy] = useState(true);
@@ -180,11 +174,6 @@ function CompareBrief({ briefId, garments, onChoose, onEdit, loadTryOn, useProfi
         </button>
       </header>
 
-      {(busy || looks.length > 0) && (
-        <div className="mb-5">
-          <ProfilePhotoChoice checked={useProfilePhoto} onChange={setUseProfilePhoto} />
-        </div>
-      )}
       {looks.length > 0 && (
         <div className="grid grid-cols-2 gap-2 sm:gap-4">
           {looks.map((look, index) => (
@@ -193,7 +182,6 @@ function CompareBrief({ briefId, garments, onChoose, onEdit, loadTryOn, useProfi
               look={look}
               index={index}
               loadTryOn={loadTryOn}
-              useProfilePhoto={useProfilePhoto}
               garments={garmentById}
               onChoose={onChoose}
             />

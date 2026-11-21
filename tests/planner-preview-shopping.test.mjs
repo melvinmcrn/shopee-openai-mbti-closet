@@ -100,7 +100,7 @@ async function startPlanner(t, preview, optionSlots = original, shoppingFetch) {
   return { dispatch, makeSession, optionId: option.id, database };
 }
 
-test("preview sends the final shoe's bytes without reading a profile photo by default", async (t) => {
+test("explicit studio mode sends the final shoe and never reads the profile photo", async (t) => {
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAMAAAAECAIAAADETxJQAAAAGElEQVR4nGPcN20LAwMDAwMDEwMMYGMBAE4CAhAM6GwxAAAAAElFTkSuQmCC", "base64");
   const jpeg = Buffer.from([255, 216, 255, 224]);
   const files = new Map([
@@ -119,7 +119,7 @@ test("preview sends the final shoe's bytes without reading a profile photo by de
   };
   const { dispatch, optionId } = await startPlanner(t, preview);
 
-  const result = await dispatch("preview", { optionId, slots: refined });
+  const result = await dispatch("preview", { optionId, slots: refined, useProfilePhoto: false });
   assert.deepEqual(result, { imageRef: "preview.png" });
 
   const refs = preview.readImage.mock.calls.map(({ arguments: [reference] }) => reference);
@@ -135,6 +135,26 @@ test("preview sends the final shoe's bytes without reading a profile photo by de
   const [stored] = preview.storeImage.mock.calls[0].arguments;
   assert.equal(stored.type, "image/jpeg");
   assert.deepEqual(Buffer.from(await stored.arrayBuffer()), jpeg);
+});
+
+test("a profile photo supplies likeness even when the wardrobe only supplies a jacket", async t => {
+  const jacket = { id: "13", category: "outerwear", name: "Denim jacket", imageRef: "jacket.png" };
+  const preview = {
+    profilePhotoRef: async () => "headshot.png",
+    readImage: t.mock.fn(async ref => new Blob([ref], { type: "image/png" })),
+    fetch: t.mock.fn(async () => Response.json({ data: [{ b64_json: "/9j/4A==" }] })),
+    storeImage: async () => "full-body.jpg",
+  };
+  const { dispatch, optionId, database } = await startPlanner(t, preview);
+  database.prepare("INSERT INTO private_files (file_id, user_id, state) VALUES (?, ?, 'ready')").run(jacket.imageRef, accountId);
+  database.prepare(`INSERT INTO wardrobe_items (id, user_id, name, category, image_file_id, confirmed_at)
+    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`).run(jacket.id, accountId, jacket.name, jacket.category, jacket.imageRef);
+  const result = await dispatch("preview", { optionId, slots: { outerwear: jacket.id }, useProfilePhoto: true });
+  assert.equal(result.imageRef, "full-body.jpg");
+  const [, { body }] = preview.fetch.mock.calls[0].arguments;
+  assert.deepEqual(await Promise.all(body.getAll("image[]").map(image => image.text())), ["headshot.png", "jacket.png"]);
+  assert.match(body.get("prompt"), /headshot.*generate the unseen portions/);
+  assert.match(body.get("prompt"), /keep the visible base outfit/i);
 });
 
 test("saved looks keep the matching try-on mode and pick up a render that finishes after saving", async t => {
@@ -157,7 +177,9 @@ test("saved looks keep the matching try-on mode and pick up a render that finish
   const looks = await dispatch("list", {});
   assert.equal(looks.find(look => look.id === personal.id).previewRef, "personal-photo");
   assert.equal(looks.find(look => look.id === studio.id).previewRef, "studio-photo");
+  database.exec("UPDATE profiles SET face_photo_file_id=NULL WHERE user_id=1");
   assert.deepEqual(await dispatch("savedPreview", { id: personal.id }), { imageRef: "personal-photo" });
+  assert.equal((await dispatch("detail", { id: personal.id })).useProfilePhoto, true);
   await assert.rejects(makeSession(2)("savedPreview", { id: personal.id }));
 
   const older = await dispatch("save", { optionId, slots: { dress: dress.id } });
@@ -175,13 +197,16 @@ test("a dress-only option previews and saves without adding shoes", async (t) =>
     }),
     storeImage: async () => "dress-preview.png",
   };
-  const { dispatch, optionId, makeSession } = await startPlanner(t, preview, slots);
+  const { dispatch, optionId, makeSession, database } = await startPlanner(t, preview, slots);
+  database.exec("UPDATE profiles SET face_photo_file_id=NULL WHERE user_id=1");
+  await assert.rejects(dispatch("preview", { optionId, slots, useProfilePhoto: true }), { status: 400 });
   assert.deepEqual(await dispatch("preview", { optionId, slots }), { imageRef: "dress-preview.png" });
   assert.deepEqual(preview.readImage.mock.calls.map(call => call.arguments[0]), [dress.imageRef]);
   const saved = await dispatch("save", { optionId, slots });
   const reopened = await makeSession()("detail", { id: saved.id });
   assert.deepEqual(Object.keys(reopened.slots), ["dress"]);
   assert.equal(reopened.slots.dress.id, dress.id);
+  assert.equal(reopened.useProfilePhoto, false);
 });
 
 test("an image provider failure still allows the refined outfit to be saved", async (t) => {
@@ -347,4 +372,128 @@ test("planning evaluates enhancements before saving, remembers complete looks an
   const saved = await dispatch("save", { optionId, slots: refined });
   assert.equal((await dispatch("shopping", { lookId: saved.id }))[0].url, enhanced.url);
   assert.equal(shoppingFetch.mock.callCount(), 2);
+});
+
+function chooseFirstListing(_endpoint, request) {
+  const { questions } = JSON.parse(request.body);
+  return Response.json({
+    answers: questions.map(({ name, choices }) => ({
+      name, type: "choice", choice: choices.find(({ value }) => value.startsWith("item_")).value,
+    })),
+  });
+}
+
+test("missing tops and pants produce two real catalog listings that persist and hide individually", async t => {
+  const slots = { shoes: flats.id };
+  const { dispatch, makeSession, optionId, database } = await startPlanner(t, undefined, slots, chooseFirstListing);
+  database.exec("UPDATE wardrobe_items SET archived_at = CURRENT_TIMESTAMP WHERE category = 'dress'");
+
+  const products = await dispatch("enhancements", { optionId, slots });
+  assert.equal(products.length, 2);
+  const listings = products.map(product => {
+    const row = database.prepare("SELECT name, url FROM clothes_image_database WHERE item_id=?").get(product.id);
+    assert.equal(product.title, row.name);
+    assert.equal(product.url, row.url);
+    return database.prepare("SELECT search_term FROM clothes_catalog WHERE item_id=?").all(product.id)
+      .map(({ search_term }) => search_term);
+  });
+  assert.ok(listings.some(terms => terms.some(term => / (shirt|sweater|tank top)$/.test(term))));
+  assert.ok(listings.some(terms => terms.some(term => term.endsWith(" pants"))));
+  assert.deepEqual(await dispatch("enhancement", { optionId, slots }), products[0]);
+
+  const { id: lookId } = await dispatch("save", { optionId, slots });
+  const [saved, concurrent] = await Promise.all([dispatch("shopping", { lookId }), dispatch("shopping", { lookId })]);
+  assert.deepEqual(concurrent, saved);
+  assert.deepEqual(saved.map(suggestion => suggestion.url).sort(), products.map(product => new URL(product.url).href).sort());
+  // Adding an owned piece removes its gap from the saved view without discarding history.
+  database.exec("UPDATE wardrobe_items SET category='top' WHERE id=12");
+  assert.deepEqual(await dispatch("shopping", { lookId }), saved.filter(row => row.wardrobeGap === "bottom"));
+  database.exec("UPDATE wardrobe_items SET category='accessory' WHERE id=12");
+  await dispatch("hide", { lookId, id: saved[0].id });
+  assert.deepEqual(await makeSession()("shopping", { lookId }), [saved[1]]);
+});
+
+test("an unselected owned top covers its category when suggesting pants", async t => {
+  const slots = { shoes: flats.id };
+  const shoppingFetch = t.mock.fn(chooseFirstListing);
+  const { dispatch, optionId, database } = await startPlanner(t, undefined, slots, shoppingFetch);
+  database.exec("UPDATE wardrobe_items SET category='top', name='Cotton blouse' WHERE id=12");
+  database.exec("UPDATE wardrobe_items SET archived_at=CURRENT_TIMESTAMP WHERE category='dress'");
+  const products = await dispatch("enhancements", { optionId, slots });
+  assert.equal(products.length, 1);
+  assert.ok(database.prepare("SELECT 1 FROM clothes_catalog WHERE item_id=? AND search_term LIKE '% pants'").get(products[0].id));
+  for (const call of shoppingFetch.mock.calls) {
+    for (const question of JSON.parse(call.arguments[1].body).questions) {
+      for (const choice of question.choices.filter(choice => choice.value.startsWith("item_"))) {
+        assert.ok(database.prepare("SELECT 1 FROM clothes_catalog WHERE item_id=? AND search_term LIKE '% pants'")
+          .get(choice.value.slice(5)), "every candidate should have a pants listing");
+      }
+    }
+  }
+});
+
+test("a profile-only option can offer both missing categories from an empty closet", async t => {
+  const { database, dispatch } = await startPlanner(t, undefined, original, chooseFirstListing);
+  database.exec("UPDATE wardrobe_items SET archived_at=CURRENT_TIMESTAMP");
+  const brief = await dispatch("saveBrief", {
+    occasion: "Weekend brunch", timing: "", location: "", formality: "", comfort: "", preferences: [],
+  });
+  const { looks: [look] } = await dispatch("generate", { briefId: brief.id });
+  assert.deepEqual(look.slots, {});
+  assert.ok(look.profileRef);
+  const products = await dispatch("enhancements", { optionId: look.id, slots: look.slots });
+  assert.equal(products.length, 2);
+  assert.equal(new Set(products.map(product => product.id)).size, 2);
+});
+
+test("automatic mode uses the account photo for a profile-only try-on", async t => {
+  const preview = {
+    readImage: t.mock.fn(async ref => new Blob([ref], { type: "image/jpeg" })),
+    fetch: t.mock.fn(async () => Response.json({ data: [{ b64_json: "/9j/4A==" }] })),
+    storeImage: async () => "profile-look.jpg",
+  };
+  const { dispatch, database } = await startPlanner(t, preview);
+  database.exec("UPDATE wardrobe_items SET archived_at=CURRENT_TIMESTAMP");
+  const brief = await dispatch("saveBrief", { occasion: "Lunch", preferences: [] });
+  const { looks: [look] } = await dispatch("generate", { briefId: brief.id });
+  assert.deepEqual(look.slots, {});
+  assert.deepEqual(await dispatch("preview", { optionId: look.id, slots: {} }), { imageRef: "profile-look.jpg" });
+  const body = preview.fetch.mock.calls[0].arguments[1].body;
+  assert.deepEqual(await Promise.all(body.getAll("image[]").map(image => image.text())), ["profile.png"]);
+});
+
+test("automatic saves retain the resolved mode; legacy regeneration uses the account photo", async t => {
+  const preview = {
+    readImage: t.mock.fn(async ref => new Blob([ref], { type: "image/jpeg" })),
+    fetch: async () => Response.json({ data: [{ b64_json: "/9j/4A==" }] }),
+    storeImage: async () => "legacy-personal.jpg",
+  };
+  const { dispatch, optionId, database } = await startPlanner(t, preview);
+  const saved = await dispatch("save", { optionId, slots: refined });
+  assert.equal(saved.useProfilePhoto, true);
+  const mode = database.prepare("SELECT use_profile_photo AS mode FROM saved_looks WHERE id=?");
+  assert.equal(mode.get(saved.id).mode, 1);
+  database.prepare("UPDATE saved_looks SET use_profile_photo=NULL WHERE id=?").run(saved.id);
+  assert.deepEqual(await dispatch("savedPreview", { id: saved.id }), { imageRef: "legacy-personal.jpg" });
+  assert.ok(preview.readImage.mock.calls.some(call => call.arguments[0] === "profile.png"));
+});
+
+test("a saved personal look switches to studio only after rendering succeeds if its profile photo was removed", async t => {
+  const preview = {
+    readImage: t.mock.fn(async ref => new Blob([ref], { type: "image/jpeg" })),
+    fetch: t.mock.fn(async () => Response.json({ data: [{ b64_json: "/9j/4A==" }] })),
+    storeImage: t.mock.fn(async () => "replacement-studio.jpg"),
+  };
+  const { dispatch, optionId, database } = await startPlanner(t, preview);
+  const saved = await dispatch("save", { optionId, slots: refined, useProfilePhoto: true });
+  database.exec("UPDATE profiles SET face_photo_file_id=NULL WHERE user_id=1");
+  preview.storeImage.mock.mockImplementationOnce(async () => { throw new Error("storage unavailable"); });
+  const mode = database.prepare("SELECT use_profile_photo AS mode FROM saved_looks WHERE id=?");
+  await assert.rejects(dispatch("savedPreview", { id: saved.id }));
+  assert.equal(mode.get(saved.id).mode, 1);
+  assert.deepEqual(await dispatch("savedPreview", { id: saved.id }), { imageRef: "replacement-studio.jpg" });
+  assert.equal(mode.get(saved.id).mode, 0);
+  const body = preview.fetch.mock.calls.at(-1).arguments[1].body;
+  const [first] = body.getAll("image[]");
+  assert.deepEqual(Buffer.from(await first.arrayBuffer()), await readSampleImage("studio-model"));
 });
