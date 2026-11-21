@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { privateImage } from "../wardrobe-files.mjs";
+import { servePrivateFile } from "../private-files.mjs";
 import { profile } from "./profile.mjs";
 
 const testOrigin = "https://wardrobe.example";
@@ -10,7 +10,7 @@ const jpeg = Uint8Array.of(0xff, 0xd8, 0xff, 0xd9);
 
 function fixture() {
   const sqlite = new DatabaseSync(":memory:");
-  for (const migration of ["0000_stylist.sql", "0003_profile_photo_cleanup.sql"]) {
+  for (const migration of ["0000_stylist.sql", "0001_private_files.sql", "0002_private_file_expiry.sql"]) {
     sqlite.exec(readFileSync(new URL(`../../drizzle/${migration}`, import.meta.url), "utf8"));
   }
   sqlite.exec(`
@@ -18,14 +18,21 @@ function fixture() {
   `);
 
   const DB = {
+    failAttachment: false,
     prepare(sql) {
+      const db = this;
       return {
         bind(...args) {
           const statement = sqlite.prepare(sql);
           return {
             first: async () => statement.get(...args),
             all: async () => ({ results: statement.all(...args) }),
-            run: async () => ({ meta: statement.run(...args) }),
+            async run() {
+              if (db.failAttachment && sql.includes("INSERT INTO profiles (user_id, face_photo_file_id)")) {
+                throw new Error("Profile update failed.");
+              }
+              return { meta: statement.run(...args) };
+            },
           };
         },
       };
@@ -49,7 +56,7 @@ function fixture() {
     failDelete: false,
     failPut: false,
     async put(key, body, { httpMetadata }) {
-      files.set(key, { body, httpMetadata });
+      files.set(key, { body, httpMetadata, size: body.byteLength });
       if (this.failPut) throw new Error("Block acknowledgement failed.");
     },
     async get(key) {
@@ -67,6 +74,10 @@ function fixture() {
     close: () => sqlite.close(),
     async send(path, init, userId = 1) {
       return profile(new Request(testOrigin + path, init), env, userId);
+    },
+    readImage(path, userId) {
+      assert.ok(path.startsWith("/api/files/"));
+      return servePrivateFile(new Request(testOrigin + path), env, { id: userId }, path.slice("/api/files/".length));
     },
   };
 }
@@ -116,9 +127,8 @@ test("photo uploads replace old bytes and revocation is immediate even when clea
   assert.equal(first.status, 200);
   const firstUrl = (await first.json()).facePhotoUrl;
   assert.ok(firstUrl);
-  const imageRequest = new Request(testOrigin + firstUrl);
-  assert.equal((await privateImage(imageRequest, api.env, 1)).status, 200);
-  assert.equal((await privateImage(imageRequest, api.env, 2)).status, 404);
+  assert.equal((await api.readImage(firstUrl, 1)).status, 200);
+  assert.equal((await api.readImage(firstUrl, 2)).status, 404);
 
   api.env.BUCKET.failPut = true;
   assert.equal((await upload(api)).status, 503);
@@ -126,19 +136,27 @@ test("photo uploads replace old bytes and revocation is immediate even when clea
   assert.equal((await (await api.send("/api/profile")).json()).facePhotoUrl, firstUrl);
   api.env.BUCKET.failPut = false;
 
+  api.env.DB.failAttachment = true;
+  assert.equal((await upload(api)).status, 503);
+  assert.equal(api.files.size, 1);
+  assert.equal((await (await api.send("/api/profile")).json()).facePhotoUrl, firstUrl);
+  api.env.DB.failAttachment = false;
+
   const replaced = await upload(api);
   assert.equal(replaced.status, 200);
   const newUrl = (await replaced.json()).facePhotoUrl;
   assert.notEqual(newUrl, firstUrl);
   assert.equal(api.files.size, 1);
-  assert.equal((await privateImage(imageRequest, api.env, 1)).status, 404);
+  assert.equal((await api.readImage(firstUrl, 1)).status, 404);
 
   api.env.BUCKET.failDelete = true;
   const stopped = await api.send("/api/profile/photo", { method: "DELETE" });
   assert.equal(stopped.status, 503);
-  assert.equal((await privateImage(new Request(testOrigin + newUrl), api.env, 1)).status, 404);
+  assert.equal((await api.readImage(newUrl, 1)).status, 404);
   assert.equal(api.files.size, 1);
   api.env.BUCKET.failDelete = false;
+  assert.equal((await api.send("/api/profile", {}, 2)).status, 200);
+  assert.equal(api.files.size, 1);
 
   const cleared = await api.send("/api/profile/photo", { method: "DELETE" });
   assert.equal(cleared.status, 200);

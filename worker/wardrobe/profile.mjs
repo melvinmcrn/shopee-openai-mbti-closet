@@ -1,4 +1,5 @@
-import { deleteFile, fileUrl, putFile } from "../wardrobe-files.mjs";
+import { deletePrivateFile, retryPrivateFileCleanup, writePrivateFile } from "../private-files.mjs";
+import { fileUrl } from "../wardrobe-files.mjs";
 import { imageType, maxImageBytes, readUploadForm } from "./upload.mjs";
 
 const cacheHeaders = { "Cache-Control": "no-store" };
@@ -7,11 +8,6 @@ const editableFields = new Set([
 ]);
 
 const createProfile = "INSERT INTO profiles (user_id) VALUES (?) ON CONFLICT (user_id) DO NOTHING";
-const retirePhoto = `
-  INSERT INTO profile_photo_cleanup (user_id, file_key, available_at)
-  SELECT user_id, face_photo_file_id, unixepoch()
-  FROM profiles WHERE user_id = ? AND face_photo_file_id IS NOT NULL
-`;
 
 function error(message, status) {
   return Response.json({ error: message }, { status, headers: cacheHeaders });
@@ -80,8 +76,6 @@ async function updateProfile(db, userId, patch) {
   const statements = [];
   if (assignments.length > 0) {
     statements.push(db.prepare(createProfile).bind(userId));
-    // Retire the current key and clear the reference in the same transaction.
-    if (patch.facePhotoUrl === null) statements.push(db.prepare(retirePhoto + " ON CONFLICT (user_id, file_key) DO NOTHING").bind(userId));
     statements.push(db.prepare(`UPDATE profiles SET ${assignments.join(", ")} WHERE user_id = ?`)
       .bind(...values, userId));
   }
@@ -97,29 +91,20 @@ async function updateProfile(db, userId, patch) {
   if (statements.length > 0) await db.batch(statements);
 }
 
-async function retryPhotoCleanup(env, userId) {
+async function retryPhotoCleanup(env, account) {
   try {
-    const { results } = await env.DB.prepare(`
-      SELECT file_key FROM profile_photo_cleanup
-      WHERE user_id = ? AND available_at <= unixepoch()
-      ORDER BY available_at LIMIT 20
-    `).bind(userId).all();
-    const outcomes = await Promise.allSettled(results.map(async ({ file_key }) => {
-      await deleteFile(env, userId, file_key);
-      await env.DB.prepare("DELETE FROM profile_photo_cleanup WHERE user_id = ? AND file_key = ?")
-        .bind(userId, file_key).run();
-    }));
-    return results.length < 20 && outcomes.every(({ status }) => status === "fulfilled");
+    await retryPrivateFileCleanup(env, account);
+    return true;
   } catch {
     return false;
   }
 }
 
-async function uploadPhoto(request, env, userId) {
+async function uploadPhoto(request, env, account) {
   const parsed = await readUploadForm(request);
   if (!parsed.form) return error(parsed.error, parsed.status);
   const image = parsed.form.get("image");
-  if (!image || typeof image === "string" || !image.size ||
+  if (!(image instanceof Blob) || !image.size || parsed.form.getAll("image").length !== 1 ||
       [...parsed.form.values()].filter(value => value instanceof Blob).length !== 1) {
     return error("Select a photo to upload.", 400);
   }
@@ -130,67 +115,31 @@ async function uploadPhoto(request, env, userId) {
   if (!type) return error("Upload a JPEG, PNG, or WebP photo.", 415);
 
   const db = env.DB;
-  const key = `users/${userId}/profile/${crypto.randomUUID()}`;
-  // A staged file remains eligible for cleanup if uploading or committing is interrupted.
-  await db.prepare(`
-    INSERT INTO profile_photo_cleanup (user_id, file_key, available_at)
-    VALUES (?, ?, unixepoch() + 3600)
-  `).bind(userId, key).run();
+  const fileId = await writePrivateFile(env, account, bytes, type);
   try {
-    await putFile(env, userId, key, bytes, type);
-    const [, staged] = await db.batch([
-      db.prepare(createProfile).bind(userId),
-      db.prepare(`
-        UPDATE profile_photo_cleanup SET available_at = -1
-        WHERE user_id = ? AND file_key = ? AND available_at > unixepoch()
-      `).bind(userId, key),
-      db.prepare(`${retirePhoto}
-        AND EXISTS (
-          SELECT 1 FROM profile_photo_cleanup
-          WHERE user_id = ? AND file_key = ? AND available_at = -1
-        )
-        ON CONFLICT (user_id, file_key) DO NOTHING
-      `).bind(userId, userId, key),
-      db.prepare(`
-        UPDATE profiles SET face_photo_file_id = ?
-        WHERE user_id = ? AND EXISTS (
-          SELECT 1 FROM profile_photo_cleanup
-          WHERE user_id = ? AND file_key = ? AND available_at = -1
-        )
-      `).bind(key, userId, userId, key),
-      db.prepare(`
-        DELETE FROM profile_photo_cleanup WHERE user_id = ? AND file_key = ? AND available_at = -1
-      `).bind(userId, key),
-    ]);
-    if (staged.meta.changes === 0) {
-      // A timed-out upload may finish writing after its staged object was already cleaned up.
-      await db.prepare(`
-        INSERT INTO profile_photo_cleanup (user_id, file_key, available_at)
-        VALUES (?, ?, unixepoch()) ON CONFLICT (user_id, file_key) DO NOTHING
-      `).bind(userId, key).run();
-      throw new Error("Photo upload timed out.");
-    }
-  } catch (cause) {
-    // If the database committed despite an error, the staged row is already gone.
+    // The reference trigger queues the previous file when this was its final reference.
     await db.prepare(`
-      UPDATE profile_photo_cleanup SET available_at = unixepoch()
-      WHERE user_id = ? AND file_key = ?
-    `).bind(userId, key).run().catch(() => {});
-    await retryPhotoCleanup(env, userId);
+      INSERT INTO profiles (user_id, face_photo_file_id) VALUES (?, ?)
+      ON CONFLICT (user_id) DO UPDATE SET face_photo_file_id = excluded.face_photo_file_id
+    `).bind(account.id, fileId).run();
+  } catch (cause) {
+    // If the database committed despite an error, the storage helper preserves the reference.
+    await deletePrivateFile(env, account, fileId).catch(() => {});
     throw cause;
   }
-  await retryPhotoCleanup(env, userId);
-  return readProfile(db, userId);
+  await retryPhotoCleanup(env, account);
+  return readProfile(db, account.id);
 }
 
 export async function profile(request, env, userId) {
   const { pathname } = new URL(request.url);
   const { method } = request;
   const db = env.DB;
+  const account = { id: userId };
   try {
     if (pathname === "/api/profile") {
       if (method === "GET") {
-        await retryPhotoCleanup(env, userId);
+        await retryPhotoCleanup(env, account);
         return await readProfile(db, userId);
       }
       if (method === "PATCH") {
@@ -198,7 +147,7 @@ export async function profile(request, env, userId) {
         const validation = validatePatch(patch);
         if (validation) return error(validation, 400);
         await updateProfile(db, userId, patch);
-        if (!(await retryPhotoCleanup(env, userId)) && patch.facePhotoUrl === null) {
+        if (!(await retryPhotoCleanup(env, account)) && patch.facePhotoUrl === null) {
           return error("The photo is hidden. Try again to finish removing it from storage.", 503);
         }
         return await readProfile(db, userId);
@@ -206,10 +155,10 @@ export async function profile(request, env, userId) {
       return new Response(null, { status: 405, headers: { ...cacheHeaders, Allow: "GET, PATCH" } });
     }
     if (pathname === "/api/profile/photo") {
-      if (method === "PUT") return await uploadPhoto(request, env, userId);
+      if (method === "PUT") return await uploadPhoto(request, env, account);
       if (method === "DELETE") {
         await updateProfile(db, userId, { facePhotoUrl: null });
-        if (!(await retryPhotoCleanup(env, userId))) {
+        if (!(await retryPhotoCleanup(env, account))) {
           return error("The photo is hidden. Try again to finish removing it from storage.", 503);
         }
         return await readProfile(db, userId);
