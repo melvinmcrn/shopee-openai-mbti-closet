@@ -1,47 +1,40 @@
-const CACHE_NAME = "mbti-closet-v1";
-const APP_SHELL = ["/", "/manifest.webmanifest", "/icon.svg", "/icon-maskable.svg"];
+const CACHE_NAME = "mbti-closet-public-v2";
+const OFFLINE_PAGE = "/offline.html";
+const PUBLIC_FILES = [OFFLINE_PAGE, "/manifest.webmanifest", "/icon.svg", "/icon-maskable.svg"];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));
-  self.skipWaiting();
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    await cache.addAll(PUBLIC_FILES);
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))),
-    ),
-  );
-  self.clients.claim();
+  event.waitUntil((async () => {
+    const names = await caches.keys();
+    await Promise.all(names
+      .filter((name) => name.startsWith("mbti-closet-") && name !== CACHE_NAME)
+      .map((name) => caches.delete(name)));
+    await self.clients.claim();
+  })());
 });
 
 self.addEventListener("fetch", (event) => {
-  const request = event.request;
-  if (request.method !== "GET" || new URL(request.url).origin !== self.location.origin) return;
-
-  if (request.mode === "navigate") {
-    event.respondWith(
-      fetch(request)
-        .then((response) => {
-          const copy = response.clone();
-          void caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-          return response;
-        })
-        .catch(async () => (await caches.match(request)) || (await caches.match("/"))),
-    );
+  const { request } = event;
+  const url = new URL(request.url);
+  if (request.method !== "GET" || url.origin !== self.location.origin) return;
+  if (request.mode === "navigate" && url.pathname === "/" && !url.search) {
+    event.respondWith(fetch(request).catch(async () => {
+      const cache = await caches.open(CACHE_NAME);
+      return (await cache.match(OFFLINE_PAGE)) ?? Response.error();
+    }));
     return;
   }
-
-  event.respondWith(
-    caches.match(request).then((cached) => {
-      if (cached) return cached;
-      return fetch(request).then((response) => {
-        if (response.ok) {
-          const copy = response.clone();
-          void caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-        }
-        return response;
-      });
-    }),
-  );
+  if (PUBLIC_FILES.includes(url.pathname) && !url.search) {
+    event.respondWith((async () => {
+      const cache = await caches.open(CACHE_NAME);
+      return (await cache.match(request)) ?? fetch(request);
+    })());
+  }
 });
