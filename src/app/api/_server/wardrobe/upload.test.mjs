@@ -486,12 +486,13 @@ test("concurrent extraction of one outfit stores independently reviewable garmen
     method: "PATCH", body: JSON.stringify({ name: "Travel trousers", confirm: true }),
   }), env, 1);
   assert.equal(updated.status, 200);
-  assert.equal((await wardrobeApi(new Request(itemUrl + id, { method: "DELETE" }), env, 1)).status, 204);
+  const deletion = { method: "DELETE", body: JSON.stringify({ savedLookIds: [] }) };
+  assert.equal((await wardrobeApi(new Request(itemUrl + id, deletion), env, 1)).status, 204);
   const surviving = await (await send(key, 1, photoPng)).json();
   assert.equal(surviving.id, items[1].id);
   assert.deepEqual(surviving.extraction.items, [{ ...items[1], name: "Travel trousers" }]);
   assert.equal((await send(key, 2, null)).status, 404);
-  assert.equal((await wardrobeApi(new Request(itemUrl + items[1].id, { method: "DELETE" }), env, 1)).status, 204);
+  assert.equal((await wardrobeApi(new Request(itemUrl + items[1].id, deletion), env, 1)).status, 204);
   assert.equal((await send(key, 1, null)).status, 404);
   assert.equal(provider.mock.callCount(), 2);
 });

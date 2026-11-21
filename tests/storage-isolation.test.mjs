@@ -238,7 +238,14 @@ test("Google account, wardrobe, outfit, and photo isolation in workerd", { timeo
     assert.deepEqual(await b("listShoppingSuggestions", look.id), []);
     assert.deepEqual(await aNew("listShoppingSuggestions", look.id), [suggestion]);
 
-    const remove = (cookie, body) => request("/api/wardrobe/items/" + trousers.id, {
+    const itemPath = "/api/wardrobe/items/" + trousers.id;
+    const impactPath = itemPath + "/delete-impact";
+    assert.equal((await request(impactPath)).status, 401);
+    assert.equal((await request(impactPath, { cookie: bob })).status, 404);
+    const impact = await request(impactPath, { cookie: alice });
+    assert.match(impact.headers.get("Cache-Control"), /no-store/);
+    assert.deepEqual(await json(impact), { savedLooks: [{ id: look.id, title: look.name }] });
+    const remove = (cookie, body) => request(itemPath, {
       cookie, method: "DELETE", body, headers: { Origin: origin },
     });
     const confirmation = { savedLookIds: [look.id] };

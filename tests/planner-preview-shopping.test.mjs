@@ -136,7 +136,12 @@ test("deleting a garment confirms exactly the saved looks containing its final s
 
   assert.equal((await change(flats.id, "DELETE", undefined, 2)).status, 404);
   assert.equal((await change(flats.id, "DELETE", { savedLookIds: ["1"] })).status, 400);
-  assert.equal((await change(heels.id, "DELETE")).status, 204);
+  const impact = await change(flats.id + "/delete-impact", "GET");
+  assert.equal(impact.status, 200);
+  assert.deepEqual(await impact.json(), { savedLooks: affected });
+  assert.equal((await change("9999/delete-impact", "GET")).status, 404);
+  assert.equal((await change(heels.id, "DELETE", { savedLookIds: [] })).status, 204);
+  assert.ok(!(await dispatch("wardrobe")).some(({ id }) => id === heels.id));
   assert.equal((await dispatch("detail", { id: look.id })).originalSlots.shoes.id, heels.id);
   await prompt(await change(flats.id, "DELETE"));
   await prompt(await wardrobeApi(new Request(`https://example.test/api/wardrobe/items/${flats.id}`, {
@@ -166,6 +171,31 @@ test("deleting a garment confirms exactly the saved looks containing its final s
   await assert.rejects(save(refined), /ineligible garment/);
   assert.equal((await change(dress.id, "PATCH", { archive: true })).status, 204);
   assert.equal((await dispatch("detail", { id: unrelated.id })).slots.dress.id, dress.id);
+});
+
+test("an unused garment stays in the closet across previews and a stale empty confirmation", async (t) => {
+  const { dispatch, optionId, database } = await startPlanner(t);
+  const env = { DB: d1Binding(database) };
+  const url = `https://example.test/api/wardrobe/items/${flats.id}`;
+  const preview = () => wardrobeApi(new Request(url + "/delete-impact"), env, accountId);
+  const remove = (body) => wardrobeApi(new Request(url, {
+    method: "DELETE", body: JSON.stringify(body),
+  }), env, accountId);
+  const legacy = await remove();
+  assert.equal(legacy.status, 409);
+  assert.deepEqual(await legacy.json(), { code: "saved_looks_affected", savedLooks: [] });
+  const unused = await preview();
+  assert.equal(unused.status, 200);
+  assert.deepEqual(await unused.json(), { savedLooks: [] });
+  assert.ok((await dispatch("wardrobe")).some(({ id }) => id === flats.id));
+
+  const saved = await dispatch("save", { optionId, slots: refined });
+  const stale = await remove({ savedLookIds: [] });
+  assert.equal(stale.status, 409);
+  assert.deepEqual(await stale.json(), {
+    code: "saved_looks_affected", savedLooks: [{ id: Number(saved.id), title: saved.occasion }],
+  });
+  assert.equal((await dispatch("detail", { id: saved.id })).slots.shoes.id, flats.id);
 });
 
 test("neither saved-look writer can reuse an ID from an old deletion confirmation", async (t) => {
