@@ -1,6 +1,6 @@
 {
-  "name": "MBTI Closet",
-  "short_name": "MBTI Closet",
+  "name": "Closet",
+  "short_name": "Closet",
   "description": "A personal style and outfit discovery app.",
   "start_url": "/",
   "display": "standalone",

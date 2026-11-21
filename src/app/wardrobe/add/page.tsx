@@ -149,7 +149,7 @@ export default function AddWardrobePhotoPage() {
     <main className="wardrobe-page mx-auto w-full max-w-xl px-5 py-10 sm:px-8 sm:py-14">
       <header className="mb-7 space-y-3">
         <Link className="text-sm font-medium underline underline-offset-4" href="/">
-          MBTI Closet
+          Closet
         </Link>
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Add wardrobe photos</h1>
         <p>Use a clear photo of one garment. We’ll isolate the garment and suggest its details for you to review before saving.</p>

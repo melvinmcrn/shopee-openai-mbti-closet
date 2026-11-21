@@ -68,7 +68,7 @@ export default function PlannerPage() {
   return <main className="min-h-screen bg-[#fcf9f7] px-5 py-6 text-[#302331] sm:px-10">
     <div className="mx-auto max-w-4xl">
       <nav aria-label="Planner navigation" className="mb-7 flex items-center gap-5 border-b border-[#ded2d8] pb-4 text-sm font-medium">
-        <a href="#home" className="mr-auto text-lg font-semibold">MBTI Closet</a>
+        <a href="#home" className="mr-auto text-lg font-semibold">Closet</a>
         <a href="#saved">Saved</a><Link href="/">Account</Link>
       </nav>
       {content}

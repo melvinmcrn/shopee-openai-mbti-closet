@@ -1,4 +1,4 @@
-# MBTI Closet
+# Closet
 
 A Next.js App Router project initialized with the official `create-next-app` CLI. It uses TypeScript and Tailwind CSS. OpenAI Sites serves the Next.js static export and runs Google sign-in in a Worker.
 

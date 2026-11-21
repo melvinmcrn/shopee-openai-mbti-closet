@@ -58,7 +58,7 @@ export function GoogleAccount() {
   if (status === "loading") {
     return (
       <p className="pt-4 text-center text-sm text-supporting" role="status">
-        {account ? "Opening MBTI Closet…" : "Checking sign-in…"}
+        {account ? "Opening Closet…" : "Checking sign-in…"}
       </p>
     );
   }
@@ -69,7 +69,7 @@ export function GoogleAccount() {
         <p className="text-sm text-text" role="status">Your profile is unavailable right now.</p>
         <p className="text-sm text-text">Signed in as {account.email ?? account.name}</p>
         <a className="w-fit text-sm font-semibold text-secondary underline underline-offset-4" href="/api/auth/signout" target="_top">
-          Sign out of MBTI Closet
+          Sign out of Closet
         </a>
       </div>
     ) : (

@@ -16,10 +16,10 @@ const figtree = Figtree({
 });
 
 export const metadata: Metadata = {
-  title: "MBTI Closet",
+  title: "Closet",
   description: "A personal style and outfit discovery app.",
   manifest: "/manifest.webmanifest",
-  appleWebApp: { capable: true, statusBarStyle: "default", title: "MBTI Closet" },
+  appleWebApp: { capable: true, statusBarStyle: "default", title: "Closet" },
 };
 
 export const viewport: Viewport = { themeColor: "#FCFAF6" };

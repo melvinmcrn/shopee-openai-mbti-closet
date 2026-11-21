@@ -146,7 +146,7 @@ export default function ClosetPage() {
     <main className="min-h-screen flex-1 bg-[#f8f7f1] text-[#242a22]">
       <header className="border-b border-[#e2e2d5]">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-8 gap-y-3 px-5 py-4 sm:px-8">
-          <Link className="font-serif text-xl font-semibold" href="/">MBTI Closet</Link>
+          <Link className="font-serif text-xl font-semibold" href="/">Closet</Link>
           <nav aria-label="Main" className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm font-semibold">
             <Link aria-current="page" className="underline underline-offset-4" href="/closet">Closet</Link>
             <Link className="hover:underline" href="/planner">Outfit planner</Link>
