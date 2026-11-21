@@ -102,6 +102,7 @@ export default function AddWardrobePhotoPage() {
         return;
       }
       setPhase("ready");
+      router.push(`/wardrobe/confirm?item=${itemId}`);
     } catch {
       setError(extractionError);
       setPhase("extraction-failed");

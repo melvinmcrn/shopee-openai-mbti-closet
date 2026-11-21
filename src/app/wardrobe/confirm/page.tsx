@@ -22,6 +22,7 @@ type DraftItem = {
   category: Category;
   color: string | null;
   imageUrl: string | null;
+  extractionSource?: "fixture" | "luna";
 };
 
 type ItemEdits = Pick<DraftItem, "name" | "category" | "color">;
@@ -202,6 +203,7 @@ export default function ConfirmWardrobeItemsPage() {
                     </div>
                     <fieldset className="space-y-4 p-4" disabled={saving}>
                       <legend className="sr-only">{item.name || "Wardrobe item"} details</legend>
+                      {item.extractionSource === "fixture" && <p className="text-sm">Demo fixture cutout</p>}
                       <label className="block text-sm font-semibold">
                         Name
                         <input

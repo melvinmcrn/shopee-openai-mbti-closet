@@ -20,7 +20,6 @@ function fixture() {
   const DB = {
     failAttachment: false,
     prepare(sql) {
-      const db = this;
       return {
         bind(...args) {
           const statement = sqlite.prepare(sql);
@@ -28,7 +27,7 @@ function fixture() {
             first: async () => statement.get(...args),
             all: async () => ({ results: statement.all(...args) }),
             async run() {
-              if (db.failAttachment && sql.includes("INSERT INTO profiles (user_id, face_photo_file_id)")) {
+              if (DB.failAttachment && sql.includes("INSERT INTO profiles (user_id, face_photo_file_id)")) {
                 throw new Error("Profile update failed.");
               }
               return { meta: statement.run(...args) };

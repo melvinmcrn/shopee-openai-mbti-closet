@@ -1,12 +1,13 @@
 import { fileUrl } from "../wardrobe-files.mjs";
 
 const categories = new Set(["top", "bottom", "dress", "shoes", "outerwear", "accessory", "other"]);
-const itemColumns = "id, name, category, color, image_file_id";
+const itemColumns = "id, name, category, color, image_file_id, extraction_source";
 
 function itemView(row) {
   return {
     id: row.id,
     name: row.name,
+    ...(row.extraction_source ? { extractionSource: row.extraction_source } : {}),
     category: row.category,
     color: row.color,
     imageFileId: row.image_file_id,

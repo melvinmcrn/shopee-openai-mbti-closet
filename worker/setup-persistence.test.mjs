@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { encode } from "@auth/core/jwt";
+import { userData } from "./user-data.mjs";
 import worker from "./index.mjs";
 
 const siteOrigin = "https://mbti-closet.stonyimpala.chatgpt.site";
@@ -178,6 +179,20 @@ test("setup saves three confirmed pieces and optional styles by Google account a
   assert.ok(Number.isFinite(Date.parse(completed.setupCompletedAt)));
   assert.deepEqual(completed, { ...emptyProfile, styles, setupCompletedAt: completed.setupCompletedAt });
 
+  const records = userData(env.DB, originalSession.user.id);
+  const occasion = await records.createOutfitRequest({ occasion: "Dinner" });
+  const run = await records.createGenerationRun({ requestId: occasion.id, status: "completed" });
+  const option = await records.createOutfitOption({
+    runId: run.id, position: 1, title: "Dinner", slots: [
+      { slot: "top", itemId: top.id }, { slot: "shoes", itemId: shoes[0].id },
+    ],
+  });
+  const saved = await records.saveLook({
+    sourceOptionId: option.id, name: "Dinner in loafers", slots: [
+      { slot: "top", itemId: top.id }, { slot: "shoes", itemId: shoes[1].id },
+    ],
+  });
+
   // Sign in again after changing email. The Google subject is the stable identity.
   const secondCookie = await signIn("google-owner", "after@example.com");
   assert.notEqual(secondCookie, firstCookie);
@@ -187,6 +202,12 @@ test("setup saves three confirmed pieces and optional styles by Google account a
   assert.deepEqual(await jsonSuccess(await returningOwner("/api/profile")), completed);
   const { items: active } = await jsonSuccess(await returningOwner("/api/wardrobe/items"));
   assert.deepEqual(active, confirmed.toSorted((left, right) => right.id - left.id));
+  const reloaded = userData(env.DB, returningSession.user.id);
+  const savedShoe = (await reloaded.getSavedLook(saved.id)).slots.find(({ slot }) => slot === "shoes");
+  const originalShoe = (await reloaded.getOutfitOption(option.id)).slots.find(({ slot }) => slot === "shoes");
+  assert.equal(savedShoe.itemId, shoes[1].id);
+  assert.equal(originalShoe.itemId, shoes[0].id);
+  assert.equal((await reloaded.getWardrobeItem(savedShoe.itemId)).imageFileId, shoes[1].imageFileId);
   const topImage = await returningOwner(top.imageUrl);
   assert.equal(topImage.status, 200);
   assert.equal(topImage.headers.get("Content-Type"), "image/png");
