@@ -18,10 +18,13 @@ function d1Binding(database) {
       const statement = database.prepare(sql);
       return {
         bind(...params) {
+          const bindings = /\?\d/.test(sql)
+            ? [Object.fromEntries(params.map((value, index) => [String(index + 1), value]))]
+            : params;
           return {
-            async first() { return statement.get(...params) ?? null; },
-            async all() { return { results: statement.all(...params) }; },
-            async run() { return statement.run(...params); },
+            async first() { return statement.get(...bindings) ?? null; },
+            async all() { return { results: statement.all(...bindings) }; },
+            async run() { return statement.run(...bindings); },
           };
         },
       };
