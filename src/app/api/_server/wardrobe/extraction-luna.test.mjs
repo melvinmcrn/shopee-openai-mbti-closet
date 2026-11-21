@@ -76,7 +76,7 @@ test("an outfit with a missing cutout does not silently return only the successf
     { slot: 1, garments: [shirt, jeans] }, { slot: 2, garments: [shoes] },
   ] }, cutoutSheet(1216, 608, [[120, 260, red], [870, 260, green]]));
   const [incomplete, complete] = await lunaBatchExtraction([photo, photo], "test");
-  assert.equal(incomplete, null);
+  assert.equal(incomplete.stage, "image_layout");
   checkGarment(complete[0], shoes, green);
 });
 

@@ -320,12 +320,14 @@ test("logs one allowlisted stage, HTTP status and request ID without provider co
   const { run, files } = scenario(samplePhoto(), { OPENAI_API_KEY: "secret" });
   const response = await run();
   assert.equal(response.status, 502);
-  assert.equal((await response.json()).code, "invalid_extraction");
+  const body = await response.json();
+  assert.equal(body.code, "invalid_extraction");
+  assert.equal(body.nextAction, "manual_review");
   assert.deepEqual([...files.keys()], [original]);
   assert.equal(logger.mock.callCount(), 1);
   assert.deepEqual(logger.mock.calls[0].arguments, [
     "Wardrobe extraction upstream",
-    { stage: "final_message_refused", status: 200, requestId: "req_TEST123456" },
+    { mode: "outfit", draftIds: [1], stage: "final_message_refused", status: 200, requestId: "req_TEST123456" },
   ]);
 });
 
@@ -341,7 +343,7 @@ test("omits nonconforming request IDs and upstream error details from logs", asy
   assert.equal((await response.json()).code, "extraction_failed");
   assert.deepEqual([...files.keys()], [original]);
   assert.deepEqual(logger.mock.calls.map((call) => call.arguments), [
-    ["Wardrobe extraction upstream", { stage: "provider_http", status: 400 }],
+    ["Wardrobe extraction upstream", { mode: "outfit", draftIds: [1], stage: "provider_http", status: 400 }],
   ]);
 });
 
@@ -386,7 +388,10 @@ for (const [caseName, responseBody] of [
     const { run, files, db } = scenario(samplePhoto(), { OPENAI_API_KEY: "secret" });
     const response = await run();
     assert.equal(response.status, 502);
-    assert.equal((await response.json()).code, "invalid_extraction");
+    const body = await response.json();
+    assert.equal(body.code, "invalid_extraction");
+    const eligible = ["missing image", "opaque PNG", "opaque indexed PNG", "indexed PNG with all entries transparent", "empty alpha PNG"];
+    assert.equal(body.nextAction, eligible.includes(caseName) ? "extract_primary" : undefined);
     assert.deepEqual([...files.keys()], [original]);
     const row = db.prepare("SELECT name, extraction_source, image_file_id FROM wardrobe_items").get();
     assert.equal(row.name, "Untitled garment");
@@ -395,7 +400,7 @@ for (const [caseName, responseBody] of [
     assert.equal(provider.mock.callCount(), 1);
     assert.equal(logger.mock.callCount(), 1);
     if (["opaque PNG", "opaque indexed PNG", "empty alpha PNG"].includes(caseName)) {
-      assert.deepEqual(logger.mock.calls[0].arguments[1], { stage: "image_alpha", status: 200 });
+      assert.deepEqual(logger.mock.calls[0].arguments[1], { mode: "outfit", draftIds: [1], stage: "image_alpha", status: 200 });
     }
   });
 }
@@ -488,6 +493,6 @@ test("an upstream redirect is not followed and the uploaded original remains pri
   assert.equal(provider.mock.callCount(), 1);
   assert.deepEqual([...files.keys()], [original]);
   assert.deepEqual(logs.mock.calls[0].arguments, [
-    "Wardrobe extraction upstream", { stage: "provider_http", status: 302 },
+    "Wardrobe extraction upstream", { mode: "outfit", draftIds: [1], stage: "provider_http", status: 302 },
   ]);
 });

@@ -282,7 +282,7 @@ test("a rejected outfit can retry the saved photo as one main item without dupli
   });
   const response = await postBatch(env, [{ key: crypto.randomUUID(), photo: testPhoto }]);
   const { items: [draft] } = await response.json();
-  assert.deepEqual(draft.extraction, { status: "manual", code: "invalid_extraction" });
+  assert.deepEqual(draft.extraction, { status: "manual", code: "invalid_extraction", nextAction: "extract_primary" });
   assert.deepEqual([...files.values()].map((file) => file.body), [photoPng]);
 
   const retry = (owner) => wardrobeApi(new Request(
@@ -439,6 +439,7 @@ test("an empty cutout slot keeps that original and retry uses the same draft wit
   });
   const entries = Array.from({ length: 2 }, () => ({ key: crypto.randomUUID(), photo: testPhoto }));
   const { items } = await (await postBatch(env, entries)).json();
+  assert.equal(items[0].extraction.nextAction, "extract_primary");
   assert.equal(items[0].extraction.status, "manual");
   assert.equal(items[1].extraction.status, "ready");
   const originalId = sqlite.prepare("SELECT image_file_id FROM wardrobe_items WHERE id = ?").get(items[0].id).image_file_id;
@@ -458,6 +459,7 @@ for (const malformed of [{ gapBleed: true }, { duplicateSlot: true }]) {
     const entries = Array.from({ length: 2 }, () => ({ key: crypto.randomUUID(), photo: testPhoto }));
     const { items } = await (await postBatch(env, entries)).json();
     assert.ok(items.every((item) => item.extraction.status === "manual"));
+    assert.ok(items.every((item) => item.extraction.nextAction === (malformed.gapBleed ? "extract_primary" : undefined)));
     assert.equal(files.size, 2);
     for (const { body } of files.values()) assert.deepEqual(body, photoPng);
     assert.equal(provider.mock.callCount(), 1);

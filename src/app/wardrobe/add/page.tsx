@@ -9,6 +9,7 @@ import { requestWardrobeUploadBatch, type BatchProgress } from "./request-wardro
 
 const uploadError = "This photo could not be uploaded. Try again.";
 const extractionError = "The garment details could not be read. Your photo is saved and ready for manual review.";
+const manualCutoutError = "Your photo is saved. The automatic cutout failed. You can review it manually.";
 const extractionMessages = new Map([
   ["extraction_unavailable", "Automatic garment extraction is unavailable right now."],
   ["unsupported_photo", "Automatic extraction couldn’t read this image. You can still review the saved photo."],
@@ -21,6 +22,8 @@ const photoStatuses = {
   uploading: "In progress",
   "upload-failed": "Upload failed",
   "extraction-failed": "Ready for manual review",
+  primary: "Extracting the main item…",
+  manual: "Ready for manual review",
   ready: "Ready to review",
 };
 
@@ -42,7 +45,7 @@ type Progress = BatchProgress | { phase: "preparing" };
 type UploadItem = {
   draftKey: string;
   id?: unknown;
-  extraction?: { status?: unknown; code?: string; item?: ExtractedItem; items?: ExtractedItem[] } | null;
+  extraction?: { status?: unknown; code?: string; nextAction?: "extract_primary" | "manual_review"; item?: ExtractedItem; items?: ExtractedItem[] } | null;
   status?: number;
   error?: string;
 };
@@ -51,19 +54,16 @@ async function retryMainItem(photo: Photo, signal: AbortSignal): Promise<Photo> 
   try {
     const response = await fetch(`/api/wardrobe/items/${photo.id}/extract?mode=primary`, { method: "POST", signal });
     const result: unknown = await response.json();
-    if (typeof result !== "object" || result === null) return { ...photo, error: extractionError };
+    if (typeof result !== "object" || result === null) return { ...photo, status: "manual", error: manualCutoutError };
     if (response.ok && "items" in result && Array.isArray(result.items) && result.items.length
       && result.items.every((item): item is ExtractedItem => item && Number.isSafeInteger(item.id) && typeof item.name === "string")) {
       return { ...photo, status: "ready", garments: result.items, retryMainItem: false, error: undefined };
     }
     const code = "code" in result && typeof result.code === "string" ? result.code : "";
     const message = "error" in result && typeof result.error === "string" ? result.error : extractionError;
-    const error = code === "invalid_extraction"
-      ? "The main item could not be extracted. You can review the saved photo manually."
-      : extractionMessages.get(code) ?? message;
-    return { ...photo, error };
+    return { ...photo, status: "manual", error: code === "draft_changed" || code === "item_not_found" ? message : manualCutoutError };
   } catch {
-    return { ...photo, error: "The retry could not be confirmed. Try again or check your saved drafts." };
+    return { ...photo, status: "extraction-failed", retryMainItem: true, error: "The retry could not be confirmed. Try again or check your saved drafts." };
   }
 }
 
@@ -112,7 +112,7 @@ export default function AddWardrobePhotoPage() {
   const reviewIds = uploaded.flatMap((photo) => photo.garments?.map((garment) => garment.id) ?? [photo.id]);
   const params = new URLSearchParams();
   params.set("batch", reviewIds.join(","));
-  const manual = uploaded.filter((photo) => photo.status === "extraction-failed");
+  const manual = uploaded.filter((photo) => photo.status === "extraction-failed" || photo.status === "manual");
   if (manual.length) params.set("manual", manual.map((photo) => photo.id).join(","));
 
   async function choosePhotos(event: ChangeEvent<HTMLInputElement>) {
@@ -217,13 +217,18 @@ export default function AddWardrobePhotoPage() {
 
       const byKey = new Map(items?.filter((item) => item && typeof item.draftKey === "string")
         .map((item) => [item.draftKey, item]));
-      setPhotos((current) => current.map((photo): Photo => {
-        if (!keys.has(photo.draftKey)) return photo;
+      const updated = batch.map((photo): Photo => {
         const item = byKey.get(photo.draftKey);
         if (typeof item?.id === "number" && Number.isSafeInteger(item.id) && item.id > 0) {
           if (item.extraction?.status === "ready") {
             const garments = item.extraction.items ?? (item.extraction.item && [item.extraction.item]);
             return { ...photo, id: item.id, garments, status: "ready" };
+          }
+          if (item.extraction?.nextAction === "manual_review") {
+            return { ...photo, id: item.id, status: "manual", error: manualCutoutError };
+          }
+          if (item.extraction?.nextAction === "extract_primary") {
+            return { ...photo, id: item.id, status: "primary", error: undefined };
           }
           const code = item.extraction?.code;
           return {
@@ -240,7 +245,16 @@ export default function AddWardrobePhotoPage() {
               : item?.error || (photo.id === null ? uploadError : extractionError)
             : undefined,
         };
-      }));
+      });
+      const updatedByKey = new Map(updated.map((photo) => [photo.draftKey, photo]));
+      setPhotos((current) => current.map((photo) => updatedByKey.get(photo.draftKey) ?? photo));
+      for (const photo of updated) {
+        if (photo.status !== "primary") continue;
+        setProgress({ phase: "processing" });
+        const result = await retryMainItem(photo, controller.signal);
+        if (controller.signal.aborted) return;
+        setPhotos((current) => current.map((entry) => entry.draftKey === photo.draftKey ? result : entry));
+      }
     } finally {
       activeTask.current = null;
       if (!controller.signal.aborted) setProgress(null);
