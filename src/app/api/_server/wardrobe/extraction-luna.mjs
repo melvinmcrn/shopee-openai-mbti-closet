@@ -240,7 +240,7 @@ async function requestExtraction(photo, apiKey, options) {
   try {
     response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
-      redirect: "error",
+      redirect: "manual",
       signal: AbortSignal.timeout(150_000),
       headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json" },
       body: JSON.stringify({

@@ -151,7 +151,7 @@ test("one Luna High Fast response supplies editable metadata and the exact priva
   const provider = t.mock.method(globalThis, "fetch", async (url, flags) => {
     assert.equal(url, "https://api.openai.com/v1/responses");
     assert.equal(flags.method, "POST");
-    assert.equal(flags.redirect, "error");
+    assert.equal(flags.redirect, "manual");
     assert.equal(flags.headers.Authorization, "Bearer secret");
     const modelRequest = JSON.parse(flags.body);
     assert.equal(modelRequest.model, "gpt-6-luna");
@@ -460,4 +460,22 @@ test("detached originals remain queued when object deletion fails", async (t) =>
   await retryPrivateFileCleanup(env, { id: 9 });
   assert.deepEqual([...files.keys()], [item.imageFileId]);
   assert.equal(db.prepare("SELECT state FROM private_files WHERE file_id = ?").get(original), undefined);
+});
+
+test("an upstream redirect is not followed and the uploaded original remains private", async (t) => {
+  const logs = t.mock.method(console, "warn", () => {});
+  const provider = t.mock.method(globalThis, "fetch", (url, flags) => {
+    assert.equal(url, "https://api.openai.com/v1/responses");
+    assert.equal(flags.redirect, "manual");
+    return new Response(null, { status: 302, headers: { Location: "https://unexpected.example/" } });
+  });
+  const { run, files } = scenario(samplePhoto(), { OPENAI_API_KEY: "mock-key" });
+  const response = await run();
+  assert.equal(response.status, 502);
+  assert.equal((await response.json()).code, "extraction_failed");
+  assert.equal(provider.mock.callCount(), 1);
+  assert.deepEqual([...files.keys()], [original]);
+  assert.deepEqual(logs.mock.calls[0].arguments, [
+    "Wardrobe extraction upstream", { stage: "provider_http", status: 302 },
+  ]);
 });
