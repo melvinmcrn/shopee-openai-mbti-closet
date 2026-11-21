@@ -84,9 +84,14 @@ for (const name of ["first-session", "returning-session", "rating-session", "oth
 }
 
 // Keep candidate construction, Decisions parsing and ranking in the production code.
+let shoppingRequests = 0;
 async function decisionsFixture(url, options) {
   assert.equal(url, "https://api.openai.com/v1/decisions");
   const { input, questions } = JSON.parse(options.body);
+  if (questions.length === 1 && questions[0].name === "shopee_accessory") {
+    if (shoppingRequests++ === 0) return new Response(null, { status: 503 });
+    return Response.json({ answers: [{ name: "shopee_accessory", type: "choice", choice: "clutch" }] });
+  }
   const brief = input.find(({ role }) => role === "user").content[0].data.brief;
   assert.deepEqual(brief.preferences, []);
   return Response.json({

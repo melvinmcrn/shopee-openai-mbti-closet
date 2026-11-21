@@ -85,12 +85,22 @@ def run_flow(browser, device, base):
     page.get_by_role("button", name="Save outfit").tap()
     expect_heading(page, OCCASION)
     expect(page.get_by_text("Walking flats", exact=True)).to_be_visible()
+    expect(page.get_by_role("alert").filter(
+        has_text="Shopping suggestions are temporarily unavailable."
+    )).to_be_visible()
+    page.get_by_role("button", name="Retry shopping suggestions").tap()
+    expect(page.get_by_role("link", name="Search Shopee for black clutch bag")).to_have_attribute(
+        "href", "https://shopee.sg/search?keyword=black+clutch+bag"
+    )
+    page.get_by_role("button", name="Hide Black clutch bag").tap()
+    expect(page.get_by_text("No shopping suggestions for this look.")).to_be_visible()
     saved_url = page.url
     context.close()
 
     context, page = mobile_session(browser, device, base, "returning-session")
     open_saved(page, base)
     assert page.url == saved_url
+    expect(page.get_by_text("No shopping suggestions for this look.")).to_be_visible()
     expect(page.get_by_text("No wears logged yet.")).to_be_visible()
     page.get_by_label("Date worn").fill(WEAR_DATE)
     page.get_by_role("button", name="Log wear").tap()
