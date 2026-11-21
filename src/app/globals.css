@@ -3,8 +3,8 @@
 :root {
   color-scheme: light;
   --palette-primary: #ef5b5b;
-  --palette-primary-hover: #ff7272;
-  --palette-on-primary: #201a17;
+  --palette-primary-hover: #e55353;
+  --palette-on-primary: #fff;
   --palette-canvas: #fcfaf6;
   --palette-text: #302824;
   --palette-supporting: #655b54;
@@ -43,6 +43,15 @@ body {
 @layer base {
   button:enabled {
     cursor: pointer;
+  }
+}
+
+@layer utilities {
+  .bg-primary.text-on-primary {
+    font-size: 1.25rem;
+    font-weight: 700;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
   }
 }
 

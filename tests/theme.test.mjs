@@ -24,10 +24,12 @@ function contrast(foreground, background) {
   return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 }
 
-test("primary actions use the shared coral with readable text in both states", () => {
+test("primary actions use white large text on the shared coral in both states", () => {
   assert.equal(palette.primary.toLowerCase(), "#ef5b5b");
+  assert.match(palette["on-primary"], /^#(?:fff|ffffff)$/i);
+  assert.match(css, /@layer utilities\s*{\s*\.bg-primary\.text-on-primary\s*{\s*font-size: 1\.25rem;\s*font-weight: 700;/);
   for (const background of ["primary", "primary-hover"]) {
-    assert.ok(contrast("on-primary", background) >= 4.5, background);
+    assert.ok(contrast("on-primary", background) >= 3, background);
     assert.match(css, new RegExp(`--color-${background}: var\\(--palette-${background}\\);`));
   }
   assert.match(css, /--color-on-primary: var\(--palette-on-primary\);/);
@@ -44,7 +46,7 @@ test("app screens take their colors and heading typography from the global theme
   }
 });
 
-test("the main flows share the same primary action colors", () => {
+test("the main flows share the same primary action colors and label style", () => {
   for (const file of [
     "google-account.tsx",
     "closet/page.tsx",
