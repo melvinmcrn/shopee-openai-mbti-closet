@@ -1,7 +1,7 @@
 import { deletePrivateFile, readPrivateFile, writePrivateFile } from "../private-files.mjs";
 import { fileUrl } from "../wardrobe-files.mjs";
 import { fixtures } from "./extraction-fixtures.mjs";
-import { cutout, ExtractionImageError, normalizePhoto } from "./extraction-image.mjs";
+import { ExtractionImageError, normalizePhoto } from "./extraction-image.mjs";
 import { LunaExtractionError, lunaExtraction } from "./extraction-luna.mjs";
 
 const columns = "id, name, category, garment_type, color, image_file_id, confirmed_at, extraction_source";
@@ -85,13 +85,18 @@ export async function extract(request, env, userId, id) {
     const bytes = new Uint8Array(await photoFile.arrayBuffer());
     const fixture = fixturesEnabled ? await fixtureFor(bytes) : null;
     if (!fixture && !apiKey) return failure(unavailable, "extraction_unavailable", 503);
-    const photo = await normalizePhoto(bytes);
-    extracted = fixture ?? await lunaExtraction(photo, apiKey);
-    source = fixture ? "fixture" : "luna";
-    png = cutout(photo, extracted.regions);
+    if (fixture) {
+      extracted = fixture;
+      source = "fixture";
+      png = Uint8Array.from(atob(fixture.pngBase64), (char) => char.charCodeAt(0));
+    } else {
+      extracted = await lunaExtraction(await normalizePhoto(bytes), apiKey);
+      source = "luna";
+      png = extracted.png;
+    }
   } catch (error) {
     if (error instanceof LunaExtractionError) return failure(error.message, error.code, error.status);
-    if (error instanceof ExtractionImageError) return failure(error.message, error.status === 422 ? "invalid_extraction" : "unsupported_photo", error.status);
+    if (error instanceof ExtractionImageError) return failure(error.message, "unsupported_photo", error.status);
     throw error;
   }
 

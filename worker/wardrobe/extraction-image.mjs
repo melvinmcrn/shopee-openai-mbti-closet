@@ -1,10 +1,12 @@
 import jpeg from "jpeg-js";
-import { decode, encode, hasPngSignature } from "fast-png";
+import { decode, hasPngSignature } from "fast-png";
 
 const maxSourcePixels = 24_000_000;
 const maxPngPixels = 8_000_000;
 const maxDimension = 1024;
-const scale = 1000;
+export const maxCutoutBytes = 8 * 1024 * 1024;
+const maxCutoutDimension = 1536;
+const maxCutoutPixels = 1024 * 1536;
 
 export class ExtractionImageError extends Error {
   constructor(message, status = 415) {
@@ -45,13 +47,17 @@ function sourcePoint(x, y, width, height, orientation) {
   }
 }
 
-async function decodePng(bytes) {
+async function decodePng(bytes, validateCutout = false) {
   if (bytes.length < 33) throw new ExtractionImageError("The PNG photo could not be decoded.");
   const header = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const width = header.getUint32(16);
   const height = header.getUint32(20);
   const depth = bytes[24];
   const channels = { 0: 1, 2: 3, 4: 2, 6: 4 }[bytes[25]];
+  if (validateCutout && (width > maxCutoutDimension || height > maxCutoutDimension ||
+      width * height > maxCutoutPixels || (channels !== 2 && channels !== 4))) {
+    throw new ExtractionImageError("Invalid cutout dimensions or missing alpha.");
+  }
   if (width * height > maxPngPixels || width * height * depth * (channels ?? 1) > 256_000_000) {
     throw new ExtractionImageError("Choose a smaller PNG for automatic extraction.", 413);
   }
@@ -69,10 +75,11 @@ async function decodePng(bytes) {
     const type = String.fromCharCode(...bytes.subarray(offset + 4, offset + 8));
     if (type === "IHDR" && (offset !== 8 || length !== 13)) break;
     if (offset === 8 && type !== "IHDR") break;
+    if (validateCutout && ["acTL", "fcTL", "fdAT"].includes(type)) break;
     if (["IHDR", "IDAT", "tRNS", "IEND"].includes(type)) retained.push(bytes.subarray(offset, end));
     if (type === "IDAT") idat.push(bytes.subarray(offset + 8, end - 4));
     if (type === "IEND") {
-      ended = length === 0;
+      ended = length === 0 && (!validateCutout || end === bytes.length);
       break;
     }
     offset = end;
@@ -155,42 +162,22 @@ export async function normalizePhoto(bytes) {
   return { width, height, data };
 }
 
-function drawRegion(mask, width, height, { outer, holes }) {
-  const rings = [outer, ...holes].map((ring) =>
-    ring.map(([x, y]) => [x * width / scale, y * height / scale]));
-  const top = Math.max(0, Math.floor(Math.min(...rings[0].map(([, y]) => y))));
-  const bottom = Math.min(height, Math.ceil(Math.max(...rings[0].map(([, y]) => y))));
-  for (let row = top; row < bottom; row++) {
-    const y = row + 0.5;
-    const edges = [];
-    for (const ring of rings) {
-      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-        const [x1, y1] = ring[j];
-        const [x2, y2] = ring[i];
-        if ((y1 > y) !== (y2 > y)) edges.push(x1 + (y - y1) * (x2 - x1) / (y2 - y1));
-      }
-    }
-    edges.sort((left, right) => left - right);
-    for (let i = 0; i + 1 < edges.length; i += 2) {
-      const start = Math.max(0, Math.ceil(edges[i] - 0.5));
-      const end = Math.min(width, Math.ceil(edges[i + 1] - 0.5));
-      mask.fill(1, row * width + start, row * width + end);
-    }
+// Decode only to check the image. The caller stores the provider's original bytes.
+export async function validateCutoutPng(bytes) {
+  if (bytes.length < 33 || bytes.length > maxCutoutBytes || !hasPngSignature(bytes)) {
+    throw new ExtractionImageError("Invalid cutout PNG.");
   }
-}
-
-export function cutout(photo, regions) {
-  const { data, width, height } = photo;
-  const mask = new Uint8Array(width * height);
-  for (const region of regions) drawRegion(mask, width, height, region);
-  let garmentPixels = 0;
-  for (let index = 0; index < mask.length; index++) {
-    const offset = index * 4;
-    if (mask[index]) garmentPixels += Number(data[offset + 3] > 0);
-    else data.fill(0, offset, offset + 4);
+  const png = await decodePng(bytes, true);
+  const opaque = png.depth === 16 ? 65535 : 255;
+  let transparent = 0;
+  let solid = 0;
+  for (let i = png.channels - 1; i < png.data.length; i += png.channels) {
+    transparent += Number(png.data[i] === 0);
+    solid += Number(png.data[i] === opaque);
   }
-  if (garmentPixels < mask.length * 0.005 || garmentPixels > mask.length * 0.995) {
-    throw new ExtractionImageError("The garment outline could not be used. You can review the original photo.", 422);
+  // A real cutout needs both visible fabric and a genuinely transparent background.
+  const minPixels = Math.ceil(png.width * png.height * 0.005);
+  if (transparent < minPixels || solid < minPixels) {
+    throw new ExtractionImageError("The cutout has no usable foreground or transparent background.");
   }
-  return encode(photo);
 }

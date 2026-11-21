@@ -24,9 +24,11 @@ Add `http://localhost:3000/api/auth/callback/google` under **Authorized redirect
 
 ## Wardrobe photo extraction
 
-Set `OPENAI_API_KEY` as a server-only Sites runtime secret (or in the ignored `.dev.vars` for local Worker development). The key must have API access to `gpt-6-luna` and Fast mode. The upload page converts WebP photos to PNG before uploading; the Worker isolates the garment and saves the cutout and editable metadata on a private draft. The user must confirm the item to add it to the closet. If extraction fails, review explicitly uses the original photo and does not claim AI success.
+Set `OPENAI_API_KEY` as a server-only Sites runtime secret (or in the ignored `.dev.vars` for local Worker development). Vercel development uses the same secret in its server environment. The API project must have access to GPT-6 Luna, Fast tier, and the built-in image generation tool.
 
-`WARDROBE_EXTRACTION_FIXTURES=1` is only for explicit fixture tests/demo images; it is not a substitute for production API access.
+Wardrobe extraction submits the normalized photo once to OpenAI Responses using `gpt-6-luna`, High reasoning, and Fast service. Luna uses the built-in `gpt-image-2.5-flare` image editing tool inside that request. The same response supplies a transparent PNG and editable name, category, garment type, and color. The backend validates the cutout, stores the returned PNG bytes privately, and leaves the item as a draft until the user confirms it. If the PNG or details are missing or invalid, manual review still uses the original photo.
+
+`WARDROBE_EXTRACTION_FIXTURES=1` is only for exact test/demo photos with precomputed cutouts; it is not a substitute for production API access.
 
 ## Production build
 
