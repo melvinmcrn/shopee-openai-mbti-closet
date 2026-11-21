@@ -33,7 +33,10 @@ const db = {
   prepare(sql) {
     const statement = database.prepare(sql);
     return {
-      bind(...parameters) {
+      bind(...values) {
+        const parameters = /\?\d/u.test(sql)
+          ? [Object.fromEntries(values.map((value, index) => [String(index + 1), value]))]
+          : values;
         return {
           first: async () => statement.get(...parameters) ?? null,
           all: async () => ({ results: statement.all(...parameters) }),

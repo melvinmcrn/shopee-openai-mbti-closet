@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { styleOptions } from "../style-options";
+import { FooterNavigation } from "../../footer-navigation";
 
 type EditableProfile = {
   heightCm: number | null;
@@ -177,9 +178,9 @@ export default function ProfileSettings() {
   return (
     <main className="min-h-screen flex-1 bg-selected px-5 py-8 text-text sm:px-8 sm:py-12">
       <div className="mx-auto flex max-w-2xl flex-col gap-7">
-        {profile && (
-          <Link className="w-fit text-sm font-medium text-supporting underline underline-offset-4" href={profile.setupCompletedAt ? "/planner" : "/profile/ready"}>
-            {profile.setupCompletedAt ? "← Back to planner" : "← Back to planner setup"}
+        {profile && !profile.setupCompletedAt && (
+          <Link className="w-fit text-sm font-medium text-supporting underline underline-offset-4" href="/profile/ready">
+            ← Back to planner setup
           </Link>
         )}
         <header>
@@ -298,6 +299,7 @@ export default function ProfileSettings() {
           </>
         )}
       </div>
+      {profile?.setupCompletedAt && <FooterNavigation active="Profile" />}
     </main>
   );
 }
