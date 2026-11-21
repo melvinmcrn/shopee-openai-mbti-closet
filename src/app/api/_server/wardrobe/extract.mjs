@@ -105,8 +105,18 @@ async function prepareDraft(env, userId, itemId, dimension) {
   }
 }
 
-function lunaFailure(error) {
-  if (error instanceof LunaExtractionError) return failure(error.message, error.code, error.status);
+function lunaFailure(error, primaryAttempt = false) {
+  if (error instanceof LunaExtractionError) {
+    const result = failure(error.message, error.code, error.status);
+    if (primaryAttempt) {
+      result.body.nextAction = "manual_review";
+    } else if (["image_missing", "image_alpha", "image_layout", "batch_png_layout"].includes(error.stage)) {
+      result.body.nextAction = "extract_primary";
+    } else if (["final_message_refused", "provider_filtered"].includes(error.stage)) {
+      result.body.nextAction = "manual_review";
+    }
+    return result;
+  }
   console.warn("Wardrobe extraction failed after draft upload");
   return failure(unavailable, "extraction_unavailable", 503);
 }
@@ -122,10 +132,10 @@ export async function extractDraft(env, userId, itemId, extractor = lunaExtracti
   if (pending.fixture) return persistFixture(env, userId, pending);
 
   try {
-    const garments = await extractor(pending.photo, pending.apiKey);
+    const garments = await extractor(pending.photo, pending.apiKey, itemId);
     return await persistExtraction(env, userId, pending.draft, garments, "luna");
   } catch (error) {
-    if (error instanceof LunaExtractionError) return lunaFailure(error);
+    if (error instanceof LunaExtractionError) return lunaFailure(error, extractor === lunaPrimaryExtraction);
     throw error;
   }
 }
@@ -157,8 +167,8 @@ export async function extractDraftBatch(env, userId, ids) {
   try {
     const apiKey = pending[0].apiKey;
     results = pending.length === 1
-      ? [await lunaExtraction(pending[0].photo, apiKey)]
-      : await lunaBatchExtraction(pending.map(({ photo }) => photo), apiKey);
+      ? [await lunaExtraction(pending[0].photo, apiKey, pending[0].draft.id)]
+      : await lunaBatchExtraction(pending.map(({ photo }) => photo), apiKey, pending.map(({ draft }) => draft.id));
   } catch (error) {
     const failed = lunaFailure(error);
     for (const { index } of pending) outcomes[index] = failed;
@@ -168,7 +178,9 @@ export async function extractDraftBatch(env, userId, ids) {
   for (let offset = 0; offset < pending.length; offset += 4) {
     await Promise.all(pending.slice(offset, offset + 4).map(async ({ index, draft }, i) => {
       try {
-        outcomes[index] = await persistExtraction(env, userId, draft, results[offset + i], "luna");
+        const garments = results[offset + i];
+        outcomes[index] = garments instanceof LunaExtractionError ? lunaFailure(garments)
+          : await persistExtraction(env, userId, draft, garments, "luna");
       } catch (error) {
         outcomes[index] = lunaFailure(error);
       }

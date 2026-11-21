@@ -38,7 +38,7 @@ async function finishDraft(env, userId, id) {
 function uploadResult(id, { status, body }) {
   if (status === 200) return { status: 200, body: { id, extraction: { status: "ready", ...body } } };
   if (status === 404 || status === 409) return { status, body };
-  return { status: 200, body: { id, extraction: { status: "manual", code: body.code } } };
+  return { status: 200, body: { id, extraction: { status: "manual", code: body.code, nextAction: body.nextAction } } };
 }
 
 export function imageType(image) {

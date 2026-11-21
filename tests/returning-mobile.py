@@ -494,6 +494,43 @@ def check_outfit_upload(browser, device, base):
     context.close()
 
 
+def check_automatic_cutout_retry(browser, device, base):
+    photo = Path(__file__).resolve().parents[1] / "public/sample-wardrobe/studio-model.webp"
+    for action, succeeds in [("extract_primary", True), ("extract_primary", False), ("manual_review", False)]:
+        context, page = mobile_session(browser, device, base, "other-account")
+        requests = []
+        def upload(route):
+            requests.append("upload")
+            draft = route.fetch().json()["items"][0]
+            draft["extraction"] = {"status": "manual", "code": "invalid_extraction", "nextAction": action}
+            route.fulfill(json={"items": [draft]})
+
+        def primary(route):
+            requests.append("primary")
+            assert route.request.method == "POST" and not route.request.post_data_buffer
+            draft_id = int(route.request.url.split("/items/")[1].split("/")[0])
+            if succeeds:
+                route.fulfill(json={"items": [{"id": draft_id, "name": "Printed sundress"}]})
+            else:
+                route.fulfill(status=502, json={"code": "invalid_extraction"})
+
+        page.route("**/api/wardrobe/upload", upload)
+        page.route("**/extract?mode=primary", primary)
+        page.goto(f"{base}/wardrobe/add/")
+        page.get_by_label("Choose photos").set_input_files(photo)
+        page.get_by_role("button", name="Upload photos").tap()
+        review = page.get_by_role("link", name="Review item", exact=True)
+        expect(review).to_be_visible()
+        if succeeds:
+            expect(page.get_by_text("Printed sundress")).to_be_visible()
+        else:
+            expect(page.get_by_text("Your photo is saved. The automatic cutout failed. You can review it manually.")).to_be_visible()
+            assert "manual=" in review.get_attribute("href")
+        expect(page.get_by_role("button", name="Retry failed photos")).to_have_count(0)
+        assert requests == (["upload", "primary"] if action == "extract_primary" else ["upload"])
+        context.close()
+
+
 def refresh_stale_choice(page, context, base, image_url, other_image, choice):
     evict_photo(context, base, image_url)
     requests = []
@@ -686,6 +723,7 @@ def main():
                     check_two_catalog_basics(browser, device, base, "profile-only")
                     check_wardrobe_deletion(browser, device, base)
                     check_outfit_upload(browser, device, base)
+                    check_automatic_cutout_retry(browser, device, base)
                     check_occasion_look(browser, device, base, "returning-session")
                     check_occasion_look(browser, device, base, "empty-closet")
                 finally:
