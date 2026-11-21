@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@auth/core": "^0.41.3",
+    "fast-png": "^8.0.0",
+    "jpeg-js": "^0.4.4",
     "next": "16.4.6",
     "react": "19.3.0",
     "react-dom": "19.3.0"

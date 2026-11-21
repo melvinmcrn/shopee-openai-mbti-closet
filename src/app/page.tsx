@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { GoogleAccount } from "./google-account";
 
 function WardrobeCollage() {
@@ -32,9 +33,9 @@ export default function Home() {
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-[390px] flex-1 flex-col px-6 pb-7 pt-5">
       <header className="flex items-center justify-between border-b border-[#dcd3cb] pb-4">
-        <a href="/" className="font-heading text-[30px] font-bold leading-none tracking-[-0.05em] text-text" aria-label="Closet home">
+        <Link href="/" className="font-heading text-[30px] font-bold leading-none tracking-[-0.05em] text-text" aria-label="Closet home">
           closet.
-        </a>
+        </Link>
         <span className="text-sm font-semibold text-secondary">Your personal stylist</span>
       </header>
 
