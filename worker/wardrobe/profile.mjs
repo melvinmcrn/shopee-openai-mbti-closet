@@ -1,5 +1,5 @@
 import { deleteFile, fileUrl, putFile } from "../wardrobe-files.mjs";
-import { imageType, maxImageBytes } from "./upload.mjs";
+import { imageType, maxImageBytes, readUploadForm } from "./upload.mjs";
 
 const cacheHeaders = { "Cache-Control": "no-store" };
 const editableFields = new Set([
@@ -116,9 +116,11 @@ async function retryPhotoCleanup(env, userId) {
 }
 
 async function uploadPhoto(request, env, userId) {
-  const form = await request.formData().catch(() => null);
-  const image = form?.get("image");
-  if (!image || typeof image === "string" || !image.size) {
+  const parsed = await readUploadForm(request);
+  if (!parsed.form) return error(parsed.error, parsed.status);
+  const image = parsed.form.get("image");
+  if (!image || typeof image === "string" || !image.size ||
+      [...parsed.form.values()].filter(value => value instanceof Blob).length !== 1) {
     return error("Select a photo to upload.", 400);
   }
   if (image.size > maxImageBytes) return error("The photo must be 8 MB or smaller.", 413);

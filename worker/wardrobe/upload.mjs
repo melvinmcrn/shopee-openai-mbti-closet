@@ -55,9 +55,9 @@ export async function readUploadForm(request) {
 }
 
 export async function upload(request, env, userId) {
-  const result = await readUploadForm(request);
-  if (!result.form) return error(result.error, result.status);
-  const { form } = result;
+  const parsed = await readUploadForm(request);
+  if (!parsed.form) return error(parsed.error, parsed.status);
+  const { form } = parsed;
 
   const draftKey = form.get("draftKey");
   if (typeof draftKey !== "string" || !uuid.test(draftKey) || form.getAll("draftKey").length !== 1) {
@@ -65,7 +65,8 @@ export async function upload(request, env, userId) {
   }
 
   const image = form.get("image");
-  if (!(image instanceof Blob) || image.size === 0 || form.getAll("image").length !== 1) {
+  if (!(image instanceof Blob) || image.size === 0 || form.getAll("image").length !== 1 ||
+      [...form.values()].filter(value => value instanceof Blob).length !== 1) {
     return error("Choose one photo to upload.", 400);
   }
   if (image.size > maxImageBytes) return error("Choose a photo that is 8 MB or smaller.", 413);
