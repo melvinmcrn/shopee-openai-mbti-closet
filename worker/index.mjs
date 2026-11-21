@@ -1,6 +1,9 @@
 import { Auth } from "@auth/core";
 import Google from "@auth/core/providers/google";
 
+import { resolveAccount } from "./wardrobe-account.mjs";
+import { wardrobeApi } from "./wardrobe-api.mjs";
+
 const origin = "https://mbti-closet.stonyimpala.chatgpt.site";
 const authPath = "/api/auth";
 const accountPath = "/api/account";
@@ -22,6 +25,10 @@ function auth(request, env) {
       }),
     ],
     callbacks: {
+      jwt({ token, account }) {
+        if (account?.provider === "google") token.googleSubject = account.providerAccountId;
+        return token;
+      },
       redirect: ({ baseUrl }) => baseUrl,
     },
     // Provider errors may include sensitive request details.
@@ -46,7 +53,8 @@ function serveAsset(request, pathname) {
   if (request.method !== "GET" && request.method !== "HEAD") {
     return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
   }
-  const file = pathname === "/" ? "/index.html" : pathname;
+  const route = pathname.replace(/\/$/, "");
+  const file = !route ? "/index.html" : Object.hasOwn(SITE_ASSETS, route + ".html") ? route + ".html" : pathname;
   const asset = Object.hasOwn(SITE_ASSETS, file) ? SITE_ASSETS[file] : undefined;
   const [type, data] = asset ?? SITE_ASSETS["/404.html"];
   return new Response(request.method === "HEAD" ? null : Uint8Array.from(atob(data), (byte) => byte.charCodeAt(0)), {
@@ -65,17 +73,27 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const { pathname } = url;
-    if (!pathname.startsWith(authPath + "/") && pathname !== authPath && pathname !== accountPath) {
+    if (!pathname.startsWith("/api/")) {
       return serveAsset(request, pathname);
     }
     if (url.origin !== origin) {
       return privateResponse(new Response("Unexpected host", { status: 400 }));
     }
-    if (request.method === "POST" && request.headers.get("Origin") !== origin) {
+    if (!["GET", "HEAD"].includes(request.method) && request.headers.get("Origin") !== origin) {
       return privateResponse(new Response("Forbidden", { status: 403 }));
     }
     if (!env.AUTH_SECRET || !env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
       return privateResponse(new Response("Sign-in is unavailable", { status: 503 }));
+    }
+    if (!pathname.startsWith(authPath + "/") && pathname !== authPath && pathname !== accountPath) {
+      try {
+        const account = await resolveAccount(request, env);
+        if (!account) return privateResponse(Response.json({ error: "Sign in again to open your wardrobe." }, { status: 401 }));
+        return privateResponse(await wardrobeApi(request, env, account.id));
+      } catch (error) {
+        console.error("Wardrobe request failed", error.name);
+        return privateResponse(Response.json({ error: "Wardrobe service is unavailable. Try again." }, { status: 503 }));
+      }
     }
     if (pathname === accountPath) {
       if (request.method !== "POST") {

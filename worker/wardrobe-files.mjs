@@ -20,11 +20,13 @@ export function deleteFile(env, userId, key) {
 }
 
 export function fileUrl(key) {
-  return "/api/wardrobe/image?ref=" + encodeURIComponent(key);
+  return "/api/files/" + encodeURIComponent(key);
 }
 
 export async function privateImage(request, env, userId) {
-  const key = new URL(request.url).searchParams.get("ref");
+  let key;
+  try { key = decodeURIComponent(new URL(request.url).pathname.slice("/api/files/".length)); }
+  catch { return new Response(null, { status: 404 }); }
   const missing = () => new Response(null, { status: 404 });
   if (typeof key !== "string" || !key.startsWith(`users/${userId}/`)) return missing();
   const owned = await env.DB.prepare(`
