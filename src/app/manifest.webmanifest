@@ -1,12 +1,13 @@
 {
   "name": "Closet",
   "short_name": "Closet",
-  "description": "A personal style and outfit discovery app.",
+  "description": "Get dressed from your own closet.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#FCFAF6",
   "theme_color": "#FCFAF6",
   "icons": [
+    { "src": "/favicon.ico", "sizes": "16x16 32x32 48x48", "type": "image/x-icon", "purpose": "any" },
     { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
     { "src": "/icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
   ]

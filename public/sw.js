@@ -1,6 +1,14 @@
-const CACHE_NAME = "mbti-closet-public-v2";
+const CACHE_PREFIX = "closet-public-";
+const CACHE_NAME = `${CACHE_PREFIX}v1`;
 const OFFLINE_PAGE = "/offline.html";
-const PUBLIC_FILES = [OFFLINE_PAGE, "/manifest.webmanifest", "/icon.svg", "/icon-maskable.svg"];
+const PUBLIC_FILES = [
+  OFFLINE_PAGE,
+  "/manifest.webmanifest",
+  "/favicon.ico",
+  "/icon.svg",
+  "/icon-maskable.svg",
+  "/closet-logo.svg",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
@@ -14,7 +22,7 @@ self.addEventListener("activate", (event) => {
   event.waitUntil((async () => {
     const names = await caches.keys();
     await Promise.all(names
-      .filter((name) => name.startsWith("mbti-closet-") && name !== CACHE_NAME)
+      .filter((name) => name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME)
       .map((name) => caches.delete(name)));
     await self.clients.claim();
   })());

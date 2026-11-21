@@ -5,10 +5,10 @@
   "scripts": {
     "dev": "npm run build && npm start",
     "dev:frontend": "next dev",
-    "dev:vercel": "MBTI_TARGET=vercel next dev --webpack",
+    "dev:vercel": "CLOSET_TARGET=vercel next dev --webpack",
     "build": "next build --webpack && node scripts/build-sites.mjs",
-    "build:vercel": "MBTI_TARGET=vercel next build --webpack",
-    "start:vercel": "MBTI_TARGET=vercel next start",
+    "build:vercel": "CLOSET_TARGET=vercel next build --webpack",
+    "start:vercel": "CLOSET_TARGET=vercel next start",
     "prestart": "wrangler d1 migrations apply DB --local --config wrangler.local.jsonc",
     "start": "wrangler dev --config wrangler.local.jsonc",
     "lint": "eslint",
