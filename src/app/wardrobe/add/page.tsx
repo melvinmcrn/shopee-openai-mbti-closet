@@ -13,7 +13,7 @@ const extractionMessages = new Map([
   ["extraction_unavailable", "Automatic garment extraction is unavailable right now."],
   ["unsupported_photo", "Automatic extraction couldn’t read this image. You can still review the saved photo."],
   ["garment_not_found", "No wardrobe items were found. Try a clearer photo or review it manually."],
-  ["invalid_extraction", "The cutout or garment details could not be read. Try a clearer photo."],
+  ["invalid_extraction", "Your photo is saved. Try extracting the main item, or review it manually."],
 ]);
 
 const photoStatuses = {
@@ -31,6 +31,7 @@ type Photo = {
   draftKey: string;
   id: number | null;
   garments?: ExtractedItem[];
+  retryMainItem?: boolean;
   status: keyof typeof photoStatuses;
   error?: string;
 };
@@ -45,6 +46,26 @@ type UploadItem = {
   status?: number;
   error?: string;
 };
+
+async function retryMainItem(photo: Photo, signal: AbortSignal): Promise<Photo> {
+  try {
+    const response = await fetch(`/api/wardrobe/items/${photo.id}/extract?mode=primary`, { method: "POST", signal });
+    const result: unknown = await response.json();
+    if (typeof result !== "object" || result === null) return { ...photo, error: extractionError };
+    if (response.ok && "items" in result && Array.isArray(result.items) && result.items.length
+      && result.items.every((item): item is ExtractedItem => item && Number.isSafeInteger(item.id) && typeof item.name === "string")) {
+      return { ...photo, status: "ready", garments: result.items, retryMainItem: false, error: undefined };
+    }
+    const code = "code" in result && typeof result.code === "string" ? result.code : "";
+    const message = "error" in result && typeof result.error === "string" ? result.error : extractionError;
+    const error = code === "invalid_extraction"
+      ? "The main item could not be extracted. You can review the saved photo manually."
+      : extractionMessages.get(code) ?? message;
+    return { ...photo, error };
+  } catch {
+    return { ...photo, error: "The retry could not be confirmed. Try again or check your saved drafts." };
+  }
+}
 
 const fileButton = "relative inline-flex cursor-pointer items-center rounded-full border border-divider px-4 py-2 text-sm font-medium focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-secondary has-disabled:cursor-not-allowed has-disabled:opacity-60";
 const actionButton = "rounded-full bg-primary px-5 py-2.5 font-semibold text-on-primary hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:cursor-not-allowed disabled:opacity-60";
@@ -144,14 +165,23 @@ export default function AddWardrobePhotoPage() {
     setBatchError("");
   }
 
-  async function processPhotos(batch: Photo[]) {
-    if (activeTask.current || !batch.length) return;
+  async function processPhotos(selection: Photo[]) {
+    if (activeTask.current || !selection.length) return;
     const controller = new AbortController();
     activeTask.current = controller;
     setBatchError("");
     setSelectionError("");
     setProgress({ phase: "preparing" });
     try {
+      for (const photo of selection.filter((entry) => entry.retryMainItem)) {
+        if (photo.id === null) continue;
+        setProgress({ phase: "processing" });
+        const updated = await retryMainItem(photo, controller.signal);
+        if (controller.signal.aborted) return;
+        setPhotos((current) => current.map((entry) => entry.draftKey === photo.draftKey ? updated : entry));
+      }
+      const batch = selection.filter((photo) => !photo.retryMainItem);
+      if (!batch.length) return;
       let prepared;
       try {
         prepared = await prepareWardrobeBatch(batch);
@@ -197,7 +227,7 @@ export default function AddWardrobePhotoPage() {
           }
           const code = item.extraction?.code;
           return {
-            ...photo, id: item.id, status: "extraction-failed",
+            ...photo, id: item.id, status: "extraction-failed", retryMainItem: code === "invalid_extraction",
             error: (code && extractionMessages.get(code)) || extractionError,
           };
         }

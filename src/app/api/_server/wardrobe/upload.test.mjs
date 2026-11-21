@@ -153,7 +153,7 @@ const cutoutPng = encode({
 });
 const testPhoto = new File([photoPng], "shirt.png", { type: "image/png" });
 
-function completedExtraction() {
+function completedExtraction(metadata = { garments: [{ name: "Test shirt", category: "top", garment_type: "Shirt", color: "Black" }] }) {
   return Response.json({
     status: "completed",
     output: [
@@ -162,9 +162,7 @@ function completedExtraction() {
         type: "message", role: "assistant", status: "completed",
         content: [{
           type: "output_text",
-          text: JSON.stringify({
-            garments: [{ name: "Test shirt", category: "top", garment_type: "Shirt", color: "Black" }],
-          }),
+          text: JSON.stringify(metadata),
         }],
       },
     ],
@@ -193,7 +191,7 @@ function outfitExtraction() {
   });
 }
 
-function connectBrowserToWardrobe(t, env, providerResponse = completedExtraction) {
+function connectBrowserToWardrobe(t, env, providerResponse = () => completedExtraction()) {
   env.OPENAI_API_KEY = "fixture-key";
   let appRequests = 0;
   let providerRequests = 0;
@@ -270,6 +268,33 @@ test("when extraction fails, one POST returns the existing private draft for rev
   assert.deepEqual([...files.keys()], [recovered.extraction.item.imageFileId]);
   assert.deepEqual(calls(), [2, 2]);
   assert.equal(sqlite.prepare("SELECT count(*) AS count FROM wardrobe_items").get().count, 1);
+});
+
+test("a rejected outfit can retry the saved photo as one main item without duplicating the draft", async (t) => {
+  const { env, files, sqlite } = fixture(t);
+  env.OPENAI_API_KEY = "test";
+  const garment = { name: "Beach dress", category: "dress", garment_type: "Dress", color: "White" };
+  const provider = t.mock.method(globalThis, "fetch", async (_url, init) => {
+    const { schema } = JSON.parse(init.body).text.format;
+    if (schema.properties.garments) return completedExtraction({ garments: [garment, garment] });
+    assert.ok(schema.properties.garment_found);
+    return completedExtraction({ garment_found: true, ...garment });
+  });
+  const response = await postBatch(env, [{ key: crypto.randomUUID(), photo: testPhoto }]);
+  const { items: [draft] } = await response.json();
+  assert.deepEqual(draft.extraction, { status: "manual", code: "invalid_extraction" });
+  assert.deepEqual([...files.values()].map((file) => file.body), [photoPng]);
+
+  const retry = (owner) => wardrobeApi(new Request(
+    `https://wardrobe.example/api/wardrobe/items/${draft.id}/extract?mode=primary`, { method: "POST" },
+  ), env, owner);
+  assert.equal((await retry(2)).status, 404);
+  const saved = await (await retry(1)).json();
+  assert.deepEqual(saved.items.map(({ id, name }) => [id, name]), [[draft.id, garment.name]]);
+  assert.deepEqual([...files.values()].map((file) => file.body), [cutoutPng]);
+  assert.deepEqual(await (await retry(1)).json(), saved);
+  assert.equal(provider.mock.callCount(), 2);
+  assert.equal(sqlite.prepare("SELECT count(*) AS count FROM wardrobe_items WHERE confirmed_at IS NULL").get().count, 1);
 });
 
 test("retry does not resurrect an archived draft or extract an already confirmed manual item", async (t) => {

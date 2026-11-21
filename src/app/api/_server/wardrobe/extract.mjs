@@ -2,7 +2,7 @@ import { deletePrivateFile, readPrivateFile, writePrivateFile } from "../private
 import { fileUrl } from "../wardrobe-files.mjs";
 import { fixtures } from "./extraction-fixtures.mjs";
 import { ExtractionImageError, normalizePhoto } from "./extraction-image.mjs";
-import { LunaExtractionError, lunaBatchExtraction, lunaExtraction } from "./extraction-luna.mjs";
+import { LunaExtractionError, lunaBatchExtraction, lunaExtraction, lunaPrimaryExtraction } from "./extraction-luna.mjs";
 
 const columns = "id, name, category, garment_type, color, image_file_id, confirmed_at, extraction_source, extraction_group_id";
 const maxPhotoBytes = 8 * 1024 * 1024;
@@ -61,7 +61,8 @@ async function fixtureFor(bytes) {
 export async function extract(request, env, userId, id) {
   if (request.method !== "POST") return new Response(null, { status: 405, headers: { Allow: "POST" } });
   const itemId = /^[1-9]\d*$/.test(id) ? Number(id) : NaN;
-  const { body, status } = await extractDraft(env, userId, itemId);
+  const extractor = new URL(request.url).searchParams.get("mode") === "primary" ? lunaPrimaryExtraction : lunaExtraction;
+  const { body, status } = await extractDraft(env, userId, itemId, extractor);
   return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }
 
@@ -115,13 +116,13 @@ function persistFixture(env, userId, { draft, fixture }) {
   return persistExtraction(env, userId, draft, [{ ...fixture, png }], "fixture");
 }
 
-export async function extractDraft(env, userId, itemId) {
+export async function extractDraft(env, userId, itemId, extractor = lunaExtraction) {
   const pending = await prepareDraft(env, userId, itemId);
   if (!pending.draft) return pending;
   if (pending.fixture) return persistFixture(env, userId, pending);
 
   try {
-    const garments = await lunaExtraction(pending.photo, pending.apiKey);
+    const garments = await extractor(pending.photo, pending.apiKey);
     return await persistExtraction(env, userId, pending.draft, garments, "luna");
   } catch (error) {
     if (error instanceof LunaExtractionError) return lunaFailure(error);
