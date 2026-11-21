@@ -188,11 +188,8 @@ export default function AddWardrobePhotoPage() {
 
 
   return (
-    <main className="wardrobe-page mx-auto w-full max-w-xl px-5 py-10 sm:px-8 sm:py-14">
+    <main className="wardrobe-page mx-auto w-full max-w-xl flex-1 px-5 py-10 sm:px-8 sm:py-14">
       <header className="mb-7 space-y-3">
-        <Link className="text-sm font-medium underline underline-offset-4" href="/">
-          Closet
-        </Link>
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Add wardrobe photos</h1>
         <p>Choose several photos at once, with one garment per photo. You can review and save the items together.</p>
       </header>

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Bricolage_Grotesque, Figtree } from "next/font/google";
+import { AppHeader, FooterNavigation } from "./app-navigation";
 import { ServiceWorkerRegistration } from "./service-worker-registration";
 import "./globals.css";
 
@@ -56,12 +57,14 @@ const website = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${bricolage.variable} ${figtree.variable} h-full antialiased`}>
-      <body className="min-h-full flex flex-col">
+      <body className="flex min-h-dvh flex-col">
         <script type="application/ld+json" dangerouslySetInnerHTML={{
           __html: JSON.stringify(website).replace(/</g, "\\u003c"),
         }} />
         <ServiceWorkerRegistration />
+        <AppHeader />
         {children}
+        <FooterNavigation />
       </body>
     </html>
   );

@@ -15,7 +15,7 @@ from playwright.sync_api import expect, sync_playwright
 
 OCCASION = "Anniversary dinner"
 WEAR_DATE = "2025-03-08"
-NOTE = "The flats were comfortable all evening."
+NOTE = "The heels were comfortable all evening."
 
 
 def mobile_session(browser, device, base, session):
@@ -35,26 +35,94 @@ def expect_heading(page, name):
     )
 
 
+def expect_navigation(page, active_tab=None):
+    header = page.get_by_role("banner")
+    expect(header).to_have_count(1)
+    expect(page.locator("header img[src='/closet-logo.svg']")).to_have_count(1)
+    expect(header.get_by_role("link").locator("img[src='/closet-logo.svg']")).to_be_visible()
+    for name in ("Saved", "Account"):
+        expect(page.locator("header").get_by_role("link", name=name, exact=True)).to_have_count(0)
+    expect(page.get_by_role("contentinfo")).to_have_count(1)
+    footer = page.get_by_role("navigation", name="Main navigation")
+    expect(footer).to_have_count(1)
+    for name in ("Home", "Wardrobe", "Saved", "Profile"):
+        expect(footer.get_by_role("link", name=name, exact=True)).to_be_visible()
+    if active_tab:
+        expect(footer.locator('[aria-current="page"]')).to_have_count(1)
+        expect(footer.get_by_role("link", name=active_tab, exact=True)).to_have_attribute("aria-current", "page")
+    return footer
+
+
 def open_saved(page, base):
     page.goto(f"{base}/planner/")
     expect_heading(page, "Outfit planner")
-    footer = page.get_by_role("navigation", name="Main navigation")
-    for name in ("Home", "Wardrobe", "Saved", "Profile"):
-        expect(footer.get_by_role("link", name=name, exact=True)).to_be_visible()
-    expect(footer.get_by_role("link", name="Home", exact=True)).to_have_attribute("aria-current", "page")
+    footer = expect_navigation(page, "Home")
     saved = footer.get_by_role("link", name="Saved", exact=True)
     saved.tap()
     expect_heading(page, "Saved looks")
     expect(saved).to_have_attribute("aria-current", "page")
-    expect(page.get_by_text("Walking flats", exact=True)).to_be_visible()
-    expect(page.get_by_text("Leather heels", exact=True)).to_have_count(0)
+    expect(page.get_by_text("Leather heels", exact=True)).to_be_visible()
+    expect(page.get_by_text("Walking flats", exact=True)).to_have_count(0)
     page.get_by_role("button", name=f"Open saved look for {OCCASION}").tap()
     expect_heading(page, OCCASION)
-    expect(page.get_by_text("Walking flats", exact=True)).to_be_visible()
-    expect(page.get_by_text("Leather heels", exact=True)).to_have_count(0)
-    flats_photo = page.get_by_role("listitem").filter(has_text="Walking flats").locator("img")
-    flats_photo.scroll_into_view_if_needed()
-    expect(flats_photo).to_have_js_property("naturalWidth", 1)
+    expect_navigation(page, "Saved")
+    expect(page.get_by_text("Leather heels", exact=True)).to_be_visible()
+    expect(page.get_by_text("Walking flats", exact=True)).to_have_count(0)
+    heels_photo = page.get_by_role("listitem").filter(has_text="Leather heels").locator("img")
+    heels_photo.scroll_into_view_if_needed()
+    expect(heels_photo).to_have_js_property("naturalWidth", 1)
+
+
+def check_shared_navigation(browser, device, base):
+    context, page = mobile_session(browser, device, base, "returning-session")
+    page.goto(f"{base}/planner/")
+    expect_heading(page, "Outfit planner")
+    footer = expect_navigation(page, "Home")
+    initial_header = page.get_by_role("banner").element_handle()
+    initial_footer = page.get_by_role("contentinfo").element_handle()
+
+    footer.get_by_role("link", name="Wardrobe").tap()
+    expect_heading(page, "Closet")
+    expect_navigation(page, "Wardrobe")
+    page.get_by_role("link", name="Add items").tap()
+    expect_heading(page, "Add wardrobe photos")
+    expect_navigation(page, "Wardrobe")
+
+    footer.get_by_role("link", name="Profile").tap()
+    expect_heading(page, "Account")
+    expect_navigation(page, "Profile")
+    expect(page.get_by_role("heading", name="Private profile picture")).to_be_visible()
+    page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+    assert page.evaluate("window.scrollY > 0")
+    expect(page.get_by_role("banner")).to_be_in_viewport(ratio=1)
+    expect(footer).to_be_in_viewport(ratio=1)
+    page.get_by_role("link", name="Back to planner setup").tap()
+    expect_heading(page, "Review your setup")
+    expect_navigation(page, "Profile")
+    footer.get_by_role("link", name="Saved").tap()
+    expect_heading(page, "Saved looks")
+    expect_navigation(page, "Saved")
+    assert urlparse(page.url).fragment == "saved"
+
+    footer.get_by_role("link", name="Home").tap()
+    expect_heading(page, "Outfit planner")
+    expect_navigation(page, "Home")
+    page.go_back()
+    expect_heading(page, "Saved looks")
+    expect_navigation(page, "Saved")
+    page.go_back()
+    expect_heading(page, "Review your setup")
+    expect_navigation(page, "Profile")
+    assert initial_header.evaluate("node => node.isConnected"), "Navigating replaced the header"
+    assert initial_footer.evaluate("node => node.isConnected"), "Navigating replaced the footer"
+    context.close()
+
+    context = browser.new_context(**device)
+    page = context.new_page()
+    page.goto(base)
+    expect(page.get_by_role("button", name="Sign in to get started")).to_be_visible()
+    expect_navigation(page)
+    context.close()
 
 
 def run_flow(browser, device, base):
@@ -65,7 +133,7 @@ def run_flow(browser, device, base):
     expect(page.get_by_text("Outerwear", exact=True).locator("..").locator("dd")).to_have_text("0")
     page.get_by_role("button", name="Plan a new outfit").tap()
     expect_heading(page, "What are you dressing for?")
-    expect(page.get_by_role("navigation", name="Main navigation")).to_have_count(0)
+    expect_navigation(page, "Home")
     page.get_by_role("textbox", name="Occasion", exact=True).fill(OCCASION)
     page.get_by_role("button", name="Continue").tap()
     expect_heading(page, "Today’s style")
@@ -82,16 +150,11 @@ def run_flow(browser, device, base):
     expect(page.get_by_role("article").nth(0)).to_contain_text("Silk blouse")
     expect(page.get_by_role("article").nth(1)).to_contain_text("Column dress")
     page.get_by_role("button", name="Choose look 1").tap()
-    expect_heading(page, "Refine your outfit")
-    shoes = page.get_by_role("combobox", name="Shoes")
-    expect(shoes).to_have_value("13")
-    shoes.select_option(label="Walking flats · Black")
-    expect(shoes).to_have_value("14")
-    expect(page.get_by_text("Changed", exact=True)).to_be_visible()
+    expect_heading(page, "Review your outfit")
     expect(page.get_by_text("Leather heels", exact=True)).to_be_visible()
     page.get_by_role("button", name="Save outfit").tap()
     expect_heading(page, OCCASION)
-    expect(page.get_by_text("Walking flats", exact=True)).to_be_visible()
+    expect(page.get_by_text("Leather heels", exact=True)).to_be_visible()
     expect(page.get_by_role("alert").filter(
         has_text="Shopping suggestions are temporarily unavailable."
     )).to_be_visible()
@@ -140,7 +203,7 @@ def run_flow(browser, device, base):
     context, page = mobile_session(browser, device, base, "other-account")
     page.goto(f"{base}/planner/#saved")
     expect(page.get_by_role("heading", name="No saved looks yet")).to_be_visible()
-    assert context.request.get(f"{base}/api/files/flats").status == 404
+    assert context.request.get(f"{base}/api/files/heels").status == 404
     page.goto(saved_url)
     expect(page.get_by_text("This item could not be found.", exact=True)).to_be_visible()
     context.close()
@@ -170,7 +233,9 @@ def main():
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(executable_path=os.getenv("PLANNER_CHROMIUM"))
                 try:
-                    run_flow(browser, playwright.devices["iPhone 13"], base)
+                    device = playwright.devices["iPhone 13"]
+                    check_shared_navigation(browser, device, base)
+                    run_flow(browser, device, base)
                 finally:
                     browser.close()
         finally:

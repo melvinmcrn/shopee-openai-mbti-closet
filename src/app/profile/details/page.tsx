@@ -1,7 +1,6 @@
 "use client";
 
 import Image from "next/image";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 
@@ -143,11 +142,8 @@ export default function ProfileDetailsPage() {
   }
 
   return (
-    <main className="wardrobe-page mx-auto w-full max-w-xl px-5 py-10 sm:px-8 sm:py-14">
+    <main className="wardrobe-page mx-auto w-full max-w-xl flex-1 px-5 py-10 sm:px-8 sm:py-14">
       <header className="mb-7 space-y-3">
-        <Link href="/" className="text-sm font-medium underline underline-offset-4">
-          Closet
-        </Link>
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Profile details</h1>
         <p>Add any details you’d like to save with your profile. You can skip this step.</p>
       </header>

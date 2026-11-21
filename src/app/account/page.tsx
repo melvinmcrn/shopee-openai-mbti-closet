@@ -3,7 +3,6 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
-import { FooterNavigation } from "../footer-navigation";
 import { SignOutButton } from "../sign-out-button";
 import { styleOptions } from "../profile/style-options";
 
@@ -177,7 +176,7 @@ export default function AccountPage() {
   const availableStyles = new Set([...styleOptions, ...(profile?.styles ?? [])]);
 
   return (
-    <main className="min-h-screen flex-1 bg-selected px-5 py-8 text-text sm:px-8 sm:py-12">
+    <main className="flex-1 bg-selected px-5 py-8 text-text sm:px-8 sm:py-12">
       <div className="mx-auto flex max-w-2xl flex-col gap-7">
         {profile && !profile.setupCompletedAt && (
           <Link className="w-fit text-sm font-medium text-supporting underline underline-offset-4" href="/profile/ready">
@@ -303,7 +302,6 @@ export default function AccountPage() {
           </>
         )}
       </div>
-      {profile?.setupCompletedAt && <FooterNavigation active="Profile" />}
     </main>
   );
 }

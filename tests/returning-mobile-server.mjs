@@ -127,7 +127,7 @@ function reply(response, status, data, type = "application/json") {
 const server = createServer(async (request, response) => {
   const path = new URL(request.url, "http://localhost").pathname;
   try {
-    if (path === "/api/planner" || path.startsWith("/api/files/")) {
+    if (path.startsWith("/api/")) {
       const headers = new Headers(request.headers);
       const session = /(?:^|;\s*)planner-fixture=([^;]+)/u.exec(headers.get("Cookie") ?? "")?.[1];
       const token = sessions.get(session);
@@ -145,7 +145,8 @@ const server = createServer(async (request, response) => {
       return response.end(Buffer.from(await result.arrayBuffer()));
     }
 
-    const page = path === "/" ? "/index.html" : /^\/planner\/?$/u.test(path) ? "/planner.html" : path;
+    const route = path.replace(/\/$/u, "");
+    const page = !route ? "/index.html" : extname(route) ? route : route + ".html";
     const file = resolve(output, "." + page);
     if (!file.startsWith(output + sep)) return reply(response, 404, "Not found", "text/plain");
     return reply(response, 200, await readFile(file), types.get(extname(file)) ?? "application/octet-stream");
