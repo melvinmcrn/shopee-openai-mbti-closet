@@ -4,6 +4,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { dispatchPlanner } from "../src/app/api/_server/planner/api.mjs";
+import { wardrobeApi } from "../src/app/api/_server/wardrobe-api.mjs";
+import { userData } from "../src/app/api/_server/user-data.mjs";
 
 const accountId = 1;
 const dress = { id: "9", name: "Column dress", category: "dress", color: "midnight blue", imageRef: "dress.png" };
@@ -108,6 +110,98 @@ async function startPlanner(t, preview, optionSlots = original, shoppingFetch, s
   const { looks: [option] } = await dispatch("generate", { briefId: brief.id });
   return { dispatch, makeSession, optionId: option.id, database };
 }
+
+test("deleting a garment confirms exactly the saved looks containing its final slot", async (t) => {
+  const { dispatch, optionId, database } = await startPlanner(t);
+  const env = { DB: d1Binding(database) };
+  function change(id, method, body, user = accountId) {
+    return wardrobeApi(new Request(`https://example.test/api/wardrobe/items/${id}`, {
+      method, body: JSON.stringify(body),
+    }), env, user);
+  }
+  const save = (slots) => dispatch("save", { optionId, slots });
+  const look = await save(refined);
+  const unrelated = await save({ dress: dress.id });
+  const affected = [{ id: Number(look.id), title: look.occasion }];
+  const prompt = async (response) => {
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { code: "saved_looks_affected", savedLooks: affected });
+  };
+
+  assert.equal((await change(flats.id, "DELETE", undefined, 2)).status, 404);
+  assert.equal((await change(flats.id, "DELETE", { savedLookIds: ["1"] })).status, 400);
+  assert.equal((await change(heels.id, "DELETE")).status, 204);
+  assert.equal((await dispatch("detail", { id: look.id })).originalSlots.shoes.id, heels.id);
+  await prompt(await change(flats.id, "DELETE"));
+  await prompt(await wardrobeApi(new Request(`https://example.test/api/wardrobe/items/${flats.id}`, {
+    method: "DELETE", body: "",
+  }), env, accountId));
+  const confirmation = { savedLookIds: affected.map(({ id }) => id) };
+  const later = await save(refined);
+  affected.push({ id: Number(later.id), title: later.occasion });
+  await prompt(await change(flats.id, "DELETE", confirmation));
+  await prompt(await change(flats.id, "DELETE", { savedLookIds: [Number(look.id), Number(unrelated.id)] }));
+  assert.equal((await dispatch("list")).length, 3);
+  assert.ok((await dispatch("wardrobe")).some(({ id }) => id === flats.id));
+  const confirmed = { savedLookIds: affected.map(({ id }) => id).reverse() };
+
+  // If a dependent delete fails, the item and both looks must remain.
+  database.exec("CREATE TRIGGER deny_delete BEFORE DELETE ON saved_looks BEGIN SELECT RAISE(ABORT, 'busy'); END");
+  await assert.rejects(change(flats.id, "DELETE", confirmed), /busy/);
+  assert.ok((await dispatch("wardrobe")).some(({ id }) => id === flats.id));
+  assert.equal((await dispatch("list")).length, 3);
+  database.exec("DROP TRIGGER deny_delete");
+  const wear = await dispatch("wearAdd", { lookId: look.id, date: "2026-11-21" });
+  assert.equal((await change(flats.id, "DELETE", confirmed)).status, 204);
+  assert.equal((await change(flats.id, "DELETE", confirmed)).status, 204);
+  assert.deepEqual((await dispatch("list")).map(({ id }) => id), [unrelated.id]);
+  assert.ok(!(await dispatch("wardrobe")).some(({ id }) => id === flats.id));
+  await assert.rejects(dispatch("wearGet", { id: wear.id }), { status: 404 });
+  await assert.rejects(save(refined), /ineligible garment/);
+  assert.equal((await change(dress.id, "PATCH", { archive: true })).status, 204);
+  assert.equal((await dispatch("detail", { id: unrelated.id })).slots.dress.id, dress.id);
+});
+
+test("neither saved-look writer can reuse an ID from an old deletion confirmation", async (t) => {
+  const { dispatch, optionId, database } = await startPlanner(t);
+  const DB = d1Binding(database);
+  const remove = (item, id) => wardrobeApi(new Request(`https://example.test/api/wardrobe/items/${item.id}`, {
+    method: "DELETE", body: JSON.stringify({ savedLookIds: [Number(id)] }),
+  }), { DB }, accountId);
+  const originalLook = await dispatch("save", { optionId, slots: refined });
+  assert.equal((await remove(dress, originalLook.id)).status, 204);
+  const replacement = await userData(DB, accountId).saveLook({
+    sourceOptionId: Number(optionId), name: "Replacement", slots: [{ slot: "shoes", itemId: Number(flats.id) }],
+  });
+  assert.ok(replacement.id > Number(originalLook.id));
+  assert.deepEqual(replacement.slots.map(({ itemId }) => itemId), [Number(flats.id)]);
+  await assert.rejects(dispatch("detail", { id: originalLook.id }), { status: 404 });
+  const stale = await remove(flats, originalLook.id);
+  assert.equal(stale.status, 409);
+  assert.deepEqual((await stale.json()).savedLooks, [{ id: replacement.id, title: replacement.name }]);
+  assert.equal((await remove(flats, replacement.id)).status, 204);
+  const newest = await dispatch("save", { optionId, slots: { accessory: necklace.id } });
+  assert.ok(Number(newest.id) > replacement.id);
+  assert.equal(newest.slots.accessory.id, necklace.id);
+});
+
+test("the saved-look identity migration preserves existing IDs and rolls back with a failed save", (t) => {
+  const database = new DatabaseSync(":memory:");
+  t.after(() => database.close());
+  database.exec("CREATE TABLE saved_looks (id INTEGER PRIMARY KEY); INSERT INTO saved_looks VALUES (17), (63)");
+  database.exec(readFileSync(new URL("../drizzle/0112_saved_look_identity.sql", import.meta.url), "utf8"));
+  const next = () => database.prepare("SELECT id FROM next_saved_look_id").get().id;
+  assert.deepEqual(database.prepare("SELECT id FROM saved_looks ORDER BY id").all().map(row => row.id), [17, 63]);
+  database.exec("DELETE FROM saved_looks WHERE id = 63");
+  assert.throws(() => database.exec("INSERT INTO saved_looks DEFAULT VALUES"), /cannot be reused/);
+  assert.equal(next(), 64);
+  database.exec("BEGIN; INSERT INTO saved_looks SELECT id FROM next_saved_look_id");
+  assert.equal(next(), 65);
+  database.exec("ROLLBACK");
+  assert.equal(next(), 64);
+  database.exec("INSERT INTO saved_looks SELECT id FROM next_saved_look_id; DELETE FROM saved_looks");
+  assert.equal(next(), 65);
+});
 
 function previewReply(url, options) {
   if (url.startsWith("https://down-th.img.susercontent.com/file/")) {

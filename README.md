@@ -26,7 +26,7 @@ Add `http://localhost:3000/api/auth/callback/google` under **Authorized redirect
 
 Set `OPENAI_API_KEY` as a server-only Sites runtime secret (or in the ignored `.dev.vars` for local Worker development). Vercel development uses the same secret in its server environment. The API project must have access to GPT-6 Luna, Fast tier, and the built-in image generation tool.
 
-Wardrobe extraction submits the normalized photo once to OpenAI Responses using `gpt-6-luna`, High reasoning, and Fast service. Luna uses the built-in `gpt-image-2.5-flare` image editing tool inside that request. The same response supplies a transparent PNG and editable name, category, garment type, and color. The backend validates the cutout, stores the returned PNG bytes privately, and leaves the item as a draft until the user confirms it. If the PNG or details are missing or invalid, manual review still uses the original photo.
+Wardrobe extraction sends a normalized photo or a contact sheet of up to 20 photos in one OpenAI Responses request using `gpt-6-luna`, High reasoning, and Fast service. Luna identifies each visible garment and accessory, keeping a matched pair of shoes together. It uses `gpt-image-2.5-flare` to return transparent cutouts in the same order as each photo’s item list. The backend validates the layout and saves each cutout privately as a separate draft with an editable name, category, garment type, and color. A photo with missing or ambiguous cutouts stays available for manual review.
 
 `WARDROBE_EXTRACTION_FIXTURES=1` is only for exact test/demo photos with precomputed cutouts; it is not a substitute for production API access.
 

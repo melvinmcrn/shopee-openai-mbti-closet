@@ -5,6 +5,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { encode as encodePng } from "fast-png";
 import jpeg from "jpeg-js";
 import { readSampleImage } from "../src/app/api/_server/read-sample-image.mjs";
 import { handleApi } from "../src/app/api/_server/handle-api.mjs";
@@ -113,6 +114,30 @@ for (const name of ["first-session", "returning-session", "rating-session", "oth
 
 // Keep candidate construction, Decisions parsing and ranking in the production code.
 let enhancementRequests = 0;
+function outfitExtractionFixture() {
+  const garments = [
+    { name: "Striped shirt", category: "top", garment_type: "Shirt", color: "Blue" },
+    { name: "Straight jeans", category: "bottom", garment_type: "Jeans", color: "Indigo" },
+    { name: "White sneakers", category: "shoes", garment_type: "Sneakers", color: "White" },
+  ];
+  const size = 1024;
+  const data = new Uint8Array(size * size * 4);
+  for (const [index, rgb] of [[60, 100, 160], [36, 46, 84], [250, 250, 250]].entries()) {
+    const left = (index % 2) * 512 + 144;
+    const top = Math.floor(index / 2) * 512 + 144;
+    for (let y = top; y < top + 224; y++) {
+      for (let x = left; x < left + 224; x++) data.set([...rgb, 255], (y * size + x) * 4);
+    }
+  }
+  const result = Buffer.from(encodePng({ width: size, height: size, data })).toString("base64");
+  return Response.json({ status: "completed", output: [
+    { type: "image_generation_call", status: "completed", result },
+    { type: "message", role: "assistant", status: "completed", content: [
+      { type: "output_text", text: JSON.stringify({ garments }) },
+    ] },
+  ] });
+}
+
 async function decisionsFixture(url, options) {
   if (String(url).startsWith("https://down-th.img.susercontent.com/file/")) {
     const product = database.prepare("SELECT item_id FROM clothes_image_database WHERE image_url = ?").get(String(url));
@@ -140,7 +165,8 @@ async function decisionsFixture(url, options) {
     return Response.json({ data: [{ b64_json: listings.length ? enhancedTryOn : tryOnJpeg }] });
   }
   if (url === "https://api.openai.com/v1/responses") {
-    const { input } = JSON.parse(options.body);
+    const { input, text } = JSON.parse(options.body);
+    if (text?.format?.name === "wardrobe_extraction") return outfitExtractionFixture();
     const pieces = input[0].content.filter(part => part.type === "input_text" && part.text.startsWith("{"))
       .map(part => JSON.parse(part.text));
     for (const [i, part] of input[0].content.entries()) {
@@ -218,7 +244,7 @@ const server = createServer(async (request, response) => {
       const chunks = [];
       for await (const chunk of request) chunks.push(chunk);
       const body = chunks.length ? Buffer.concat(chunks) : undefined;
-      const result = await handleApi(new Request(new URL(path, origin), {
+      const result = await handleApi(new Request(new URL(request.url, origin), {
         method: request.method, headers, body,
       }), env);
       response.writeHead(result.status, Object.fromEntries(result.headers));

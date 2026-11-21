@@ -6,7 +6,14 @@ const maxBatchCount = 20;
 const maxBatchImageBytes = 3_950_000;
 const maxFormBytes = maxImageBytes + 64 * 1024;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const findDraft = "SELECT id, image_file_id FROM wardrobe_items WHERE user_id = ? AND draft_key = ?";
+// A retry can arrive after review archived the first garment in an extracted group.
+const findDraft = `
+  SELECT CASE WHEN original.archived_at IS NULL THEN original.id ELSE COALESCE((
+    SELECT MIN(id) FROM wardrobe_items
+    WHERE user_id = original.user_id AND extraction_group_id = original.id AND archived_at IS NULL
+  ), original.id) END AS id, original.image_file_id
+  FROM wardrobe_items AS original WHERE original.user_id = ? AND original.draft_key = ?
+`;
 
 function json(body, status = 200) {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });

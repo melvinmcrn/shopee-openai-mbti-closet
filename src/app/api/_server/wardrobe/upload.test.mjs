@@ -26,10 +26,14 @@ function fixture(t) {
     DB: {
       prepare(sql) {
         return {
-          bind(...args) {
+          bind(...params) {
+            const args = /\?\d/.test(sql)
+              ? [Object.fromEntries(params.map((value, index) => [String(index + 1), value]))]
+              : params;
             const statement = sqlite.prepare(sql);
             return {
               first: async () => statement.get(...args),
+              all: async () => ({ results: statement.all(...args) }),
               run: async () => statement.run(...args),
               execute: () => ({ results: statement.all(...args) }),
             };
@@ -159,10 +163,32 @@ function completedExtraction() {
         content: [{
           type: "output_text",
           text: JSON.stringify({
-            garment_found: true, name: "Test shirt", category: "top", garment_type: "Shirt", color: "Black",
+            garments: [{ name: "Test shirt", category: "top", garment_type: "Shirt", color: "Black" }],
           }),
         }],
       },
+    ],
+  });
+}
+
+function outfitExtraction() {
+  const data = new Uint8Array(1024 * 1024 * 4);
+  for (const [center, red] of [[256, 40], [768, 190]]) {
+    for (let y = 460; y < 564; y++) {
+      for (let x = center - 52; x < center + 52; x++) {
+        data.set([red, 80, 120, 255], (y * 1024 + x) * 4);
+      }
+    }
+  }
+  const garments = [
+    { name: "Cotton shirt", category: "top", garment_type: "Shirt", color: "White" },
+    { name: "Linen trousers", category: "bottom", garment_type: "Trousers", color: "Brown" },
+  ];
+  return Response.json({
+    status: "completed",
+    output: [
+      { type: "image_generation_call", status: "completed", result: Buffer.from(encode({ width: 1024, height: 1024, data })).toString("base64") },
+      { type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: JSON.stringify({ garments }) }] },
     ],
   });
 }
@@ -317,7 +343,7 @@ function responseSheet(count, { gapBleed = false, blankSlot, duplicateSlot = fal
     }
     slots.unshift({
       slot: duplicateSlot && i === 1 ? 1 : i + 1,
-      garment_found: true, name: `Shirt ${i + 1}`, category: "top", garment_type: "Shirt", color: "Blue",
+      garments: [{ name: `Shirt ${i + 1}`, category: "top", garment_type: "Shirt", color: "Blue" }],
     });
   }
   if (gapBleed) data[3] = 255;
@@ -424,4 +450,74 @@ test("rejects more than 20 photos, duplicate keys, and oversized batch data befo
   }])).status, 413);
   assert.equal(sqlite.prepare("SELECT count(*) AS count FROM wardrobe_items").get().count, 0);
   assert.equal(files.size, 0);
+});
+
+test("concurrent extraction of one outfit stores independently reviewable garments and replays their current state", async (t) => {
+  const { env, files, send, sqlite } = fixture(t);
+  const key = crypto.randomUUID();
+  const { id } = await (await send(key, 1, photoPng)).json();
+  env.OPENAI_API_KEY = "mock-key";
+  const original = sqlite.prepare("SELECT image_file_id FROM wardrobe_items WHERE id = ?").get(id).image_file_id;
+  const both = Promise.withResolvers();
+  let requests = 0;
+  const provider = t.mock.method(globalThis, "fetch", async () => {
+    if (++requests === 2) both.resolve();
+    await both.promise;
+    return outfitExtraction();
+  });
+  const [first, second] = await Promise.all([send(key, 1, null), send(key, 1, null)]);
+  const result = await first.json();
+  assert.equal(result.extraction.status, "ready");
+  assert.deepEqual(await second.json(), result);
+  const { items } = result.extraction;
+  assert.deepEqual(items.map((item) => item.name), ["Cotton shirt", "Linen trousers"]);
+  assert.deepEqual(result.extraction.item, items[0]);
+  assert.equal(items[0].id, id);
+  assert.notEqual(items[0].id, items[1].id);
+  assert.notEqual(items[0].imageFileId, items[1].imageFileId);
+  assert.equal(files.size, 2);
+  assert.equal(files.has(original), false);
+  assert.deepEqual(items.map((item) => {
+    const png = decode(files.get(item.imageFileId).body);
+    return png.data[(Math.floor(png.height / 2) * png.width + Math.floor(png.width / 2)) * 4];
+  }), [40, 190]);
+  const itemUrl = "https://wardrobe.example/api/wardrobe/items/";
+  const updated = await wardrobeApi(new Request(itemUrl + items[1].id, {
+    method: "PATCH", body: JSON.stringify({ name: "Travel trousers", confirm: true }),
+  }), env, 1);
+  assert.equal(updated.status, 200);
+  assert.equal((await wardrobeApi(new Request(itemUrl + id, { method: "DELETE" }), env, 1)).status, 204);
+  const surviving = await (await send(key, 1, photoPng)).json();
+  assert.equal(surviving.id, items[1].id);
+  assert.deepEqual(surviving.extraction.items, [{ ...items[1], name: "Travel trousers" }]);
+  assert.equal((await send(key, 2, null)).status, 404);
+  assert.equal((await wardrobeApi(new Request(itemUrl + items[1].id, { method: "DELETE" }), env, 1)).status, 204);
+  assert.equal((await send(key, 1, null)).status, 404);
+  assert.equal(provider.mock.callCount(), 2);
+});
+
+test("a failed sibling insert leaves the original private photo available for a complete retry", async (t) => {
+  const { env, files, send, sqlite } = fixture(t);
+  env.OPENAI_API_KEY = "mock-key";
+  t.mock.method(globalThis, "fetch", outfitExtraction);
+  t.mock.method(console, "warn", () => {});
+  sqlite.exec(`
+    CREATE TRIGGER reject_sibling BEFORE INSERT ON wardrobe_items
+    WHEN NEW.name = 'Linen trousers' BEGIN SELECT RAISE(ABORT, 'write interrupted'); END;
+  `);
+  const key = crypto.randomUUID();
+  const failed = await (await send(key, 1, photoPng)).json();
+  assert.equal(failed.extraction.status, "manual");
+  const rows = sqlite.prepare("SELECT name, image_file_id, extraction_source FROM wardrobe_items").all();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].name, "Untitled garment");
+  assert.equal(rows[0].extraction_source, null);
+  assert.deepEqual([...files.keys()], [rows[0].image_file_id]);
+  assert.deepEqual(files.get(rows[0].image_file_id).body, photoPng);
+  sqlite.exec("DROP TRIGGER reject_sibling");
+  const recovered = await (await send(key, 1, null)).json();
+  assert.equal(recovered.id, failed.id);
+  assert.equal(recovered.extraction.status, "ready");
+  assert.equal(recovered.extraction.items.length, 2);
+  assert.equal(files.size, 2);
 });

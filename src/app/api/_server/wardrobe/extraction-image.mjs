@@ -1,5 +1,5 @@
 import jpeg from "jpeg-js";
-import { decode, hasPngSignature } from "fast-png";
+import { convertIndexedToRgb, decode, hasPngSignature } from "fast-png";
 
 const maxSourcePixels = 24_000_000;
 const maxPngPixels = 8_000_000;
@@ -156,6 +156,10 @@ export async function normalizePhoto(bytes, dimension = maxDimension) {
     throw new ExtractionImageError("The photo could not be decoded for automatic extraction.");
   }
 
+  return normalizedPixels(photo, dimension);
+}
+
+function normalizedPixels(photo, dimension) {
   const orientation = jpegOrientation(photo.exifBuffer);
   const rotated = orientation >= 5 && orientation <= 8;
   const orientedWidth = rotated ? photo.height : photo.width;
@@ -236,6 +240,8 @@ export async function readCutoutSheet(bytes, width, height) {
     throw new ExtractionImageError("Invalid cutout sheet PNG.");
   }
   const png = await decodePng(bytes, true, { width, height });
-  if (png.channels !== 4 || png.depth !== 8) throw new ExtractionImageError("Expected an RGBA cutout sheet.");
-  return png.data;
+  if (png.palette?.[0]?.length === 4) return convertIndexedToRgb(png);
+  if (png.channels === 4 && png.depth === 8) return png.data;
+  if (png.transparency || png.channels % 2 === 0) return normalizedPixels(png, Math.max(width, height)).data;
+  throw new ExtractionImageError("Expected a transparent cutout sheet.");
 }

@@ -6,7 +6,8 @@ const glyphs = ["111101101101111", "010110010010111", "111001111100111", "111001
 const gap = 12;
 
 export function sheetGrid(count) {
-  if (!Number.isInteger(count) || count < 2 || count > 20) throw new RangeError("Invalid wardrobe batch size");
+  if (!Number.isInteger(count) || count < 1 || count > 20) throw new RangeError("Invalid wardrobe batch size");
+  if (count === 1) return { columns: 1, rows: 1, tile: 1024, count, width: 1024, height: 1024 };
   const columns = Math.ceil(Math.sqrt(count));
   const rows = Math.ceil(count / columns);
   const tile = count === 2 ? 608 : Math.min(512, Math.floor(1440 / rows / 16) * 16);
@@ -54,6 +55,64 @@ export function sourceSheet(photos, grid) {
   return { data, width: grid.width, height: grid.height };
 }
 
+function cropCutout(png, stride, left, top, right, bottom) {
+  const width = right - left + 1 + 2 * gap;
+  const height = bottom - top + 1 + 2 * gap;
+  const data = new Uint8Array(width * height * 4);
+  for (let y = top; y <= bottom; y++) {
+    let from = (y * stride + left) * 4;
+    let to = ((y - top + gap) * width + gap) * 4;
+    for (let x = left; x <= right; x++, from += 4, to += 4) {
+      if (!png[from + 3]) continue;
+      data[to] = png[from];
+      data[to + 1] = png[from + 1];
+      data[to + 2] = png[from + 2];
+      data[to + 3] = png[from + 3];
+    }
+  }
+  return encode({ width, height, data });
+}
+
+function splitPhoto(png, grid, slot, garments) {
+  if (!garments) return null;
+  const [left, top] = origin(grid, slot);
+  const columns = Math.max(1, Math.ceil(Math.sqrt(garments.length)));
+  const rows = Math.max(1, Math.ceil(garments.length / columns));
+  const items = [];
+  for (let index = 0; index < columns * rows; index++) {
+    const col = index % columns;
+    const row = Math.floor(index / columns);
+    const x = left + Math.floor(grid.tile * col / columns);
+    const y = top + Math.floor(grid.tile * row / rows);
+    const width = left + Math.floor(grid.tile * (col + 1) / columns) - x;
+    const height = top + Math.floor(grid.tile * (row + 1) / rows) - y;
+    const garment = garments[index];
+    let visible = 0;
+    let minX = width, minY = height, maxX = -1, maxY = -1;
+    for (let dy = 0; dy < height; dy++) {
+      const offset = ((y + dy) * grid.width + x) * 4;
+      const line = png.subarray(offset, offset + width * 4);
+      for (let dx = 0; dx < width; dx++) {
+        const alpha = line[dx * 4 + 3];
+        if (alpha === 0) continue;
+        if (!garment || dx < gap || dy < gap || dx >= width - gap || dy >= height - gap) return null;
+        minX = Math.min(minX, dx);
+        maxX = Math.max(maxX, dx);
+        minY = Math.min(minY, dy);
+        maxY = dy;
+        if (alpha >= 128) visible++;
+      }
+    }
+    if (!garment) continue;
+    if (visible < width * height * 0.005) return null;
+    const cropped = cropCutout(png, grid.width, x + minX, y + minY, x + maxX, y + maxY);
+    // Tight crops make exact duplicates detectable even if the provider translated one.
+    if (items.some(({ png }) => png.length === cropped.length && png.every((byte, i) => byte === cropped[i]))) return null;
+    items.push({ ...garment, png: cropped });
+  }
+  return items;
+}
+
 export async function splitCutoutSheet(bytes, grid, slots) {
   const png = await readCutoutSheet(bytes, grid.width, grid.height);
   // A marked, moved or overlapping sheet cannot be mapped by its grid.
@@ -69,23 +128,5 @@ export async function splitCutoutSheet(bytes, grid, slots) {
       }
     }
   }
-  const size = grid.tile - gap * 2;
-  return slots.map((metadata, slot) => {
-    if (!metadata) return null;
-    const [left, top] = origin(grid, slot);
-    const data = new Uint8Array(size * size * 4);
-    let visible = 0;
-    let clear = 0;
-    for (let y = 0; y < size; y++) {
-      const offset = ((top + gap + y) * grid.width + left + gap) * 4;
-      const line = png.subarray(offset, offset + size * 4);
-      data.set(line, y * size * 4);
-      for (let i = 3; i < line.length; i += 4) {
-        visible += Number(line[i] >= 128);
-        clear += Number(line[i] === 0);
-      }
-    }
-    if (visible < size * size * 0.005 || clear < size * size * 0.005) return null;
-    return { ...metadata, png: encode({ width: size, height: size, data }) };
-  });
+  return slots.map((garments, slot) => splitPhoto(png, grid, slot, garments));
 }

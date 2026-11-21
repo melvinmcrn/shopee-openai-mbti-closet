@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 const categoryLabels = {
   top: "Top",
@@ -31,6 +31,8 @@ type Closet =
   | { status: "ready"; items: Item[] };
 
 type ItemAction = { id: number; type: "edit" | "archive" };
+type AffectedLook = { id: number; title: string };
+type DeletePrompt = { item: Item; looks: AffectedLook[] };
 
 async function listCloset(signal?: AbortSignal): Promise<Closet> {
   const response = await fetch(itemsEndpoint, { cache: "no-store", signal });
@@ -52,6 +54,8 @@ export default function ClosetPage() {
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [category, setCategory] = useState<Category | "all">("all");
   const [action, setAction] = useState<ItemAction | null>(null);
+  const [deletePrompt, setDeletePrompt] = useState<DeletePrompt | null>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -67,6 +71,17 @@ export default function ClosetPage() {
       });
     return () => controller.abort();
   }, [loadAttempt]);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (deletePrompt) {
+      if (!dialog.open) dialog.showModal();
+      dialog.querySelector("button")?.focus();
+    } else if (dialog.open) {
+      dialog.close();
+    }
+  }, [deletePrompt]);
 
   function beginAction(nextAction: ItemAction | null) {
     setError("");
@@ -115,7 +130,11 @@ export default function ClosetPage() {
     setBusy(true);
     setError("");
     try {
-      const response = await fetch(`${itemsEndpoint}/${item.id}`, { method: "DELETE" });
+      const response = await fetch(`${itemsEndpoint}/${item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archive: true }),
+      });
       if (!response.ok) throw new Error("Archive failed");
     } catch {
       setError("Couldn’t archive this item. Try again.");
@@ -134,6 +153,44 @@ export default function ClosetPage() {
       setCloset(await listCloset());
     } catch {
       setError("Couldn’t refresh your closet. Reload the page to see the latest items.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function cancelDeletion() {
+    setDeletePrompt(null);
+    setError("");
+  }
+
+  async function deleteItem(item: Item, confirmedLooks?: AffectedLook[]) {
+    setBusy(true);
+    beginAction(null);
+    try {
+      const response = await fetch(`${itemsEndpoint}/${item.id}`, {
+        method: "DELETE",
+        ...(confirmedLooks && {
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ savedLookIds: confirmedLooks.map((look) => look.id) }),
+        }),
+      });
+      if (response.status === 409) {
+        const { code, savedLooks } = await response.json();
+        if (code === "saved_looks_affected" && Array.isArray(savedLooks)) {
+          setDeletePrompt({ item, looks: savedLooks });
+          if (confirmedLooks) setError("The saved looks using this item changed. Review the updated list.");
+          return;
+        }
+      }
+      if (!response.ok) throw new Error("Deletion failed");
+      setCloset((current) => current.status === "ready"
+        ? { ...current, items: current.items.filter((existing) => existing.id !== item.id) }
+        : current);
+      setDeletePrompt(null);
+      const count = confirmedLooks?.length ?? 0;
+      setNotice(count ? `Item and ${count} saved ${count === 1 ? "look" : "looks"} deleted.` : "Item deleted.");
+    } catch {
+      setError("Couldn’t delete this item. Try again.");
     } finally {
       setBusy(false);
     }
@@ -158,7 +215,7 @@ export default function ClosetPage() {
         </div>
 
         {notice && <p className="mt-5 text-sm text-secondary" role="status">{notice}</p>}
-        {error && !action && <p className="mt-5 text-sm text-danger" role="alert">{error}</p>}
+        {error && !action && !deletePrompt && <p className="mt-5 text-sm text-danger" role="alert">{error}</p>}
 
         {closet.status === "loading" && <p className="mt-8" role="status">Loading your closet…</p>}
         {closet.status === "signed-out" && (
@@ -252,6 +309,15 @@ export default function ClosetPage() {
                       >
                         Archive
                       </button>
+                      <button
+                        aria-label={`Delete ${item.name}`}
+                        className="min-h-11 px-2 text-sm font-semibold text-danger hover:underline disabled:opacity-50"
+                        disabled={busy}
+                        onClick={() => void deleteItem(item)}
+                        type="button"
+                      >
+                        Delete
+                      </button>
                     </div>
                   )}
 
@@ -313,6 +379,47 @@ export default function ClosetPage() {
           </ul>
         )}
       </div>
+      <dialog
+        ref={dialogRef}
+        aria-labelledby="delete-item-title"
+        aria-describedby="delete-item-impact"
+        className="m-auto max-h-[85dvh] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-2xl border border-divider bg-surface p-6 text-text shadow-xl backdrop:bg-text/40"
+        onCancel={(event) => {
+          event.preventDefault();
+          if (!busy) cancelDeletion();
+        }}
+      >
+        {deletePrompt && (
+          <>
+            <h2 id="delete-item-title" className="break-words font-heading text-2xl">Delete {deletePrompt.item.name}?</h2>
+            <p id="delete-item-impact" className="mt-3 text-sm text-supporting">
+              {deletePrompt.looks.length === 0 ? "This item is no longer used in any saved looks." : (
+                deletePrompt.looks.length === 1
+                  ? "Deleting this item will also delete this saved look."
+                  : `Deleting this item will also delete these ${deletePrompt.looks.length} saved looks.`
+              )}
+            </p>
+            {deletePrompt.looks.length > 0 && (
+              <ul className="mt-3 list-disc space-y-1 pl-5 text-sm font-semibold">
+                {deletePrompt.looks.map((look) => <li className="break-words" key={look.id}>{look.title}</li>)}
+              </ul>
+            )}
+            {error && <p className="mt-3 text-sm text-danger" role="alert">{error}</p>}
+            <div className="mt-6 flex flex-wrap gap-2">
+              <button type="button" className={secondaryButton} disabled={busy} onClick={cancelDeletion}>Cancel</button>
+              <button
+                type="button"
+                className="min-h-11 rounded-full bg-danger px-4 text-sm font-semibold text-on-primary disabled:opacity-50"
+                disabled={busy}
+                onClick={() => void deleteItem(deletePrompt.item, deletePrompt.looks)}
+              >
+                {busy ? "Deleting…" : deletePrompt.looks.length === 0 ? "Delete item" :
+                  deletePrompt.looks.length === 1 ? "Delete item and look" : "Delete item and looks"}
+              </button>
+            </div>
+          </>
+        )}
+      </dialog>
     </main>
   );
 }

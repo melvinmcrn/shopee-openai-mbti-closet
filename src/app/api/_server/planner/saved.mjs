@@ -113,8 +113,9 @@ export async function saveLook(db, accountId, sourceOption, slots, garments, use
   const snapshot = snapshotSlots(slots, garments);
   const [insert] = await db.batch([
     db.prepare(`
-      INSERT INTO saved_looks (user_id, source_option_id, name, saved_at, use_profile_photo)
-      VALUES (?1, ?2, (SELECT title FROM outfit_options WHERE user_id = ?1 AND id = ?2), ?3, ?4)
+      INSERT INTO saved_looks (id, user_id, source_option_id, name, saved_at, use_profile_photo)
+      VALUES ((SELECT id FROM next_saved_look_id), ?1, ?2,
+        (SELECT title FROM outfit_options WHERE user_id = ?1 AND id = ?2), ?3, ?4)
       RETURNING id
     `).bind(accountId, optionId, new Date().toISOString(), useProfilePhoto ? 1 : 0),
     db.prepare(`

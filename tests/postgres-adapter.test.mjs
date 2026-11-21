@@ -4,6 +4,7 @@ import test from "node:test";
 import postgres from "postgres";
 import { createPostgresDatabase } from "../server/postgres.mjs";
 import { dispatchPlanner } from "../src/app/api/_server/planner/api.mjs";
+import { saveLook } from "../src/app/api/_server/planner/saved.mjs";
 import { enhancementSelection } from "../src/app/api/_server/planner/catalog-product.mjs";
 import { readPrivateFile, writePrivateFile } from "../src/app/api/_server/private-files.mjs";
 import { userData } from "../src/app/api/_server/user-data.mjs";
@@ -60,7 +61,7 @@ test("Postgres preserves Worker query results and transaction boundaries", { ski
   }
 });
 
-test("Postgres supports owner-scoped profiles, wardrobe items, and the planner", { skip: !url }, async () => {
+test("Postgres supports owner-scoped profiles, wardrobe items, and the planner", { skip: !url }, async (t) => {
   const sql = postgres(url, { prepare: false });
   const DB = createPostgresDatabase(sql);
   const accounts = [];
@@ -146,6 +147,48 @@ test("Postgres supports owner-scoped profiles, wardrobe items, and the planner",
     const wear = await dispatchPlanner(env, owner.id, "wearAdd", { lookId: look.id, date: "2026-11-21" });
     await dispatchPlanner(env, owner.id, "wearUpdate", { id: wear.id, rating: 5 });
     assert.equal((await dispatchPlanner(env, owner.id, "wearGet", { id: wear.id })).rating, 5);
+
+    await t.test("a concurrent save invalidates an older deletion confirmation", async () => {
+      const ready = Promise.withResolvers();
+      const release = Promise.withResolvers();
+      // Hold the real save transaction after writing the look, until the
+      // deletion has acquired its snapshot on a second database connection.
+      const savingDb = createPostgresDatabase({ begin: (isolation, run) => sql.begin(isolation, async (tx) => {
+        const rows = await run(tx);
+        ready.resolve();
+        await release.promise;
+        return rows;
+      }) });
+      const deletingDb = createPostgresDatabase({ begin: (isolation, run) => sql.begin(isolation, async (tx) => {
+        await tx.unsafe("SELECT 1");
+        release.resolve();
+        return run(tx);
+      }) });
+      const remove = (db, savedLookIds) => wardrobeApi(new Request(`https://example.test/api/wardrobe/items/${garments.top}`, {
+        method: "DELETE", body: JSON.stringify({ savedLookIds }),
+      }), { DB: db }, owner.id);
+      const wardrobe = await dispatchPlanner(env, owner.id, "wardrobe");
+      const saving = saveLook(savingDb, owner.id, option, garments, wardrobe);
+      try {
+        await Promise.race([ready.promise, saving]);
+        const response = await remove(deletingDb, [Number(look.id)]);
+        const concurrent = await saving;
+        assert.equal(response.status, 409);
+        const savedLooks = [look, concurrent].map(({ id, occasion }) => ({ id: Number(id), title: occasion }));
+        assert.deepEqual(await response.json(), { code: "saved_looks_affected", savedLooks });
+        assert.equal((await remove(DB, savedLooks.map(({ id }) => id))).status, 204);
+        assert.deepEqual(await dispatchPlanner(env, owner.id, "list"), []);
+        await assert.rejects(saveLook(DB, owner.id, option, garments, wardrobe), /Selected garment changed/);
+        const replacement = await owned.saveLook({
+          sourceOptionId: Number(option.id), name: "Replacement", slots: [{ slot: "shoes", itemId: Number(garments.shoes) }],
+        });
+        assert.ok(replacement.id > Number(concurrent.id));
+        assert.deepEqual(replacement.slots.map(({ itemId }) => itemId), [Number(garments.shoes)]);
+      } finally {
+        release.resolve();
+        await saving;
+      }
+    });
 
     const retiredSampleRoute = await wardrobeApi(
       new Request("https://example.test/api/wardrobe/sample", { method: "POST" }), env, owner.id,

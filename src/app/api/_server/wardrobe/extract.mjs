@@ -4,7 +4,7 @@ import { fixtures } from "./extraction-fixtures.mjs";
 import { ExtractionImageError, normalizePhoto } from "./extraction-image.mjs";
 import { LunaExtractionError, lunaBatchExtraction, lunaExtraction } from "./extraction-luna.mjs";
 
-const columns = "id, name, category, garment_type, color, image_file_id, confirmed_at, extraction_source";
+const columns = "id, name, category, garment_type, color, image_file_id, confirmed_at, extraction_source, extraction_group_id";
 const maxPhotoBytes = 8 * 1024 * 1024;
 const unavailable = "Luna High Fast extraction is currently unavailable. You can review the photo manually.";
 
@@ -16,19 +16,25 @@ function failure(error, code, status) {
   return outcome({ error, code }, status);
 }
 
-function result(row) {
-  return outcome({
-    source: row.extraction_source,
-    item: {
-      id: row.id,
-      name: row.name,
-      category: row.category,
-      garmentType: row.garment_type,
-      color: row.color,
-      imageFileId: row.image_file_id,
-      imageUrl: fileUrl(row.image_file_id),
-    },
-  });
+function result(rows, itemId) {
+  const items = rows.map((row) => ({
+    id: row.id, name: row.name, category: row.category,
+    garmentType: row.garment_type, color: row.color,
+    imageFileId: row.image_file_id, imageUrl: fileUrl(row.image_file_id),
+  }));
+  const item = items.find((view) => view.id === itemId);
+  return item ? outcome({ source: rows[0].extraction_source, item, items })
+    : failure("Wardrobe item not found.", "item_not_found", 404);
+}
+
+async function existingResult(env, userId, row) {
+  if (row.extraction_group_id == null) return result([row], row.id);
+  const group = await env.DB.prepare(`
+    SELECT ${columns} FROM wardrobe_items
+    WHERE user_id = ? AND extraction_group_id = ? AND archived_at IS NULL
+    ORDER BY id
+  `).bind(userId, row.extraction_group_id).all();
+  return result(group.results, row.id);
 }
 
 function loadItem(env, userId, itemId) {
@@ -64,7 +70,7 @@ async function prepareDraft(env, userId, itemId, dimension) {
   const draft = await loadItem(env, userId, itemId);
   if (!draft) return failure("Wardrobe item not found.", "item_not_found", 404);
 
-  if (draft.extraction_source) return result(draft);
+  if (draft.extraction_source) return existingResult(env, userId, draft);
   if (draft.confirmed_at) return failure("This wardrobe item is already confirmed.", "draft_changed", 409);
 
   const fixturesEnabled = env.WARDROBE_EXTRACTION_FIXTURES === "1";
@@ -76,7 +82,7 @@ async function prepareDraft(env, userId, itemId, dimension) {
   if (!photoFile) {
     // A parallel request may have already replaced the original.
     const current = await loadItem(env, userId, itemId);
-    return current?.extraction_source ? result(current)
+    return current?.extraction_source ? existingResult(env, userId, current)
       : failure("The wardrobe photo could not be found.", "photo_not_found", 404);
   }
   if (photoFile.size > maxPhotoBytes) {
@@ -106,7 +112,7 @@ function lunaFailure(error) {
 
 function persistFixture(env, userId, { draft, fixture }) {
   const png = Uint8Array.from(atob(fixture.pngBase64), (char) => char.charCodeAt(0));
-  return persistExtraction(env, userId, draft, fixture, png, "fixture");
+  return persistExtraction(env, userId, draft, [{ ...fixture, png }], "fixture");
 }
 
 export async function extractDraft(env, userId, itemId) {
@@ -115,8 +121,8 @@ export async function extractDraft(env, userId, itemId) {
   if (pending.fixture) return persistFixture(env, userId, pending);
 
   try {
-    const data = await lunaExtraction(pending.photo, pending.apiKey);
-    return await persistExtraction(env, userId, pending.draft, data, data.png, "luna");
+    const garments = await lunaExtraction(pending.photo, pending.apiKey);
+    return await persistExtraction(env, userId, pending.draft, garments, "luna");
   } catch (error) {
     if (error instanceof LunaExtractionError) return lunaFailure(error);
     throw error;
@@ -160,13 +166,8 @@ export async function extractDraftBatch(env, userId, ids) {
 
   for (let offset = 0; offset < pending.length; offset += 4) {
     await Promise.all(pending.slice(offset, offset + 4).map(async ({ index, draft }, i) => {
-      const data = results[offset + i];
-      if (!data) {
-        outcomes[index] = failure("No valid cutout was returned for this garment.", "invalid_extraction", 502);
-        return;
-      }
       try {
-        outcomes[index] = await persistExtraction(env, userId, draft, data, data.png, "luna");
+        outcomes[index] = await persistExtraction(env, userId, draft, results[offset + i], "luna");
       } catch (error) {
         outcomes[index] = lunaFailure(error);
       }
@@ -175,38 +176,59 @@ export async function extractDraftBatch(env, userId, ids) {
   return outcomes;
 }
 
-async function persistExtraction(env, userId, draft, extracted, png, source) {
-  const itemId = draft.id;
+async function persistExtraction(env, userId, draft, garments, source) {
+  if (!garments) return failure("No valid cutout was returned for this photo.", "invalid_extraction", 502);
+  if (!garments.length) {
+    return failure("No garment could be isolated. Try a clearer photo or review it manually.", "garment_not_found", 422);
+  }
+
   const account = { id: userId };
-  // Each run writes a separate object so parallel model responses cannot overwrite the winner.
-  const key = await writePrivateFile(env, account, png, "image/png");
-  let updated;
+  const keys = [];
+  let saved;
+  let saveError;
   try {
-    updated = await env.DB.prepare(`
-      UPDATE wardrobe_items SET name = ?, category = ?, garment_type = ?, color = ?, image_file_id = ?, extraction_source = ?
+    for (const { png } of garments) {
+      keys.push(await writePrivateFile(env, account, png, "image/png"));
+    }
+
+    const [first, ...siblings] = garments;
+    const update = env.DB.prepare(`
+      UPDATE wardrobe_items SET name = ?, category = ?, garment_type = ?, color = ?, image_file_id = ?,
+                                extraction_source = ?, extraction_group_id = ?
       WHERE user_id = ? AND id = ? AND confirmed_at IS NULL AND archived_at IS NULL
         AND extraction_source IS NULL
         AND image_file_id = ? AND name IS ? AND category IS ? AND garment_type IS ? AND color IS ?
       RETURNING ${columns}
     `).bind(
-      extracted.name, extracted.category, extracted.garment_type, extracted.color, key, source,
-      userId, itemId, draft.image_file_id, draft.name, draft.category, draft.garment_type, draft.color,
-    ).first();
+      first.name, first.category, first.garment_type, first.color, keys[0], source, siblings.length ? draft.id : null,
+      userId, draft.id, draft.image_file_id, draft.name, draft.category, draft.garment_type, draft.color,
+    );
+    // Only the request that attached its unique first file may insert siblings.
+    // The update and inserts commit together on both D1 and PostgreSQL.
+    const inserts = siblings.map((garment, index) => env.DB.prepare(`
+      INSERT INTO wardrobe_items (user_id, name, category, garment_type, color, image_file_id, extraction_source, extraction_group_id)
+      SELECT user_id, ?, ?, ?, ?, ?, extraction_source, id
+      FROM wardrobe_items WHERE user_id = ? AND id = ? AND image_file_id = ?
+      RETURNING ${columns}
+    `).bind(garment.name, garment.category, garment.garment_type, garment.color, keys[index + 1], userId, draft.id, keys[0]));
+    const committed = await env.DB.batch([update, ...inserts]);
+    saved = committed.flatMap(({ results }) => results);
   } catch (error) {
-    // A committed reference prevents cleanup even if D1 lost the response.
-    await removeUnusedFile(env, account, key);
-    const current = await loadItem(env, userId, itemId);
-    if (current?.extraction_source) return result(current);
-    throw error;
+    saveError = error;
   }
 
-  if (!updated) {
-    await removeUnusedFile(env, account, key);
-    const current = await loadItem(env, userId, itemId);
-    return current?.extraction_source ? result(current)
-      : failure("This wardrobe draft changed during extraction.", "draft_changed", 409);
+  if (saved?.length) {
+    await removeUnusedFile(env, account, draft.image_file_id);
+    return result(saved, draft.id);
   }
 
-  await removeUnusedFile(env, account, draft.image_file_id);
-  return result(updated);
+  // The private-file registry protects attached files even when the commit acknowledgement was lost.
+  await Promise.all(keys.map((key) => removeUnusedFile(env, account, key)));
+  const current = await loadItem(env, userId, draft.id);
+  if (current?.extraction_source) {
+    await removeUnusedFile(env, account, draft.image_file_id);
+    return existingResult(env, userId, current);
+  }
+  if (saveError) throw saveError;
+  return failure("This wardrobe draft changed during extraction.", "draft_changed", 409);
 }
