@@ -194,7 +194,7 @@ function WearHistory({ lookId, onWear }: { lookId: string; onWear: DetailProps["
 function shoppingHref(value: string) {
   try {
     const url = new URL(value);
-    if (url.protocol === "http:" || url.protocol === "https:") return url.href;
+    if (url.protocol === "http:" || url.protocol === "https:") return url;
   } catch {
     return undefined;
   }
@@ -211,7 +211,8 @@ function ShoppingSuggestion({
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
-  const href = shoppingHref(item.url);
+  const link = shoppingHref(item.url);
+  const isShopeeSearch = link?.origin === "https://shopee.sg" && link.pathname === "/search";
 
   async function hide() {
     setPending(true);
@@ -231,14 +232,15 @@ function ShoppingSuggestion({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 space-y-1">
           {item.sponsored && <p className="text-xs font-semibold text-supporting">Sponsored</p>}
-          {href ? (
+          {link ? (
             <a
               className="wrap-break-word text-sm font-semibold text-secondary underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary"
-              href={href}
+              href={link.href}
               target="_blank"
               rel={item.sponsored ? "sponsored noopener noreferrer" : "noopener noreferrer"}
             >
-              {item.title}<span className="sr-only"> (opens in a new tab)</span>
+              {isShopeeSearch ? `Search Shopee for ${item.title.toLowerCase()}` : item.title}
+              <span className="sr-only"> (opens in a new tab)</span>
             </a>
           ) : (
             <p className="wrap-break-word text-sm font-semibold">{item.title}</p>

@@ -48,7 +48,7 @@ export async function dispatchPlanner(env, accountId, action, input = {}, depend
     }
     case "wearList": case "wearAdd": case "wearGet": case "wearUpdate":
       return wearAction(db, accountId, action, input);
-    case "shopping": case "hide": return shoppingAction(db, accountId, action, input);
+    case "shopping": case "hide": return shoppingAction(env, accountId, action, input, dependencies.shoppingFetch);
     case "preview": {
       const source = await option(db, accountId, input.optionId);
       const final = snapshotSlots(input.slots, await wardrobe());

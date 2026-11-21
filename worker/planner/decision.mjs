@@ -1,4 +1,22 @@
 const endpoint = "https://api.openai.com/v1/decisions";
+const model = "gpt-6-luna";
+
+export async function requestDecision(env, payload, request = fetch) {
+  const key = env?.OPENAI_API_KEY;
+  if (typeof key !== "string" || !key.trim()) throw new Error("Decisions is not configured.");
+  const response = await request(endpoint, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${key.trim()}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ ...payload, model }),
+    redirect: "error",
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error("The Decisions request failed.");
+  return response.json();
+}
 const categories = ["top", "bottom", "dress", "shoes", "outerwear", "accessory"];
 const candidateLimit = 64;
 const wardrobeBatchSize = 200;
@@ -102,7 +120,6 @@ function requestBody(brief, wardrobe, candidates) {
   const preferences = Array.isArray(brief?.preferences) ? brief.preferences : [];
   const briefFields = ["occasion", "timing", "location", "formality", "comfort"];
   return {
-    model: "gpt-6-luna",
     input: [
       {
         role: "developer",
@@ -232,18 +249,7 @@ export async function generateLooks(env, brief, garments, priorLooks = [], reque
   const failure = { status: "failed", message: "Outfit generation failed. Please try again." };
   let ranked;
   try {
-    const response = await request(endpoint, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${env.OPENAI_API_KEY.trim()}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify(payload),
-      redirect: "error",
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!response.ok) return failure;
-    const decision = await response.json();
+    const decision = await requestDecision(env, payload, request);
     ranked = rankLooks(decision?.answers, candidates, eligible, priorKeys);
   } catch {
     return failure;

@@ -1,6 +1,7 @@
 import site, { authOrigin, resolveAccount } from "./index.mjs";
 import { dispatchPlanner } from "./planner/api.mjs";
 import { BriefValidationError } from "./planner/brief.mjs";
+import { ShoppingDecisionUnavailableError } from "./planner/shopping.mjs";
 
 function json(value, status = 200) {
   return Response.json(value, { status, headers: { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" } });
@@ -24,7 +25,8 @@ const plannerWorker = {
       return json(await dispatchPlanner(env, account.id, payload.action, payload.input));
     } catch (error) {
       const status = error.status ?? (error instanceof BriefValidationError || error instanceof TypeError ? 400 : 503);
-      return json({ message: status < 500 ? error.message : "The planner is temporarily unavailable." }, status);
+      const safeMessage = status < 500 || error instanceof ShoppingDecisionUnavailableError;
+      return json({ message: safeMessage ? error.message : "The planner is temporarily unavailable." }, status);
     }
   },
 };
