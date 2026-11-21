@@ -8,7 +8,7 @@ import worker from "./index.mjs";
 const siteOrigin = "https://mbti-closet.stonyimpala.chatgpt.site";
 const sessionCookie = "__Secure-authjs.session-token";
 const authSecret = "local-integration-test-secret";
-const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jvYQAAAAASUVORK5CYII=", "base64");
+const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNwal7/HwAE8wJ0QEPG5gAAAABJRU5ErkJggg==", "base64");
 const emptyProfile = { heightCm: null, weightKg: null, styles: [], facePhotoUrl: null, setupCompletedAt: null };
 
 function setup(t) {
