@@ -4,10 +4,18 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { sample } from "./sample.mjs";
 
-function setup() {
+function setup(t) {
   const sqlite = new DatabaseSync(":memory:");
-  sqlite.exec(readFileSync(new URL("../../drizzle/0000_stylist.sql", import.meta.url), "utf8"));
-  sqlite.exec(readFileSync(new URL("../../drizzle/0002_sample.sql", import.meta.url), "utf8"));
+  t.after(() => sqlite.close());
+  const migrations = new URL("../../drizzle/", import.meta.url);
+  for (const filename of [
+    "0000_stylist.sql",
+    "0001_private_files.sql",
+    "0002_private_file_expiry.sql",
+    "0101_wardrobe_sample.sql",
+  ]) {
+    sqlite.exec(readFileSync(new URL(filename, migrations), "utf8"));
+  }
   sqlite.exec(`
     INSERT INTO users (id, auth_provider, auth_subject)
     VALUES (1, 'google', 'one'), (2, 'google', 'two')
@@ -19,13 +27,14 @@ function setup() {
       prepare(sql) {
         return {
           bind(...parameters) {
+            const statement = sqlite.prepare(sql);
+            const select = () => ({ results: statement.all(...parameters) });
+            const execute = () => statement.columns().length > 0 ? select() : statement.run(...parameters);
             return {
-              all: async () => ({ results: sqlite.prepare(sql).all(...parameters) }),
-              execute: () => {
-                const statement = sqlite.prepare(sql);
-                if (statement.columns().length > 0) return { results: statement.all(...parameters) };
-                return statement.run(...parameters);
-              },
+              first: async () => statement.get(...parameters) ?? null,
+              all: async () => select(),
+              run: async () => execute(),
+              execute,
             };
           },
         };
@@ -46,6 +55,9 @@ function setup() {
       async put(key, data, options) {
         objects.set(key, { data: Buffer.from(data), options });
       },
+      async delete(key) {
+        objects.delete(key);
+      },
     },
   };
 
@@ -54,6 +66,7 @@ function setup() {
     `/sample-wardrobe/${name}`,
     ["image/webp", readFileSync(new URL(name, assetDirectory)).toString("base64")],
   ]));
+  t.after(() => { delete globalThis.SITE_ASSETS; });
 
   async function loadSamples(userId) {
     const response = await sample(new Request("https://example.com/api/wardrobe/sample", { method: "POST" }), env, userId);
@@ -64,12 +77,13 @@ function setup() {
   return { env, loadSamples, objects, sqlite };
 }
 
-test("sample drafts are durable, distinct, and scoped to each wardrobe", async () => {
-  const { loadSamples, objects, sqlite } = setup();
+test("sample drafts are durable, distinct, and scoped to each wardrobe", async (t) => {
+  const { loadSamples, objects, sqlite } = setup(t);
   const [items, duplicate] = await Promise.all([loadSamples(1), loadSamples(1)]);
   assert.deepEqual(duplicate, items);
   assert.equal(items.length, 7);
   assert.equal(objects.size, 7);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM private_files").get().count, 7);
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM wardrobe_items WHERE confirmed_at IS NULL").get().count, 7);
 
   const shoes = items.filter((item) => item.category === "shoes");
@@ -78,13 +92,13 @@ test("sample drafts are durable, distinct, and scoped to each wardrobe", async (
   assert.notEqual(shoes[0].imageUrl, shoes[1].imageUrl);
   assert.notDeepEqual(objects.get(shoes[0].imageFileId).data, objects.get(shoes[1].imageFileId).data);
   for (const item of items) {
-    assert.match(item.imageFileId, /^users\/1\//);
+    assert.match(item.imageFileId, /^private\/1\//);
     assert.equal(objects.get(item.imageFileId).data.toString("ascii", 8, 12), "WEBP");
   }
 
   const otherWardrobe = await loadSamples(2);
   assert.equal(otherWardrobe.length, 7);
-  assert.ok(otherWardrobe.every((item) => item.imageFileId.startsWith("users/2/")));
+  assert.ok(otherWardrobe.every((item) => item.imageFileId.startsWith("private/2/")));
   assert.ok(otherWardrobe.every((item) => !items.some(({ id }) => id === item.id)));
 
   sqlite.prepare("UPDATE wardrobe_items SET name = ?, confirmed_at = CURRENT_TIMESTAMP WHERE id = ?").run("Edited name", items[0].id);
@@ -95,15 +109,18 @@ test("sample drafts are durable, distinct, and scoped to each wardrobe", async (
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM wardrobe_items WHERE user_id = 1").get().count, 7);
 });
 
-test("an interrupted sample load can be retried without incomplete drafts", async () => {
-  const { env, loadSamples, sqlite } = setup();
+test("an interrupted sample load can be retried without incomplete drafts", async (t) => {
+  const { env, loadSamples, objects, sqlite } = setup(t);
   const put = env.BUCKET.put;
-  env.BUCKET.put = async (key, ...args) => {
-    if (key.endsWith("/black-penny-loafers.webp")) throw new Error("Storage unavailable");
-    return put(key, ...args);
+  let uploads = 0;
+  env.BUCKET.put = async (...args) => {
+    if (++uploads === 2) throw new Error("Storage unavailable");
+    return put(...args);
   };
   await assert.rejects(loadSamples(1), /Storage unavailable/);
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM wardrobe_items").get().count, 0);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM private_files").get().count, 0);
+  assert.equal(objects.size, 0);
 
   env.BUCKET.put = put;
   assert.equal((await loadSamples(1)).length, 7);

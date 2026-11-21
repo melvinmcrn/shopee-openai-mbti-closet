@@ -1,4 +1,5 @@
-import { fileUrl, putFile } from "../wardrobe-files.mjs";
+import { deletePrivateFile, writePrivateFile } from "../private-files.mjs";
+import { fileUrl } from "../wardrobe-files.mjs";
 
 const samples = [
   { slug: "black-ribbed-tee", name: "Black ribbed tee", category: "top", type: "T-shirt", color: "Black" },
@@ -38,21 +39,34 @@ export async function sample(_request, env, userId) {
   const missing = samples.filter((item) => !addedSlugs.has(item.slug));
   if (missing.length === 0) return itemResponse(existing);
 
-  const inserts = await Promise.all(missing.map(async (item) => {
+  const account = { id: userId };
+  const uploads = await Promise.allSettled(missing.map(async (item) => {
     const path = `/sample-wardrobe/${item.slug}.webp`;
     const [, encodedImage] = SITE_ASSETS[path];
     const bytes = Uint8Array.from(atob(encodedImage), (byte) => byte.charCodeAt(0));
-    const key = `users/${userId}/wardrobe/samples/${item.slug}.webp`;
-    await putFile(env, userId, key, bytes, "image/webp");
-    return env.DB.prepare(`
+    return { item, fileId: await writePrivateFile(env, account, bytes, "image/webp") };
+  }));
+  const files = uploads.filter(({ status }) => status === "fulfilled").map(({ value }) => value);
+  let usedFiles = new Set();
+
+  try {
+    const failedUpload = uploads.find(({ status }) => status === "rejected");
+    if (failedUpload) throw failedUpload.reason;
+
+    const inserts = files.map(({ item, fileId }) => env.DB.prepare(`
       INSERT INTO wardrobe_items (user_id, name, category, garment_type, color, image_file_id, sample_slug)
       VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (user_id, sample_slug) DO NOTHING
-    `).bind(userId, item.name, item.category, item.type, item.color, key, item.slug);
-  }));
+    `).bind(userId, item.name, item.category, item.type, item.color, fileId, item.slug));
 
-  // Deterministic keys let concurrent requests stage the same photos safely.
-  // Commit rows only after all of their photos are present.
-  const results = await env.DB.batch([...inserts, sampleItems(env.DB, userId)]);
-  return itemResponse(results.at(-1).results);
+    const results = await env.DB.batch([...inserts, sampleItems(env.DB, userId)]);
+    const rows = results.at(-1).results;
+    usedFiles = new Set(rows.map(({ image_file_id }) => image_file_id));
+    return itemResponse(rows);
+  } finally {
+    // Concurrent requests can upload the same samples before one commits.
+    // The file service checks references again before deleting any unused upload.
+    await Promise.allSettled(files.filter(({ fileId }) => !usedFiles.has(fileId))
+      .map(({ fileId }) => deletePrivateFile(env, account, fileId)));
+  }
 }
