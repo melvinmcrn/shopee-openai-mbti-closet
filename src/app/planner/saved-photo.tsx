@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, imageUrl, type SavedLook } from "./shared";
 import type { LoadTryOn } from "./try-on";
@@ -44,9 +45,11 @@ export function SavedPhoto({ look, findTryOn }: { look: SavedLook; findTryOn: Fi
   return (
     <div className="grid min-h-24 place-items-center gap-2 rounded-xl bg-selected p-4 text-center text-sm">
       {error && <p role="alert">{error}</p>}
+      <p className="text-supporting">A profile photo is required and will be sent to OpenAI to create your try-on.</p>
+      <Link href="/profile/settings" className="font-semibold underline">Add or update your profile photo</Link>
       {loading ? <p role="status">Creating your try-on…</p> : (
         <button type="button" className="min-h-11 rounded-full border border-divider bg-surface px-4 font-semibold"
-          onClick={generate}>{error ? "Retry try-on" : "Create try-on photo"}</button>
+          onClick={generate}>{error ? "Retry try-on" : "Create try-on with my profile photo"}</button>
       )}
     </div>
   );

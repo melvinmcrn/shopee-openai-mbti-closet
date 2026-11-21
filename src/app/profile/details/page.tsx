@@ -2,14 +2,14 @@
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { normalizeUpload, photoAccept, photoRequirements } from "../../wardrobe/add/normalize-upload.mjs";
 
-const photoTypes = ["image/jpeg", "image/png", "image/webp"];
-const maxPhotoBytes = 8 * 1024 * 1024;
 const nextStep = "/wardrobe/add";
 
 const secondaryButton = "rounded-full border border-divider px-4 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60";
 const primaryButton = "rounded-full bg-primary px-4 py-2 text-sm font-semibold text-on-primary hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:cursor-not-allowed disabled:opacity-60";
+const photoButton = "relative inline-flex cursor-pointer rounded-full border border-divider px-4 py-2 text-sm font-medium focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-secondary has-disabled:cursor-not-allowed";
 const measurementInput = "w-full rounded-xl border border-divider bg-surface px-3 py-2.5 text-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary";
 
 type Profile = {
@@ -28,13 +28,16 @@ export default function ProfileDetailsPage() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [height, setHeight] = useState("");
   const [weight, setWeight] = useState("");
-  const [photoChange, setPhotoChange] = useState<SelectedPhoto | "remove" | null>(null);
+  const [photoChange, setPhotoChange] = useState<SelectedPhoto | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [loadError, setLoadError] = useState("");
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
-  const localPhotoUrl = typeof photoChange === "object" ? photoChange?.url : undefined;
-  const visiblePhotoUrl = photoChange === "remove" ? null : localPhotoUrl ?? profile?.facePhotoUrl;
+  const [preparing, setPreparing] = useState(false);
+  const savingRef = useRef(false);
+  const preparingRef = useRef<AbortController | null>(null);
+  const localPhotoUrl = photoChange?.url;
+  const visiblePhotoUrl = localPhotoUrl ?? profile?.facePhotoUrl;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -64,22 +67,35 @@ export default function ProfileDetailsPage() {
     if (localPhotoUrl) return () => URL.revokeObjectURL(localPhotoUrl);
   }, [localPhotoUrl]);
 
-  function choosePhoto(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.currentTarget.files?.[0];
-    event.currentTarget.value = "";
-    if (!file) return;
-    if (!photoTypes.includes(file.type) || file.size === 0 || file.size > maxPhotoBytes) {
-      setFormError("Choose a JPEG, PNG, or WebP photo up to 8 MB.");
-      return;
-    }
+  useEffect(() => () => preparingRef.current?.abort(), []);
 
-    setPhotoChange({ file, url: URL.createObjectURL(file) });
+  async function choosePhoto(event: ChangeEvent<HTMLInputElement>) {
+    const original = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!original || savingRef.current || preparingRef.current) return;
+
+    const controller = new AbortController();
+    preparingRef.current = controller;
+    setPreparing(true);
     setFormError("");
+    try {
+      const file = await normalizeUpload(original);
+      if (!controller.signal.aborted) setPhotoChange({ file, url: URL.createObjectURL(file) });
+    } catch {
+      if (!controller.signal.aborted) setFormError(`We couldn’t prepare this photo. ${photoRequirements}. Try another photo.`);
+    } finally {
+      preparingRef.current = null;
+      if (!controller.signal.aborted) setPreparing(false);
+    }
   }
 
   async function saveDetails(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!profile || saving) return;
+    if (!profile || savingRef.current || preparingRef.current) return;
+    if (!visiblePhotoUrl) {
+      setFormError("Upload or take a profile photo to continue.");
+      return;
+    }
 
     const heightCm = height === "" ? null : Number(height);
     const weightKg = weight === "" ? null : Number(weight);
@@ -92,15 +108,57 @@ export default function ProfileDetailsPage() {
       return;
     }
 
+    savingRef.current = true;
     setSaving(true);
     setFormError("");
-    let failureMessage = "Your measurements could not be saved. Try again.";
+    let failureMessage = "Your profile photo could not be verified. Try again.";
     try {
+      let savedProfile: Profile;
+      if (photoChange) {
+        failureMessage = "Your profile photo could not be saved. Try again.";
+        const body = new FormData();
+        const suffix = photoChange.file.type === "image/png" ? "png" : "jpg";
+        body.set("image", photoChange.file, `profile-photo.${suffix}`);
+        const response = await fetch("/api/profile/photo", { method: "PUT", body });
+        if (response.status === 413) {
+          setFormError("This photo is too large to upload. Choose a smaller version and try again.");
+          return;
+        }
+        if (response.status === 415) {
+          setFormError("This photo could not be read. Choose a JPEG, PNG, or WebP and try again.");
+          return;
+        }
+        if (response.status === 401) {
+          setFormError("Sign in again to save your profile photo.");
+          return;
+        }
+        if (!response.ok) throw new Error(failureMessage);
+        savedProfile = await response.json();
+        if (!savedProfile.facePhotoUrl) throw new Error(failureMessage);
+        setProfile(savedProfile);
+        setPhotoChange(null);
+      } else {
+        const response = await fetch("/api/profile", { cache: "no-store" });
+        if (response.status === 401) {
+          setFormError("Sign in again to continue.");
+          return;
+        }
+        if (!response.ok) throw new Error(failureMessage);
+        savedProfile = await response.json();
+        setProfile(savedProfile);
+      }
+
+      if (!savedProfile.facePhotoUrl) {
+        setFormError("Upload or take a profile photo to continue.");
+        return;
+      }
+
       const measurements: Partial<Pick<Profile, "heightCm" | "weightKg">> = {};
       if (heightCm !== profile.heightCm) measurements.heightCm = heightCm;
       if (weightKg !== profile.weightKg) measurements.weightKg = weightKg;
 
       if (Object.keys(measurements).length) {
+        failureMessage = "Your measurements could not be saved. Try again.";
         const response = await fetch("/api/profile", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -110,20 +168,10 @@ export default function ProfileDetailsPage() {
           setFormError(response.status === 401 ? "Sign in again to save your profile." : failureMessage);
           return;
         }
-        setProfile({ ...profile, ...measurements });
-      }
-
-      if (photoChange) {
-        const removing = photoChange === "remove";
-        failureMessage = removing ? "Your photo could not be removed. Try again." : "Your photo could not be saved. Try again.";
-        let body: FormData | undefined;
-        if (!removing) {
-          body = new FormData();
-          body.set("image", photoChange.file);
-        }
-        const response = await fetch("/api/profile/photo", { method: removing ? "DELETE" : "PUT", body });
-        if (!response.ok) {
-          setFormError(response.status === 401 ? "Sign in again to update your profile photo." : failureMessage);
+        const updated: Profile = await response.json();
+        setProfile(updated);
+        if (!updated.facePhotoUrl) {
+          setFormError("Upload or take a profile photo to continue.");
           return;
         }
       }
@@ -132,20 +180,16 @@ export default function ProfileDetailsPage() {
     } catch {
       setFormError(failureMessage);
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
-  }
-
-  function resetPhotoChange(change: "remove" | null) {
-    setPhotoChange(change);
-    setFormError("");
   }
 
   return (
     <main className="wardrobe-page mx-auto w-full max-w-xl flex-1 px-5 py-10 sm:px-8 sm:py-14">
       <header className="mb-7 space-y-3">
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Profile details</h1>
-        <p>Add any details you’d like to save with your profile. You can skip this step.</p>
+        <p>Add a profile photo to continue. Height and weight are optional.</p>
       </header>
 
       {!profile && (
@@ -168,22 +212,14 @@ export default function ProfileDetailsPage() {
         </div>
       )}
 
-      <form aria-busy={saving} className="space-y-5" onSubmit={saveDetails}>
-        <fieldset className="space-y-5 disabled:opacity-60" disabled={!profile || saving}>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block space-y-2">
-              <span className="block text-sm font-medium">Height (cm)</span>
-              <input className={measurementInput} type="number" step="any" value={height} onChange={(event) => setHeight(event.currentTarget.value)} />
-            </label>
-            <label className="block space-y-2">
-              <span className="block text-sm font-medium">Weight (kg)</span>
-              <input className={measurementInput} type="number" step="any" value={weight} onChange={(event) => setWeight(event.currentTarget.value)} />
-            </label>
-          </div>
-
+      <form aria-busy={saving || preparing} className="space-y-5" onSubmit={saveDetails}>
+        <fieldset className="space-y-5 disabled:opacity-60" disabled={!profile || preparing || saving}>
           <section aria-labelledby="photo-title" className="space-y-3 rounded-3xl border border-divider bg-surface p-5 sm:p-6">
-            <h2 className="text-lg font-semibold" id="photo-title">Face photo</h2>
-            <p id="photo-info" className="text-sm text-supporting">When you create a try-on, OpenAI uses this photo to show the outfit on you. Choose a JPEG, PNG, or WebP up to 8 MB.</p>
+            <h2 className="text-lg font-semibold" id="photo-title">Profile photo (required)</h2>
+            <p id="photo-info" className="text-sm text-supporting">
+              Choose a clear photo of your face. It’s stored privately and sent to OpenAI only when you
+              request an outfit preview. {photoRequirements}.
+            </p>
 
             {visiblePhotoUrl && (
               <Image
@@ -195,43 +231,45 @@ export default function ProfileDetailsPage() {
                 width={112}
               />
             )}
-            {photoChange === "remove" && <p className="text-sm" role="status">Your photo will be removed when you save.</p>}
-
             <div className="flex flex-wrap items-center gap-3">
-              <label className="relative inline-flex cursor-pointer rounded-full border border-divider px-4 py-2 text-sm font-medium focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-secondary has-disabled:cursor-not-allowed">
-                {visiblePhotoUrl ? "Choose another photo" : "Choose photo"}
-                <input type="file" accept={photoTypes.join(",")} aria-describedby="photo-info" className="sr-only" onChange={choosePhoto} />
+              <label className={photoButton}>
+                Upload photo
+                <input type="file" accept={photoAccept} aria-describedby="photo-info" className="sr-only" onChange={choosePhoto} />
+              </label>
+              <label className={photoButton}>
+                Take photo
+                <input type="file" accept="image/*" capture="user" aria-describedby="photo-info" className="sr-only" onChange={choosePhoto} />
               </label>
               {photoChange && (
-                <button className={secondaryButton} onClick={() => resetPhotoChange(null)} type="button">
-                  {photoChange === "remove" ? "Undo removal" : "Clear selection"}
-                </button>
-              )}
-              {!photoChange && profile?.facePhotoUrl && (
-                <button className={secondaryButton} onClick={() => resetPhotoChange("remove")} type="button">
-                  Remove photo
+                <button className={secondaryButton} onClick={() => {
+                  setPhotoChange(null);
+                  setFormError("");
+                }} type="button">
+                  Clear selection
                 </button>
               )}
             </div>
           </section>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block space-y-2">
+              <span className="block text-sm font-medium">Height (cm), optional</span>
+              <input className={measurementInput} type="number" step="any" value={height} onChange={(event) => setHeight(event.currentTarget.value)} />
+            </label>
+            <label className="block space-y-2">
+              <span className="block text-sm font-medium">Weight (kg), optional</span>
+              <input className={measurementInput} type="number" step="any" value={weight} onChange={(event) => setWeight(event.currentTarget.value)} />
+            </label>
+          </div>
         </fieldset>
 
         {formError && <p className="text-danger" role="alert">{formError}</p>}
 
         <div className="flex flex-wrap items-center gap-3">
-          <button className={primaryButton} disabled={!profile || saving} type="submit">
-            {saving ? "Saving…" : "Save and continue"}
-          </button>
-          <button
-            className="rounded-full px-4 py-2 text-sm font-medium underline underline-offset-4 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={saving}
-            onClick={() => router.push(nextStep)}
-            type="button"
-          >
-            Skip for now
+          <button className={primaryButton} disabled={!profile || !visiblePhotoUrl || preparing || saving} type="submit">
+            {preparing ? "Preparing photo…" : saving ? "Saving…" : "Save and continue"}
           </button>
         </div>
-        <p className="sr-only" role="status">{saving ? "Saving your profile details…" : ""}</p>
+        <p className="sr-only" role="status">{preparing ? "Preparing your profile photo…" : saving ? "Saving your profile details…" : ""}</p>
       </form>
     </main>
   );

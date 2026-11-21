@@ -34,13 +34,14 @@ test("Saved looks remain readable before the photo-mode migration", async (t) =>
   const [before] = await listLooks(db, 1);
   assert.equal(before.id, "1");
   assert.equal(before.occasion, "Cream outfit");
-  assert.equal(before.useProfilePhoto, false);
+  assert.equal(before.previewRef, null);
   assert.deepEqual(await getLook(db, 1, "1"), before);
   assert.equal(await getLook(db, 2, "1"), null);
 
   database.exec(readFileSync(new URL(modeMigration, migrations), "utf8"));
   database.exec("UPDATE saved_looks SET use_profile_photo = 1 WHERE id = 1");
-  assert.equal((await getLook(db, 1, "1")).useProfilePhoto, true);
+  assert.deepEqual(await getLook(db, 1, "1"), before);
   database.exec("UPDATE saved_looks SET use_profile_photo = 0 WHERE id = 1");
-  assert.equal((await getLook(db, 1, "1")).useProfilePhoto, false);
+  assert.deepEqual(await getLook(db, 1, "1"), before);
 });
+

@@ -1,3 +1,4 @@
+import { isOwnedPrivateFileId } from "../private-files.mjs";
 import { previewSelection } from "./preview-files.mjs";
 
 const slotNames = new Set(["top", "bottom", "dress", "shoes", "outerwear", "accessory", "other"]);
@@ -58,17 +59,17 @@ function selectSlots(table, lookKey, lookId) {
 }
 
 async function readLooks(db, accountId, id) {
-  // The optional photo mode is absent before migration 0109; the mapping treats it as null.
   const { results } = await db.prepare(`
-    SELECT look.*,
-      CASE WHEN profile.face_photo_file_id IS NULL THEN 0 ELSE 1 END AS has_profile_photo,
+    SELECT look.id, look.source_option_id, photo.file_id AS face_photo_file_id,
       (SELECT json_group_object(preview.selection, preview.file_id) FROM planner_previews AS preview
-       WHERE preview.user_id = look.user_id AND preview.option_id = look.source_option_id) AS previews, option.preview_file_id, look.name AS occasion, option.explanation,
+       WHERE preview.user_id = look.user_id AND preview.option_id = look.source_option_id) AS previews, look.name AS occasion, option.explanation,
       strftime('%Y-%m-%dT%H:%M:%fZ', look.saved_at) AS created_at,
       ${selectSlots("saved_look_items", "saved_look_id", "look.id")} AS slots,
       ${selectSlots("outfit_option_items", "option_id", "look.source_option_id")} AS original_slots
     FROM saved_looks AS look
     LEFT JOIN profiles AS profile ON profile.user_id = look.user_id
+    LEFT JOIN private_files AS photo ON photo.file_id = profile.face_photo_file_id
+      AND photo.user_id = look.user_id AND photo.state = 'ready'
     JOIN outfit_options AS option ON option.user_id = look.user_id AND option.id = look.source_option_id
     JOIN generation_runs AS run ON run.user_id = look.user_id AND run.id = option.run_id
     JOIN outfit_requests AS request ON request.user_id = look.user_id AND request.id = run.request_id
@@ -81,20 +82,11 @@ async function readLooks(db, accountId, id) {
     const originalSlots = JSON.parse(row.original_slots);
     const ids = Object.fromEntries(Object.entries(slots).map(([slot, garment]) => [slot, garment.id]));
     const previews = JSON.parse(row.previews);
-    const modes = row.use_profile_photo == null ? [false, true] : [row.use_profile_photo === 1];
-    const versions = row.use_profile_photo == null ? ["photo-v3", "photo-v2", "photo-v1", null] : ["photo-v3", "photo-v2", "photo-v1"];
-    const cached = versions.flatMap(version => modes.map(mode => ({
-      personal: mode,
-      ref: previews[previewSelection(ids, mode, version)],
-    }))).find(preview => preview.ref);
-    const sameAsOriginal = Object.keys(ids).length === Object.keys(originalSlots).length
-      && Object.entries(ids).every(([slot, id]) => originalSlots[slot]?.id === id);
-    const originalPreview = row.use_profile_photo == null && sameAsOriginal ? row.preview_file_id : null;
     return {
       id: String(row.id),
       optionId: String(row.source_option_id),
-      useProfilePhoto: cached?.personal ?? ((row.use_profile_photo ?? row.has_profile_photo) === 1),
-      previewRef: cached?.ref ?? originalPreview,
+      previewRef: isOwnedPrivateFileId({ id: accountId }, row.face_photo_file_id)
+        ? previews[previewSelection(ids, row.face_photo_file_id)] ?? null : null,
       occasion: row.occasion,
       slots,
       originalSlots,
@@ -104,7 +96,7 @@ async function readLooks(db, accountId, id) {
   });
 }
 
-export async function saveLook(db, accountId, sourceOption, slots, garments, useProfilePhoto = false) {
+export async function saveLook(db, accountId, sourceOption, slots, garments) {
   const optionId = numericId(sourceOption?.id);
   if (optionId === null) {
     throw new TypeError("A saved look must have a generated option");
@@ -113,10 +105,10 @@ export async function saveLook(db, accountId, sourceOption, slots, garments, use
   const snapshot = snapshotSlots(slots, garments);
   const [insert] = await db.batch([
     db.prepare(`
-      INSERT INTO saved_looks (user_id, source_option_id, name, saved_at, use_profile_photo)
-      VALUES (?1, ?2, (SELECT title FROM outfit_options WHERE user_id = ?1 AND id = ?2), ?3, ?4)
+      INSERT INTO saved_looks (user_id, source_option_id, name, saved_at)
+      VALUES (?1, ?2, (SELECT title FROM outfit_options WHERE user_id = ?1 AND id = ?2), ?3)
       RETURNING id
-    `).bind(accountId, optionId, new Date().toISOString(), useProfilePhoto ? 1 : 0),
+    `).bind(accountId, optionId, new Date().toISOString()),
     db.prepare(`
       WITH new_look AS MATERIALIZED (SELECT last_insert_rowid() AS id)
       INSERT INTO saved_look_items

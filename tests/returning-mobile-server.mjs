@@ -15,7 +15,7 @@ database.exec(await readFile(new URL("0000_stylist.sql", schema), "utf8"));
 database.exec(`
   INSERT INTO users (id, auth_provider, auth_subject) VALUES
     (1, 'google', 'fixture-returning-user'), (2, 'google', 'fixture-other-account');
-  INSERT INTO profiles (user_id, face_photo_file_id) VALUES (1, 'fixture-face');
+  INSERT INTO profiles (user_id, face_photo_file_id) VALUES (1, 'private/1/00000000-0000-4000-8000-000000000001');
   INSERT INTO wardrobe_items (id, user_id, name, category, color, image_file_id, confirmed_at, archived_at) VALUES
     (11, 1, 'Silk blouse', 'top', 'Cream', 'blouse', 'confirmed', NULL),
     (12, 1, 'Wool trousers', 'bottom', 'Navy', 'trousers', 'confirmed', NULL),
@@ -31,6 +31,8 @@ for (const file of (await readdir(schema)).sort()) {
     database.exec(await readFile(new URL(file, schema), "utf8"));
   }
 }
+
+database.prepare("INSERT INTO private_files (file_id, user_id, state) VALUES (?, 1, 'ready')").run("private/1/00000000-0000-4000-8000-000000000001");
 
 const db = {
   prepare(sql) {
@@ -70,7 +72,7 @@ const tryOn = jpeg.encode({ data: Buffer.from([200, 160, 120, 255]), width: 1, h
 const photos = new Map(["blouse", "trousers", "heels", "flats", "dress"].map(id =>
   [id, { body: image, httpMetadata: { contentType: "image/png" } }]));
 const face = jpeg.encode({ data: Buffer.from([120, 140, 160, 255]), width: 1, height: 1 }).data;
-photos.set("fixture-face", { body: face, httpMetadata: { contentType: "image/jpeg" } });
+photos.set("private/1/00000000-0000-4000-8000-000000000001", { body: face, httpMetadata: { contentType: "image/jpeg" } });
 const env = {
   readSampleImage,
   DB: db,
@@ -108,6 +110,7 @@ let enhancementRequests = 0;
 async function decisionsFixture(url, options) {
   if (url === "https://api.openai.com/v1/images/edits") {
     assert.equal(options.body.get("output_format"), "jpeg");
+    assert.match(options.body.get("prompt"), /required user profile photo/u);
     const [person, ...garments] = options.body.getAll("image[]");
     assert.deepEqual(Buffer.from(await person.arrayBuffer()), face);
     assert.ok(garments.length > 0);

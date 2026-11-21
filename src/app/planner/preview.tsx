@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { LoadTryOn } from "./try-on";
 import { imageUrl, type Garment, type Look } from "./shared";
@@ -107,7 +108,12 @@ export function Preview({ look, loadTryOn, garments, onBack }: PreviewProps) {
               {generating && (
                 <p role="status" className="text-sm text-supporting">Generating your outfit try-on…</p>
               )}
-              {error && <p role="alert" className="text-sm font-medium text-danger">{error}</p>}
+              {error && (
+                <div className="space-y-1">
+                  <p role="alert" className="text-sm font-medium text-danger">{error}</p>
+                  <Link href="/profile/settings" className="text-sm font-semibold underline">Add or update your profile photo</Link>
+                </div>
+              )}
             </>
           )}
         </section>

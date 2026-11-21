@@ -3,7 +3,7 @@ import { readOption, generateOptions } from "./options.mjs";
 import { wearAction } from "./wear.mjs";
 import { evaluateEnhancements, shoppingAction } from "./shopping.mjs";
 import { generatePreview } from "./preview.mjs";
-import { previewFiles, profilePhotoRef } from "./preview-files.mjs";
+import { previewFiles } from "./preview-files.mjs";
 import { saveLook, listLooks, getLook, snapshotSlots } from "./saved.mjs";
 
 export class PlannerError extends Error {
@@ -33,28 +33,9 @@ async function option(db, accountId, id) {
   return found(await readOption(db, accountId, id));
 }
 
-function selectedPhotoRef(db, accountId, preference, overrides) {
-  if (preference === false) return null;
-  return overrides?.profilePhotoRef ? overrides.profilePhotoRef() : profilePhotoRef(db, accountId);
-}
-
-async function renderPreview(env, accountId, source, slots, garments, ref, personal, overrides) {
-  const files = overrides ?? previewFiles(env, accountId, source.id, slots, personal);
-  const cached = await files.cachedImage?.();
-  if (cached) return { imageRef: cached };
-  if (!ref && (personal || !garments.length)) {
-    throw new PlannerError(400, "Add a profile photo to generate this try-on.");
-  }
-  const brief = await getBrief(env.DB, accountId, source.briefId);
-  return generatePreview(env, garments, ref, files, brief);
-}
-
 export async function dispatchPlanner(env, accountId, action, input = {}, dependencies = {}) {
   if (!Number.isSafeInteger(accountId) || accountId < 1) throw new PlannerError(401, "Sign in to open the planner.");
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new PlannerError(400, "Invalid planner request.");
-  if ((action === "preview" || action === "save") && input.useProfilePhoto != null && typeof input.useProfilePhoto !== "boolean") {
-    throw new PlannerError(400, "Invalid profile photo choice.");
-  }
   const db = env.DB;
   const wardrobe = () => (dependencies.getGarments ?? getGarments)(env, accountId);
   switch (action) {
@@ -83,29 +64,20 @@ export async function dispatchPlanner(env, accountId, action, input = {}, depend
       const profileOnly = !Object.keys(source.slots).length && input.slots &&
         !Array.isArray(input.slots) && typeof input.slots === "object" && !Object.keys(input.slots).length;
       const final = profileOnly ? {} : snapshotSlots(input.slots, await wardrobe());
-      const ref = await selectedPhotoRef(db, accountId, input.useProfilePhoto, dependencies.preview);
-      return renderPreview(env, accountId, source, input.slots, Object.values(final), ref,
-        input.useProfilePhoto === true || Boolean(ref), dependencies.preview);
+      const files = dependencies.preview ?? previewFiles(env, accountId, source.id, input.slots);
+      const brief = await getBrief(db, accountId, source.briefId);
+      return generatePreview(env, Object.values(final), input.useProfilePhoto, files, brief);
     }
     case "savedPreview": {
       const look = found(await getLook(db, accountId, input.id));
-      if (look.previewRef) return { imageRef: look.previewRef };
       const ids = Object.fromEntries(Object.entries(look.slots).map(([slot, garment]) => [slot, garment.id]));
+      const files = dependencies.preview ?? previewFiles(env, accountId, look.optionId, ids);
       const source = await option(db, accountId, look.optionId);
-      const ref = await selectedPhotoRef(db, accountId, look.useProfilePhoto, dependencies.preview);
-      const result = await renderPreview(env, accountId, source, ids, Object.values(look.slots), ref, Boolean(ref), dependencies.preview);
-      if (look.useProfilePhoto && !ref) {
-        // Only adopt the studio mode after its image is ready.
-        await db.prepare("UPDATE saved_looks SET use_profile_photo=0 WHERE user_id=? AND id=?")
-          .bind(accountId, look.id).run();
-      }
-      return result;
+      const brief = await getBrief(db, accountId, source.briefId);
+      return generatePreview(env, Object.values(look.slots), input.useProfilePhoto, files, brief);
     }
-    case "save": {
-      const source = await option(db, accountId, input.optionId);
-      const personal = input.useProfilePhoto ?? Boolean(await profilePhotoRef(db, accountId));
-      return saveLook(db, accountId, source, input.slots, await wardrobe(), personal === true);
-    }
+    case "save":
+      return saveLook(db, accountId, await option(db, accountId, input.optionId), input.slots, await wardrobe());
     case "list": return listLooks(db, accountId);
     case "detail": return found(await getLook(db, accountId, input.id));
     default: throw new PlannerError(400, "Unknown planner action.");

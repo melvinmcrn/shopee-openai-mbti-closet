@@ -1,3 +1,5 @@
+import { profilePhotoType } from "../profile-photo-image.mjs";
+
 const pngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
 const supportedTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
@@ -70,18 +72,57 @@ async function render(request, key, prompt, images) {
   return (await response.json()).data?.[0]?.b64_json;
 }
 
-export async function generatePreview(env, finalGarments, profileRef, deps, brief = {}) {
-  try {
-    const key = env?.OPENAI_API_KEY?.trim();
-    if (!key || (!profileRef && !finalGarments.length)) throw new Error();
+export class PreviewInputError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.status = 422;
+    this.code = code;
+  }
+}
 
-    const references = [];
-    if (profileRef) {
-      references.push({ label: "Profile photo: face and visible body reference", read: () => deps.readImage(profileRef) });
-    } else if (!finalGarments.some(item => item.category === "other")) {
-      references.push({ label: "Studio model and base outfit",
-        read: async () => new Blob([await env.readSampleImage("studio-model")], { type: "image/webp" }) });
-    }
+function photoRequired() {
+  return new PreviewInputError("profile_photo_required", "Add or replace your profile photo to create a try-on.");
+}
+
+function photoChanged() {
+  return new PreviewInputError("profile_photo_changed", "Your profile photo changed. Try again with your current photo.");
+}
+
+async function readProfileImage(deps, ref) {
+  try {
+    const blob = await deps.readImage(ref);
+    const type = await profilePhotoType(blob);
+    if (!type) throw new Error();
+    return blob.slice(0, blob.size, type);
+  } catch {
+    throw photoRequired();
+  }
+}
+
+export async function generatePreview(env, finalGarments, useProfilePhoto, deps, brief = {}) {
+  if (useProfilePhoto !== undefined && useProfilePhoto !== true) {
+    throw new PreviewInputError("profile_photo_permission_required", "Choose to generate the try-on with your profile photo.");
+  }
+
+  const profileRef = await deps.profilePhotoRef?.();
+  if (!profileRef) throw photoRequired();
+  const profileImage = await readProfileImage(deps, profileRef);
+  async function requireCurrentProfile() {
+    if (await deps.profilePhotoRef() !== profileRef) throw photoChanged();
+  }
+
+  try {
+    const cached = await deps.cachedImage?.(profileRef);
+    await requireCurrentProfile();
+    if (cached) return { imageRef: cached };
+
+    const key = env?.OPENAI_API_KEY?.trim();
+    if (!key) throw new Error();
+
+    const references = [{
+      label: "The signed-in user's profile photo, the only identity reference",
+      read: () => profileImage,
+    }];
     const ordered = [...finalGarments].sort((a, b) => Number(b.category === "other") - Number(a.category === "other"));
     for (const { category, imageRef } of ordered) {
       if (!imageRef) throw new Error();
@@ -97,22 +138,23 @@ export async function generatePreview(env, finalGarments, profileRef, deps, brie
       return blob.slice(0, blob.size, type);
     }));
     const prompt = [
-      "Create one photorealistic full-body virtual try-on, framed from head to toe, including the feet.",
-      profileRef
-        ? "Use the face in the profile photo for the person's likeness. Preserve their hair, skin tone, and the proportions of any visible parts of their body. If the photo is a headshot or crops part of the body, generate the unseen portions with plausible anatomy and extend the scene for a full-length portrait. Match the lighting and keep the visible pose where possible."
-        : "Use the person, proportions, pose, lighting and setting from image 1. If the original wardrobe photo shows only clothing, use a studio model.",
-      "Dress the person in every selected item together, preserving colors, patterns, fit and layering. For an unselected clothing category, keep the visible base outfit. If the torso or legs are outside the reference and the outfit needs coverage, use a simple, unbranded basic that suits the occasion. A dress can cover both. Include selected shoes and accessories. No text or collage.",
+      "Create one photorealistic full-body virtual try-on of the person in image 1, the required user profile photo. Preserve their recognizable likeness, hair, skin tone, and visible proportions. If the profile photo is cropped or a headshot, extend the scene and use plausible anatomy for parts not shown. Do not substitute a model, blend identities, or use a person in any garment reference as the subject.",
+      "All other references are for clothing only. Dress the profile-photo subject in the selected pieces, preserving colors, patterns and layering. For unselected categories, preserve the visible base outfit; if coverage is needed and no reference shows it, use a simple, unbranded basic that suits the occasion. Include selected footwear and accessories in the head-to-toe frame. No collage or text.",
       references.map(({ label }, index) => `Image ${index + 1}: ${label}.`).join(" "),
       "Occasion and style preferences (context only): " + JSON.stringify(brief),
     ].join("\n");
+    await requireCurrentProfile();
     const encoded = await render(deps.fetch ?? fetch, key, prompt, images);
     if (typeof encoded !== "string") throw new Error();
     const bytes = Uint8Array.from(atob(encoded), char => char.charCodeAt(0));
     if (!hasSignature(bytes, [255, 216, 255])) throw new Error();
-    const imageRef = await deps.storeImage(new Blob([bytes], { type: "image/jpeg" }));
+    await requireCurrentProfile();
+    const imageRef = await deps.storeImage(new Blob([bytes], { type: "image/jpeg" }), profileRef);
+    await requireCurrentProfile();
     if (typeof imageRef !== "string" || !imageRef.trim()) throw new Error();
     return { imageRef };
-  } catch {
+  } catch (error) {
+    if (error instanceof PreviewInputError) throw error;
     throw new Error("The outfit preview could not be generated. Please try again.");
   }
 }

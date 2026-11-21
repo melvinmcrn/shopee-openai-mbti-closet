@@ -15,10 +15,7 @@ export function createTryOnLoader() {
     if (existing) return existing;
     const request = api<{ imageRef: string }>("preview", {
       optionId: look.id, slots: look.slots,
-    }).catch(error => {
-      requests.delete(key);
-      throw error;
-    });
+    }).finally(() => requests.delete(key));
     requests.set(key, request);
     return request;
   }

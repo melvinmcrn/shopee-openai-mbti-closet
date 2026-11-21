@@ -112,9 +112,10 @@ export function Refine({ look, garments, onSaved, onPreview, onBack }: RefinePro
           disabled={saving}
           onClick={onPreview}
         >
-          Preview outfit
+          Preview with my profile photo
         </button>
       </div>
+      <p className="text-sm text-supporting">An outfit preview uses your profile photo and sends it to OpenAI.</p>
       {error && <p role="alert" className="text-sm font-medium text-danger">{error}</p>}
     </section>
   );

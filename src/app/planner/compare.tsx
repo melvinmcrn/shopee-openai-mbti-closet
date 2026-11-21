@@ -44,7 +44,7 @@ function StyledImage({ look, loadTryOn }: { look: Look; loadTryOn: LoadTryOn }) 
           <Image src={imageUrl(generated)} alt="Full-body virtual try-on of this outfit" fill unoptimized className="object-contain"
             onError={() => { setGenerated(""); setError("Couldn’t load the try-on."); }} />
         ) : (
-          <p role="status" className="px-5 text-center text-sm text-supporting">
+          <p role={error ? "alert" : "status"} className="px-5 text-center text-sm text-supporting">
             {error || "Creating your full-body try-on…"}
           </p>
         )}
@@ -53,6 +53,7 @@ function StyledImage({ look, loadTryOn }: { look: Look; loadTryOn: LoadTryOn }) 
         setError("");
         setAttempt(count => count + 1);
       }}>Retry styled image</button>}
+      {error && <Link href="/profile/settings" className="mt-2 block text-sm font-semibold underline">Add or update your profile photo</Link>}
     </div>
   );
 }

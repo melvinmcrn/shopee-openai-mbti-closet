@@ -1,30 +1,38 @@
-import { readPrivateFile, writePrivateFile, deletePrivateFile } from "../private-files.mjs";
+import { readPrivateFile, writePrivateFile, deletePrivateFile, isOwnedPrivateFileId } from "../private-files.mjs";
 
-export function previewSelection(slots, useProfilePhoto, version = useProfilePhoto ? "photo-v3" : "photo-v2") {
+export function previewSelection(slots, profileRef) {
   const entries = Object.entries(slots).filter(([, id]) => id != null).sort(([a], [b]) => a.localeCompare(b));
-  return JSON.stringify(version ? [version, useProfilePhoto, entries] : [useProfilePhoto, entries]);
+  return JSON.stringify(["required-profile-v1", profileRef, entries]);
 }
 
-export async function profilePhotoRef(db, accountId) {
-  const row = await db.prepare("SELECT face_photo_file_id AS ref FROM profiles WHERE user_id=?").bind(accountId).first();
-  return row?.ref ?? null;
-}
-
-export function previewFiles(env, accountId, optionId, slots, useProfilePhoto) {
+export function previewFiles(env, accountId, optionId, slots) {
   const account = { id: accountId };
-  const selection = previewSelection(slots, useProfilePhoto);
   return {
-    async cachedImage() {
+    async cachedImage(profileRef) {
+      const selection = previewSelection(slots, profileRef);
       const row = await env.DB.prepare("SELECT file_id FROM planner_previews WHERE user_id=? AND option_id=? AND selection=?")
         .bind(accountId, optionId, selection).first();
-      return row?.file_id;
+      if (!row?.file_id) return null;
+      const file = await readPrivateFile(env, account, row.file_id, { headOnly: true });
+      return file ? row.file_id : null;
+    },
+    async profilePhotoRef() {
+      const row = await env.DB.prepare(`
+        SELECT profile.face_photo_file_id AS ref
+        FROM profiles AS profile
+        JOIN private_files AS photo ON photo.file_id = profile.face_photo_file_id
+          AND photo.user_id = profile.user_id AND photo.state = 'ready'
+        WHERE profile.user_id = ?
+      `).bind(accountId).first();
+      return isOwnedPrivateFileId(account, row?.ref) ? row.ref : null;
     },
     async readImage(ref) {
       const file = await readPrivateFile(env, account, ref);
       if (!file) throw new Error("Image unavailable");
       return new Blob([await file.arrayBuffer()], {type:file.httpMetadata?.contentType});
     },
-    async storeImage(blob) {
+    async storeImage(blob, profileRef) {
+      const selection = previewSelection(slots, profileRef);
       const ref = await writePrivateFile(env, account, await blob.arrayBuffer(), blob.type);
       try {
         await env.DB.prepare(`
@@ -32,7 +40,7 @@ export function previewFiles(env, accountId, optionId, slots, useProfilePhoto) {
           ON CONFLICT(user_id,option_id,selection) DO UPDATE SET file_id=excluded.file_id
         `).bind(accountId, optionId, selection, ref).run();
       } catch (error) {
-        await deletePrivateFile(env,account,ref);
+        await deletePrivateFile(env, account, ref).catch(() => {});
         throw error;
       }
       return ref;
