@@ -72,7 +72,7 @@ export default function PlannerPage() {
   else if (screen === "compare" && brief.id) content = <Compare loadTryOn={loadTryOn} useProfilePhoto={useProfilePhoto} setUseProfilePhoto={setUseProfilePhoto} briefId={brief.id} garments={garments} onEdit={() => go("style")} onChoose={chosen => { setLook(chosen); go("refine"); }} />;
   else if (screen === "refine" && look) content = <Refine look={look} garments={garments} onBack={() => go("compare")} onPreview={() => go("preview")} onSaved={id => go("saved/" + id)} />;
   else if (screen === "preview" && look) content = <Preview key={String(useProfilePhoto)} loadTryOn={loadTryOn} useProfilePhoto={useProfilePhoto} setUseProfilePhoto={setUseProfilePhoto} look={look} garments={garments} onBack={() => go("refine")} />;
-  else content = <PlannerHome garments={garments} onNew={start} onSaved={() => go("saved")} />;
+  else content = <PlannerHome garments={garments} onNew={start} />;
   const activeTab = screen === "home" ? "Home" : screen === "saved" ? "Saved" : null;
   return <main className="min-h-screen bg-canvas px-5 py-6 text-text sm:px-10">
     <div className="mx-auto max-w-4xl">

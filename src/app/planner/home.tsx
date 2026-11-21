@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Garment } from "./shared";
 
 const outfitCategories = [
@@ -12,10 +13,9 @@ const outfitCategories = [
 type PlannerHomeProps = {
   garments: readonly Garment[];
   onNew: () => void;
-  onSaved: () => void;
 };
 
-export function PlannerHome({ garments, onNew, onSaved }: PlannerHomeProps) {
+export function PlannerHome({ garments, onNew }: PlannerHomeProps) {
   const categoryCounts = outfitCategories.map(({ category, label }) => ({
     label,
     count: garments.filter((garment) => garment.category === category).length,
@@ -41,13 +41,12 @@ export function PlannerHome({ garments, onNew, onSaved }: PlannerHomeProps) {
           >
             Plan a new outfit
           </button>
-          <button
-            type="button"
-            onClick={onSaved}
-            className="min-h-12 rounded-full border border-canvas/60 px-6 font-semibold text-canvas transition-colors hover:bg-canvas/10 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-canvas"
+          <Link
+            href="/wardrobe/add"
+            className="inline-flex min-h-12 items-center justify-center rounded-full border border-canvas/60 px-6 text-center font-semibold text-canvas transition-colors hover:bg-canvas/10 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-canvas"
           >
-            Saved looks
-          </button>
+            Add new clothes to wardrobe
+          </Link>
         </div>
       </section>
       <section aria-labelledby="planner-closet-title" className="mt-8">
