@@ -16,7 +16,12 @@ export type CatalogProduct = {
 export function EnhancementProduct({ product, sponsored = false }: { product: CatalogProduct; sponsored?: boolean }) {
   const [imageFailed, setImageFailed] = useState(false);
   return (
-    <div className="flex min-w-0 flex-wrap items-start gap-3 rounded-xl border border-divider bg-canvas p-3">
+    <a
+      href={product.url}
+      target="_blank"
+      rel={sponsored ? "sponsored noopener noreferrer" : "noopener noreferrer"}
+      className="group flex min-w-0 flex-wrap items-start gap-3 rounded-xl border border-divider bg-canvas p-3 hover:border-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary"
+    >
       {!imageFailed && (
         <Image src={product.imageUrl} alt="" width={80} height={80} unoptimized
           className="size-20 shrink-0 rounded-lg bg-selected object-contain"
@@ -24,45 +29,55 @@ export function EnhancementProduct({ product, sponsored = false }: { product: Ca
         />
       )}
       <div className="min-w-0 flex-1 basis-32 space-y-1">
-        <p className="text-xs font-semibold text-secondary">Optional enhancement{sponsored && " · Sponsored"}</p>
+        <p className="flex flex-wrap items-center gap-x-1 text-xs font-semibold text-secondary">
+          <span aria-hidden="true">✨</span>
+          <span>Elevate your look</span>
+          {sponsored && <span>· Sponsored</span>}
+        </p>
         <p className="wrap-break-word text-sm font-semibold">{product.title}</p>
         <p className="text-sm">{new Intl.NumberFormat("en", { style: "currency", currency: product.currency }).format(product.price)}</p>
-        <a href={product.url} target="_blank" rel={sponsored ? "sponsored noopener noreferrer" : "noopener noreferrer"}
-          className="inline-flex min-h-11 items-center text-sm font-semibold text-secondary underline underline-offset-2">
+        <span className="inline-block pt-1 text-sm font-semibold text-secondary underline underline-offset-2 group-hover:decoration-2">
           Buy on Shopee<span className="sr-only"> (opens in a new tab)</span>
-        </a>
+        </span>
       </div>
-    </div>
+    </a>
   );
 }
 
-function EnhancementForSelection({ optionId, selection }: { optionId: string; selection: string }) {
-  const [product, setProduct] = useState<CatalogProduct | null>(null);
-  const [failed, setFailed] = useState(false);
+export function useLookEnhancement(optionId: string, slots: Record<string, string>) {
+  const selection = JSON.stringify(slots, Object.keys(slots).sort());
+  const key = optionId + selection;
   const [attempt, setAttempt] = useState(0);
+  const [result, setResult] = useState<{ key: string; product?: CatalogProduct | null; failed?: boolean }>();
 
   useEffect(() => {
+    if (selection === "{}") return;
     let active = true;
-    // Let rapid swaps settle before evaluating the draft.
     const timer = setTimeout(() => {
       api<CatalogProduct | null>("enhancement", { optionId, slots: JSON.parse(selection) })
-        .then(result => { if (active) setProduct(result); })
-        .catch(() => { if (active) setFailed(true); });
+        .then(product => { if (active) setResult({ key, product }); })
+        .catch(() => { if (active) setResult({ key, failed: true }); });
     }, 150);
     return () => { active = false; clearTimeout(timer); };
-  }, [optionId, selection, attempt]);
+  }, [optionId, key, selection, attempt]);
 
+  const product = selection === "{}" ? null : result?.key === key ? result.product : undefined;
+  function retry() {
+    setResult(undefined);
+    setAttempt(value => value + 1);
+  }
+  return { product, failed: result?.key === key && result.failed, retry };
+}
+
+export function EnhancementCard({ product, failed, retry }: ReturnType<typeof useLookEnhancement>) {
   if (failed) return (
-    <button type="button" className="min-h-11 text-sm font-semibold text-secondary underline" onClick={() => {
-      setFailed(false);
-      setAttempt(value => value + 1);
-    }}>Retry enhancement check</button>
+    <button type="button" className="min-h-11 text-sm font-semibold text-secondary underline"
+      onClick={retry}>Retry enhancement check</button>
   );
-  return product && <div className="my-3"><EnhancementProduct product={product} /></div>;
+  return product && <div className="my-3"><EnhancementProduct key={product.id} product={product} /></div>;
 }
 
 export function LookEnhancement({ optionId, slots }: { optionId: string; slots: Record<string, string> }) {
-  if (!Object.keys(slots).length) return null;
-  const selection = JSON.stringify(slots, Object.keys(slots).sort());
-  return <EnhancementForSelection key={optionId + selection} optionId={optionId} selection={selection} />;
+  const enhancement = useLookEnhancement(optionId, slots);
+  return <EnhancementCard {...enhancement} />;
 }

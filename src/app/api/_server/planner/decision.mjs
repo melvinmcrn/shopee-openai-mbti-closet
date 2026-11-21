@@ -234,7 +234,7 @@ export async function generateLooks(env, brief, garments, priorLooks = [], reque
     status: "ready",
     looks: photoCandidates.slice(0, 2).map(slots => ({
       slots,
-      explanation: "Start with the original photo and keep its clothing wherever no replacement is selected.",
+      explanation: explain({ slots, reason: "coordination" }, eligible),
     })),
   });
   if (photoCandidates.length && [...eligible.values()].every(item => item.category === "other")) return photoLooks();

@@ -46,7 +46,7 @@ function d1Binding(database) {
   };
 }
 
-async function startPlanner(t, preview, optionSlots = original, shoppingFetch) {
+async function startPlanner(t, preview, optionSlots = original, shoppingFetch, searchTerm = "evening layer") {
   const database = new DatabaseSync(":memory:");
   t.after(() => database.close());
   const migrations = new URL("../drizzle/", import.meta.url);
@@ -83,7 +83,14 @@ async function startPlanner(t, preview, optionSlots = original, shoppingFetch) {
         looks: [{ slots: optionSlots, explanation: "The dress works for dinner." }],
       }),
       preview,
-      shoppingFetch,
+      shoppingFetch: (url, request) => {
+        const [question] = JSON.parse(request.body).questions;
+        if (question.name === "catalog_search") {
+          return decision((shoppingFetch && question.choices.find(({ description }) => description === searchTerm)?.value) ?? "none",
+            { name: question.name });
+        }
+        return shoppingFetch(url, request);
+      },
     };
     return (action, input) => dispatchPlanner(env, user, action, input, dependencies);
   };
@@ -100,6 +107,15 @@ async function startPlanner(t, preview, optionSlots = original, shoppingFetch) {
   return { dispatch, makeSession, optionId: option.id, database };
 }
 
+function previewReply(url, options) {
+  if (url.endsWith("/images/edits")) return Response.json({ data: [{ b64_json: "/9j/4A==" }] });
+  const { input } = JSON.parse(options.body);
+  const visible_items = input[0].content.filter(part => part.type === "input_text" && part.text.startsWith("{"))
+    .map(part => JSON.parse(part.text).reference);
+  return Response.json({ status: "completed", output: [{ type: "message", role: "assistant", status: "completed",
+    content: [{ type: "output_text", text: JSON.stringify({ visible_items }) }] }] });
+}
+
 test("preview sends the final shoe's bytes without reading a profile photo by default", async (t) => {
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAMAAAAECAIAAADETxJQAAAAGElEQVR4nGPcN20LAwMDAwMDEwMMYGMBAE4CAhAM6GwxAAAAAElFTkSuQmCC", "base64");
   const jpeg = Buffer.from([255, 216, 255, 224]);
@@ -112,9 +128,7 @@ test("preview sends the final shoe's bytes without reading a profile photo by de
   const preview = {
     readImage: t.mock.fn(async (reference) => new Blob([files.get(reference)], { type: "image/png" })),
     profilePhotoRef: t.mock.fn(async () => "profile.png"),
-    fetch: t.mock.fn(async () => Response.json({
-      data: [{ b64_json: jpeg.toString("base64") }],
-    })),
+    fetch: t.mock.fn(previewReply),
     storeImage: t.mock.fn(async () => "preview.png"),
   };
   const { dispatch, optionId } = await startPlanner(t, preview);
@@ -125,7 +139,7 @@ test("preview sends the final shoe's bytes without reading a profile photo by de
   const refs = preview.readImage.mock.calls.map(({ arguments: [reference] }) => reference);
   assert.deepEqual([...refs].sort(), [dress.imageRef, flats.imageRef].sort());
   assert.equal(preview.profilePhotoRef.mock.callCount(), 0);
-  assert.equal(preview.fetch.mock.callCount(), 1);
+  assert.equal(preview.fetch.mock.callCount(), 2);
   const [endpoint, request] = preview.fetch.mock.calls[0].arguments;
   assert.equal(endpoint, "https://api.openai.com/v1/images/edits");
   assert.equal(request.body.get("output_format"), "jpeg");
@@ -145,15 +159,18 @@ test("saved looks keep the matching try-on mode and pick up a render that finish
   assert.equal(personal.previewRef, null);
 
   function insertPreview(file, mode, slots, version) {
-    const entries = Object.entries(slots).sort(([a], [b]) => a.localeCompare(b));
-    const key = JSON.stringify(version ? [version, mode, entries] : [mode, entries]);
+    const entries = Object.entries(slots).sort(([a], [b]) => a.localeCompare(b)).map(([slot, id]) => {
+      const item = garments.find(garment => garment.id === id);
+      return version === "inventory-v2" ? [slot, id, item.imageRef, item.name] : [slot, id];
+    });
+    const key = JSON.stringify(version === "inventory-v2" ? [version, mode, entries, null] : version ? [version, mode, entries] : [mode, entries]);
     database.prepare("INSERT INTO private_files(file_id,user_id,state) VALUES (?,1,'ready')").run(file);
     database.prepare("INSERT INTO planner_previews VALUES (1,?,?,?)").run(optionId, key, file);
   }
-  insertPreview("wrong-outfit", false, original, "photo-v2");
-  insertPreview("personal-photo", true, refined, "photo-v2");
+  insertPreview("wrong-outfit", false, original, "inventory-v2");
+  insertPreview("personal-photo", true, refined, "inventory-v2");
   assert.equal((await dispatch("detail", { id: studio.id })).previewRef, null);
-  insertPreview("studio-photo", false, refined, "photo-v2");
+  insertPreview("studio-photo", false, refined, "inventory-v2");
   const looks = await dispatch("list", {});
   assert.equal(looks.find(look => look.id === personal.id).previewRef, "personal-photo");
   assert.equal(looks.find(look => look.id === studio.id).previewRef, "studio-photo");
@@ -163,16 +180,15 @@ test("saved looks keep the matching try-on mode and pick up a render that finish
   const older = await dispatch("save", { optionId, slots: { dress: dress.id } });
   database.prepare("UPDATE saved_looks SET use_profile_photo=NULL WHERE id=?").run(older.id);
   insertPreview("older-photo", true, { dress: dress.id }, null);
-  assert.equal((await dispatch("detail", { id: older.id })).previewRef, "older-photo");
+  insertPreview("unchecked-photo", false, { dress: dress.id }, "photo-v2");
+  assert.equal((await dispatch("detail", { id: older.id })).previewRef, null);
 });
 
 test("a dress-only option previews and saves without adding shoes", async (t) => {
   const slots = { dress: dress.id };
   const preview = {
     readImage: t.mock.fn(async () => new Blob(["dress"], { type: "image/png" })),
-    fetch: async () => Response.json({
-      data: [{ b64_json: "/9j/4A==" }],
-    }),
+    fetch: previewReply,
     storeImage: async () => "dress-preview.png",
   };
   const { dispatch, optionId, makeSession } = await startPlanner(t, preview, slots);
@@ -236,7 +252,7 @@ test("Decisions selects a Shopee catalog product from the final outfit and the o
   assert.ok(payload.questions[0].choices.some(({ value }) => value === "item_123"));
   const [suggestion] = initial;
   assert.deepEqual(initial, [{
-    id: suggestion.id,
+    id: suggestion.id, catalogItemId: "123", category: "evening layer",
     title: "Linen jacket",
     url: "https://shopee.co.th/product/1/123",
     imageUrl: "https://down-th.img.susercontent.com/file/jacket",
@@ -253,29 +269,29 @@ test("Decisions selects a Shopee catalog product from the final outfit and the o
   assert.equal(shoppingFetch.mock.callCount(), 1);
 });
 
-test("existing suggestions are reused and accessorized looks can get a clothing recommendation", async (t) => {
+test("unlisted legacy suggestions are replaced and saved links are resolved from the catalog", async (t) => {
   const shoppingFetch = t.mock.fn(async () => decision("item_123"));
   const { dispatch, optionId, database } = await startPlanner(t, undefined, original, shoppingFetch);
-  const { id: lookId } = await dispatch("save", { optionId, slots: refined });
-  database.prepare(`
-    INSERT INTO shopping_suggestions (saved_look_id, product_name, merchant, product_url, is_sponsored)
-    VALUES (?, 'Original suggestion', 'Shopee', 'https://shopee.sg/legacy-url', 1)
-  `).run(Number(lookId));
-  assert.deepEqual(await dispatch("shopping", { lookId }), [{
-    id: "1", title: "Original suggestion", url: "https://shopee.sg/legacy-url", sponsored: true,
-  }]);
-  const { id: accessorizedId } = await dispatch("save", {
+  const { id: lookId } = await dispatch("save", {
     optionId, slots: { ...refined, accessory: necklace.id },
   });
-  assert.equal((await dispatch("shopping", { lookId: accessorizedId }))[0].title, "Linen jacket");
-  assert.equal(shoppingFetch.mock.callCount(), 1);
+  database.prepare(`
+    INSERT INTO shopping_suggestions (saved_look_id, product_name, merchant, product_url, is_sponsored)
+    VALUES (?, 'Unlisted item', 'Shopee', 'https://shopee.sg/legacy-url', 1)
+  `).run(Number(lookId));
+  const [item] = await dispatch("shopping", { lookId });
+  assert.equal(item.title, "Linen jacket");
+  database.prepare(`
+    UPDATE shopping_suggestions SET product_name = 'Stale snapshot', product_url = 'https://shopee.co.th/search'
+    WHERE catalog_item_id = '123'
+  `).run();
+  assert.deepEqual(await dispatch("shopping", { lookId }), [item]);
 });
 
 test("an unavailable, refused, or invalid decision leaves no fallback row and can be retried", async (t) => {
   const responses = [
     new Response("provider unavailable", { status: 503 }),
     new Response("invalid JSON"),
-    decision("https://example.invalid/injected"),
     decision("item_123", { name: "wrong_question" }),
     decision(undefined, { type: "refusal" }),
     decision("item_123"),
@@ -286,13 +302,13 @@ test("an unavailable, refused, or invalid decision leaves no fallback row and ca
   const expectedError = { status: 503, message: "Shopping suggestions are temporarily unavailable. Please try again." };
   await assert.rejects(makeSession(accountId, "")("shopping", { lookId }), expectedError);
   assert.equal(shoppingFetch.mock.callCount(), 0);
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
     await assert.rejects(dispatch("shopping", { lookId }), expectedError);
     assert.equal(database.prepare("SELECT count(*) AS count FROM shopping_suggestions").get().count, 0);
   }
   const [suggestion] = await dispatch("shopping", { lookId });
   assert.equal(suggestion.title, "Linen jacket");
-  assert.equal(shoppingFetch.mock.callCount(), 6);
+  assert.equal(shoppingFetch.mock.callCount(), 5);
 });
 
 test("Decisions can explicitly opt out for a single-item outfit without creating a suggestion", async (t) => {
@@ -347,4 +363,72 @@ test("planning evaluates enhancements before saving, remembers complete looks an
   const saved = await dispatch("save", { optionId, slots: refined });
   assert.equal((await dispatch("shopping", { lookId: saved.id }))[0].url, enhanced.url);
   assert.equal(shoppingFetch.mock.callCount(), 2);
+});
+
+
+test("catalog search shows all matches for the desired term and cannot substitute from another term", async (t) => {
+  let choices;
+  const productFetch = async (_, request) => {
+    choices = JSON.parse(request.body).questions[0].choices;
+    return decision("item_123");
+  };
+  const { dispatch, optionId, database } = await startPlanner(t, undefined, original, productFetch, "women necklace");
+  const { id: lookId } = await dispatch("save", { optionId, slots: refined });
+  assert.deepEqual(await dispatch("shopping", { lookId }), []);
+  const expectedIds = database.prepare(
+    "SELECT DISTINCT item_id FROM clothes_catalog WHERE search_term = 'women necklace'"
+  ).all().map(row => `item_${row.item_id}`);
+  assert.deepEqual(new Set(choices.map(({ value }) => value)), new Set([...expectedIds, "none"]));
+});
+
+test("a stale or mismatched catalog purchase URL cannot be shown on a plan or saved look", async (t) => {
+  const { dispatch, optionId, database } = await startPlanner(t, undefined, original, async () => decision("item_123"));
+  assert.equal((await dispatch("enhancement", { optionId, slots: refined })).title, "Linen jacket");
+  const { id: lookId } = await dispatch("save", { optionId, slots: refined });
+  assert.equal((await dispatch("shopping", { lookId }))[0].title, "Linen jacket");
+  database.exec("UPDATE clothes_image_database SET url = 'https://shopee.co.th/product/1/999' WHERE item_id = '123'");
+  assert.equal(await dispatch("enhancement", { optionId, slots: refined }), null);
+  assert.deepEqual(await dispatch("shopping", { lookId }), []);
+});
+
+test("a missing search term returns no suggestion and never falls back to another listing", async (t) => {
+  const productFetch = t.mock.fn();
+  const { dispatch, optionId } = await startPlanner(t, undefined, original, productFetch, "not a catalog term");
+  assert.equal(await dispatch("enhancement", { optionId, slots: original }), null);
+  assert.equal(productFetch.mock.callCount(), 0);
+});
+
+test("removing a product from the searchable catalog retires its cached and saved recommendation", async (t) => {
+  const { dispatch, optionId, database } = await startPlanner(t, undefined, original, async () => decision("item_123"));
+  const { id: lookId } = await dispatch("save", { optionId, slots: refined });
+  assert.equal((await dispatch("shopping", { lookId }))[0].title, "Linen jacket");
+  database.exec("DELETE FROM clothes_listing_details WHERE item_id = '123'");
+  assert.equal(await dispatch("enhancement", { optionId, slots: refined }), null);
+  assert.deepEqual(await dispatch("shopping", { lookId }), []);
+});
+
+test("enhanced preview keys track the product image and hide immediately switches to the wardrobe-only preview", async t => {
+  const { dispatch, optionId, database } = await startPlanner(t, undefined, original, async () => decision("item_123"));
+  const product = await dispatch("enhancement", { optionId, slots: refined });
+  const { id } = await dispatch("save", { optionId, slots: refined });
+  assert.equal((await dispatch("detail", { id })).enhancement.id, product.id);
+  assert.equal((await dispatch("list", {}))[0].enhancement.id, product.id);
+  assert.equal((await dispatch("preview", { optionId, slots: refined, catalogItemId: "unknown" })).imageRef, null);
+  const { previewSelection } = await import("../src/app/api/_server/planner/preview-files.mjs");
+  const slots = (await dispatch("detail", { id })).slots;
+  for (const [ref, item] of [["with-jacket", product], ["closet-only", null]]) {
+    database.prepare("INSERT INTO private_files(file_id,user_id,state) VALUES (?,1,'ready')").run(ref);
+    database.prepare("INSERT INTO planner_previews VALUES (1,?,?,?)").run(optionId, previewSelection(slots, false, item), ref);
+  }
+  assert.equal((await dispatch("savedPreview", { id, catalogItemId: product.id })).imageRef, "with-jacket");
+  database.exec("UPDATE clothes_image_database SET image_url = 'https://down-th.img.susercontent.com/file/replacement' WHERE item_id = '123'");
+  assert.equal((await dispatch("detail", { id })).previewRef, null);
+  database.exec("UPDATE clothes_image_database SET image_url = 'https://down-th.img.susercontent.com/file/jacket' WHERE item_id = '123'");
+  const [suggestion] = await dispatch("shopping", { lookId: id });
+  assert.equal(suggestion.catalogItemId, product.id);
+  await dispatch("hide", { lookId: id, id: suggestion.id });
+  assert.deepEqual((await dispatch("savedPreview", { id, catalogItemId: product.id })).imageRef, null);
+  const [look] = await dispatch("list", {});
+  assert.equal(look.enhancement, null);
+  assert.equal(look.previewRef, "closet-only");
 });

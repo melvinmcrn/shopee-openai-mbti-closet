@@ -1,7 +1,8 @@
 import { saveBrief, getBrief } from "./brief.mjs";
 import { readOption, generateOptions } from "./options.mjs";
 import { wearAction } from "./wear.mjs";
-import { evaluateEnhancement, shoppingAction } from "./shopping.mjs";
+import { enhancementSelection, readSavedProducts } from "./catalog-product.mjs";
+import { evaluateEnhancement, shoppingAction, suggestionsForLook } from "./shopping.mjs";
 import { generatePreview } from "./preview.mjs";
 import { previewFiles } from "./preview-files.mjs";
 import { saveLook, listLooks, getLook, snapshotSlots } from "./saved.mjs";
@@ -59,23 +60,33 @@ export async function dispatchPlanner(env, accountId, action, input = {}, depend
       return shoppingAction(env, accountId, action, input, dependencies.shoppingFetch, wardrobe);
     case "preview": {
       const source = await option(db, accountId, input.optionId);
-      const profileOnly = input.useProfilePhoto === true && Object.keys(source.slots ?? {}).length === 0
-        && input.slots && Object.keys(input.slots).length === 0;
-      const final = profileOnly ? {} : snapshotSlots(input.slots, await wardrobe());
-      const files = dependencies.preview ?? previewFiles(env, accountId, source.id, input.slots, input.useProfilePhoto === true);
+      if (!Object.keys(source.slots).length) return { imageRef: null };
+      const garments = await wardrobe();
+      const final = snapshotSlots(input.slots ?? source.slots, garments);
+      const product = await evaluateEnhancement(env, accountId, source, final, () => garments, dependencies.shoppingFetch);
+      if (input.catalogItemId !== undefined && input.catalogItemId !== (product?.id ?? null)) return { imageRef: null };
+      const files = dependencies.preview ?? previewFiles(env, accountId, source.id, final, input.useProfilePhoto === true, product);
       const cached = await files.cachedImage?.();
       if (cached) return { imageRef: cached };
-      const brief = await getBrief(db, accountId, source.briefId);
-      return generatePreview(env, accountId, Object.values(final), input.useProfilePhoto, files, brief);
+      return generatePreview(env, accountId, Object.values(final), input.useProfilePhoto, files, product);
     }
     case "savedPreview": {
       const look = found(await getLook(db, accountId, input.id));
-      if (look.previewRef) return { imageRef: look.previewRef };
-      const ids = Object.fromEntries(Object.entries(look.slots).map(([slot, garment]) => [slot, garment.id]));
-      const files = dependencies.preview ?? previewFiles(env, accountId, look.optionId, ids, look.useProfilePhoto);
-      const source = await option(db, accountId, look.optionId);
-      const brief = await getBrief(db, accountId, source.briefId);
-      return generatePreview(env, accountId, Object.values(look.slots), look.useProfilePhoto, files, brief);
+      if (!Object.keys(look.slots).length) return { imageRef: null };
+      const [suggestion] = await suggestionsForLook(env, accountId, look, wardrobe, dependencies.shoppingFetch);
+      const product = suggestion ? { ...suggestion, id: suggestion.catalogItemId } : null;
+      if (input.catalogItemId !== undefined && input.catalogItemId !== (product?.id ?? null)) return { imageRef: null };
+      const files = dependencies.preview ?? previewFiles(env, accountId, look.optionId, look.slots, look.useProfilePhoto, product);
+      const cached = await files.cachedImage?.();
+      if (cached) return { imageRef: cached };
+      const result = await generatePreview(env, accountId, Object.values(look.slots), look.useProfilePhoto, files, product);
+      // The catalog or the saved look's visibility may change during image generation.
+      if (result.imageRef && product) {
+        const products = await readSavedProducts(db, accountId, { [look.id]: enhancementSelection(look.slots) });
+        const current = products.get(look.id);
+        if (current?.id !== product.id || current.imageUrl !== product.imageUrl) return { imageRef: null };
+      }
+      return result;
     }
     case "save": return saveLook(db, accountId, await option(db, accountId, input.optionId), input.slots, await wardrobe(), input.useProfilePhoto === true);
     case "list": return listLooks(db, accountId);

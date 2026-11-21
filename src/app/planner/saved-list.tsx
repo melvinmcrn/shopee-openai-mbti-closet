@@ -1,7 +1,8 @@
+import { EnhancementProduct } from "./enhancement";
 import { SavedPhoto, type FindTryOn } from "./saved-photo";
-import Image from "next/image";
+import { WardrobePhotos } from "./wardrobe-photos";
 import { useEffect, useState } from "react";
-import { api, imageUrl, type Garment, type SavedLook } from "./shared";
+import { api, type SavedLook } from "./shared";
 
 type SavedListProps = {
   findTryOn: FindTryOn;
@@ -21,32 +22,6 @@ const secondaryButton =
   "inline-flex min-h-11 items-center justify-center rounded-full border border-divider px-5 py-2 text-sm font-semibold text-secondary transition hover:bg-selected focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary";
 
 const dateFormat = new Intl.DateTimeFormat("en", { dateStyle: "medium" });
-
-function SavedGarment({ garment }: { garment: Garment }) {
-  const [imageFailed, setImageFailed] = useState(false);
-
-  return (
-    <li className="flex items-center gap-2">
-      <div className="relative flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-selected">
-        {garment.imageRef && !imageFailed ? (
-          <Image
-            src={imageUrl(garment.imageRef)}
-            alt=""
-            fill
-            unoptimized
-            className="object-contain"
-            onError={() => setImageFailed(true)}
-          />
-        ) : (
-          <span className="px-2 text-center text-xs capitalize text-supporting">
-            {garment.color || garment.category}
-          </span>
-        )}
-      </div>
-      <p className="break-words text-xs">{garment.name}</p>
-    </li>
-  );
-}
 
 export function SavedList({ onOpen, onNew, findTryOn }: SavedListProps) {
   const [state, setState] = useState<SavedListState>({ status: "loading" });
@@ -110,16 +85,15 @@ export function SavedList({ onOpen, onNew, findTryOn }: SavedListProps) {
           {state.looks.map((look) => (
             <li key={look.id} className="min-w-0">
               <article className="flex h-full flex-col rounded-2xl border border-divider bg-surface p-5 shadow-sm">
-                <SavedPhoto look={look} findTryOn={findTryOn} />
+                <SavedPhoto look={look} findTryOn={findTryOn} catalogItemId={look.enhancement?.id ?? null} />
                 <h2 className="mt-3 break-words font-heading text-2xl">{look.occasion}</h2>
                 <time dateTime={look.createdAt} className="mt-1 text-sm text-supporting">
                   {dateFormat.format(new Date(look.createdAt))}
                 </time>
-                <ul className="mt-4 grid grid-cols-2 gap-2">
-                  {Object.entries(look.slots).map(([slot, garment]) => (
-                    <SavedGarment key={`${slot}:${garment.id}:${garment.imageRef}`} garment={garment} />
-                  ))}
-                </ul>
+                <div className="mt-4">
+                  <WardrobePhotos garments={Object.values(look.slots)} />
+                  {look.enhancement && <div className="mt-3"><EnhancementProduct product={look.enhancement} /></div>}
+                </div>
                 <p className="mt-5 flex-1 text-sm leading-relaxed text-supporting">
                   <strong>Original suggestion</strong> · {look.explanation}
                 </p>

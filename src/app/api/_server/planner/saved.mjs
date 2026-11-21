@@ -1,3 +1,4 @@
+import { enhancementSelection, readSavedProducts } from "./catalog-product.mjs";
 import { previewSelection } from "./preview-files.mjs";
 
 const slotNames = new Set(["top", "bottom", "dress", "shoes", "outerwear", "accessory", "other"]);
@@ -61,7 +62,7 @@ async function readLooks(db, accountId, id) {
   const { results } = await db.prepare(`
     SELECT look.id, look.source_option_id, look.use_profile_photo,
       (SELECT json_group_object(preview.selection, preview.file_id) FROM planner_previews AS preview
-       WHERE preview.user_id = look.user_id AND preview.option_id = look.source_option_id) AS previews, option.preview_file_id, look.name AS occasion, option.explanation,
+       WHERE preview.user_id = look.user_id AND preview.option_id = look.source_option_id) AS previews, look.name AS occasion, option.explanation,
       strftime('%Y-%m-%dT%H:%M:%fZ', look.saved_at) AS created_at,
       ${selectSlots("saved_look_items", "saved_look_id", "look.id")} AS slots,
       ${selectSlots("outfit_option_items", "option_id", "look.source_option_id")} AS original_slots
@@ -73,23 +74,23 @@ async function readLooks(db, accountId, id) {
     ORDER BY created_at DESC, look.id DESC
   `).bind(...(id === undefined ? [accountId] : [accountId, id])).all();
 
-  return results.map(row => {
-    const slots = JSON.parse(row.slots);
+  if (!results.length) return [];
+  const selections = results.map(row => JSON.parse(row.slots));
+  const products = await readSavedProducts(db, accountId, Object.fromEntries(
+    results.map((row, i) => [row.id, enhancementSelection(selections[i])])
+  ));
+  return results.map((row, i) => {
+    const slots = selections[i];
+    const enhancement = products.get(String(row.id)) ?? null;
     const originalSlots = JSON.parse(row.original_slots);
-    const ids = Object.fromEntries(Object.entries(slots).map(([slot, garment]) => [slot, garment.id]));
     const previews = JSON.parse(row.previews);
-    const modes = row.use_profile_photo == null ? [false, true] : [row.use_profile_photo === 1];
-    const versions = row.use_profile_photo == null ? ["photo-v2", "photo-v1", null] : ["photo-v2", "photo-v1"];
-    const selections = versions.flatMap(version =>
-      modes.map(mode => previewSelection(ids, mode, version)));
-    const sameAsOriginal = Object.keys(ids).length === Object.keys(originalSlots).length
-      && Object.entries(ids).every(([slot, id]) => originalSlots[slot]?.id === id);
-    const originalPreview = row.use_profile_photo == null && sameAsOriginal ? row.preview_file_id : null;
+    const selection = previewSelection(slots, row.use_profile_photo === 1, enhancement);
     return {
       id: String(row.id),
       optionId: String(row.source_option_id),
       useProfilePhoto: row.use_profile_photo === 1,
-      previewRef: selections.map(selection => previews[selection]).find(Boolean) ?? originalPreview,
+      previewRef: previews[selection] ?? null,
+      enhancement,
       occasion: row.occasion,
       slots,
       originalSlots,

@@ -1,13 +1,15 @@
 import { readPrivateFile, writePrivateFile, deletePrivateFile } from "../private-files.mjs";
 
-export function previewSelection(slots, useProfilePhoto, version = "photo-v2") {
-  const entries = Object.entries(slots).filter(([, id]) => id != null).sort(([a], [b]) => a.localeCompare(b));
-  return JSON.stringify(version ? [version, useProfilePhoto, entries] : [useProfilePhoto, entries]);
+export function previewSelection(slots, useProfilePhoto, product = null) {
+  const entries = Object.entries(slots).sort(([a], [b]) => a.localeCompare(b))
+    .map(([slot, item]) => [slot, String(item.id), item.imageRef, item.name]);
+  const listing = product ? [product.id, product.imageUrl, product.title, product.category] : null;
+  return JSON.stringify(["inventory-v2", useProfilePhoto, entries, listing]);
 }
 
-export function previewFiles(env, accountId, optionId, slots, useProfilePhoto) {
+export function previewFiles(env, accountId, optionId, slots, useProfilePhoto, product) {
   const account = { id: accountId };
-  const selection = previewSelection(slots, useProfilePhoto);
+  const selection = previewSelection(slots, useProfilePhoto, product);
   return {
     async cachedImage() {
       const row = await env.DB.prepare("SELECT file_id FROM planner_previews WHERE user_id=? AND option_id=? AND selection=?")

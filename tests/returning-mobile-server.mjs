@@ -66,6 +66,8 @@ const image = Buffer.from(
   "base64",
 );
 const tryOnJpeg = jpeg.encode({ width: 1, height: 1, data: Buffer.from([255, 255, 255, 255]) }).data.toString("base64");
+const listingJpeg = jpeg.encode({ width: 1, height: 1, data: Buffer.from([0, 0, 255, 255]) }).data;
+const enhancedTryOn = jpeg.encode({ width: 1, height: 1, data: Buffer.from([255, 0, 0, 255]) }).data.toString("base64");
 const photos = new Map(["blouse", "trousers", "heels", "flats", "dress"].map(id => [
   id, { body: image, httpMetadata: { contentType: "image/png" } },
 ]));
@@ -104,17 +106,44 @@ for (const name of ["first-session", "returning-session", "rating-session", "oth
 // Keep candidate construction, Decisions parsing and ranking in the production code.
 let enhancementRequests = 0;
 async function decisionsFixture(url, options) {
+  if (String(url).startsWith("https://down-th.img.susercontent.com/file/")) {
+    const product = database.prepare("SELECT item_id FROM clothes_image_database WHERE image_url = ?").get(String(url));
+    assert.ok(product, "try-on must fetch the product image from the catalog");
+    assert.equal(options.redirect, "error");
+    return new Response(listingJpeg, { headers: { "content-type": "image/jpeg" } });
+  }
   if (url === "https://api.openai.com/v1/images/edits") {
-    return Response.json({ data: [{ b64_json: tryOnJpeg }] });
+    const prompt = options.body.get("prompt");
+    const enhanced = prompt.includes('"source":"catalog"');
+    if (enhanced) {
+      const last = options.body.getAll("image[]").at(-1);
+      assert.deepEqual(Buffer.from(await last.arrayBuffer()), listingJpeg);
+    }
+    return Response.json({ data: [{ b64_json: enhanced ? enhancedTryOn : tryOnJpeg }] });
   }
   if (url === "https://api.openai.com/v1/responses") {
-    return Response.json({
-      status: "completed",
-      output: [{ type: "image_generation_call", status: "completed", result: tryOnJpeg }],
-    });
+    const { input } = JSON.parse(options.body);
+    const pieces = input[0].content.filter(part => part.type === "input_text" && part.text.startsWith("{"))
+      .map(part => JSON.parse(part.text));
+    for (const [i, part] of input[0].content.entries()) {
+      if (part.type !== "input_text" || !part.text.startsWith("{")) continue;
+      const piece = JSON.parse(part.text);
+      if (piece.source !== "catalog") continue;
+      assert.ok(database.prepare("SELECT item_id FROM clothes_image_database WHERE name=?").get(piece.name));
+      assert.equal(input[0].content[i + 1].image_url, "data:image/jpeg;base64," + listingJpeg.toString("base64"));
+    }
+    const visible_items = pieces.map(piece => piece.reference);
+    if (pieces.some(piece => piece.name === "Column dress")) visible_items.push("unlisted");
+    return Response.json({ status: "completed", output: [{ type: "message", role: "assistant", status: "completed",
+      content: [{ type: "output_text", text: JSON.stringify({ visible_items }) }] }] });
   }
   assert.equal(url, "https://api.openai.com/v1/decisions");
   const { input, questions } = JSON.parse(options.body);
+  if (questions.length === 1 && questions[0].name === "catalog_search") {
+    const question = questions[0];
+    const value = question.choices.find(choice => choice.description === "women necklace").value;
+    return Response.json({ answers: [{ name: question.name, type: "choice", choice: value }] });
+  }
   if (questions.length === 1 && questions[0].name === "shopee_product") {
     const { outfit } = input[1].content[0].data;
     if (outfit.some(item => item.category === "dress")) {

@@ -1,9 +1,9 @@
 "use client";
 
-import Image from "next/image";
+import { WardrobePhotos } from "./wardrobe-photos";
 import { LookEnhancement } from "./enhancement";
 import { useRef, useState } from "react";
-import { api, imageUrl, type Garment, type Look } from "./shared";
+import { api, type Garment, type Look } from "./shared";
 
 type RefineProps = {
   look: Look;
@@ -17,25 +17,6 @@ type RefineProps = {
 const slotOrder = ["other", "top", "bottom", "dress", "shoes", "outerwear", "accessory"];
 const controlClass =
   "min-h-11 rounded-xl px-4 py-2 text-sm font-semibold transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:cursor-not-allowed disabled:opacity-60";
-
-function slotLabel(slot: string) {
-  if (slot === "other") return "Original photo";
-  return slot.charAt(0).toUpperCase() + slot.slice(1);
-}
-
-function GarmentPhoto({ garment }: { garment?: Garment }) {
-  const src = garment?.imageRef ? imageUrl(garment.imageRef) : undefined;
-
-  return (
-    <div className="relative grid size-14 shrink-0 place-items-center overflow-hidden rounded-lg bg-selected">
-      {src ? (
-        <Image src={src} alt="" fill unoptimized sizes="56px" className="object-cover" />
-      ) : (
-        <span aria-hidden="true" className="text-lg text-supporting">—</span>
-      )}
-    </div>
-  );
-}
 
 export function Refine({ look, useProfilePhoto, garments, onSaved, onPreview, onBack }: RefineProps) {
   const [saving, setSaving] = useState(false);
@@ -76,28 +57,10 @@ export function Refine({ look, useProfilePhoto, garments, onSaved, onPreview, on
       </header>
 
       <section className="rounded-2xl border border-divider bg-surface p-4 sm:p-6">
-        <h2 className="text-lg font-semibold">Selected pieces</h2>
-        <ul className="mt-4 divide-y divide-divider">
-          {visibleSlots.map((slot) => {
-            const id = look.slots[slot];
-            const garment = garmentsById.get(id);
-            return (
-              <li key={slot} className="flex min-h-22 items-center gap-3 py-3">
-                <GarmentPhoto garment={garment} />
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold text-supporting">{slotLabel(slot)}</p>
-                  <p className="break-words text-sm font-medium">
-                    {garment?.name ?? (id ? "Unavailable item" : "None")}
-                  </p>
-                  {garment?.color && <p className="text-xs text-supporting">{garment.color}</p>}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+        <WardrobePhotos garments={visibleSlots.flatMap(slot => garmentsById.get(look.slots[slot]) ?? [])} />
+        <LookEnhancement optionId={look.id} slots={look.slots} />
       </section>
 
-      <LookEnhancement optionId={look.id} slots={look.slots} />
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"

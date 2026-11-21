@@ -4,12 +4,13 @@ Set PLANNER_CHROMIUM to a local browser executable to use system Chromium.
 Optionally pass the path to the static export (defaults to out).
 """
 
+import csv
 import os
 import re
 from pathlib import Path
 import subprocess
 import sys
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -149,18 +150,47 @@ def run_flow(browser, device, base):
     expect(page.get_by_role("article")).to_have_count(2)
     expect(page.get_by_role("article").nth(0)).to_contain_text("Silk blouse")
     expect(page.get_by_role("article").nth(1)).to_contain_text("Column dress")
-    expect(page.get_by_role("img", name="Full-body virtual try-on of this outfit")).to_have_count(2)
+    first = page.get_by_role("article").nth(0)
+    for name in ["Silk blouse", "Wool trousers", "Walking flats"]:
+        expect(first.get_by_role("group", name="Selected wardrobe photos").get_by_role("img", name=name)).to_be_visible()
+    fallback = page.get_by_role("article").nth(1).get_by_role("group", name="Selected wardrobe photos")
+    expect(fallback.locator('img[src="/api/files/dress"]')).to_be_visible()
+    expect(page.get_by_role("article").nth(1).get_by_role("img", name="Full-body virtual try-on of this outfit")).to_have_count(0)
     page.get_by_role("article").nth(0).get_by_role("button", name="Retry enhancement check").tap()
-    expect(page.get_by_role("article").nth(0).get_by_text("Optional enhancement")).to_be_visible()
-    expect(page.get_by_role("article").nth(0).get_by_role("link", name="Buy on Shopee")).to_have_attribute(
-        "href", re.compile(r"^https://shopee\.co\.th/")
-    )
-    expect(page.get_by_role("article").nth(1).get_by_text("Optional enhancement")).to_have_count(0)
-    purchase_url = page.get_by_role("article").nth(0).get_by_role("link", name="Buy on Shopee").evaluate("(link) => link.href")
+    generated = first.get_by_role("img", name="Full-body virtual try-on of this outfit")
+    expect(generated).to_be_visible()
+    expect(generated).to_have_js_property("naturalWidth", 1)
+    # The provider fixture returns red pixels only for a render containing the selected listing.
+    assert generated.evaluate("""img => {
+        const context = document.createElement("canvas").getContext("2d");
+        context.drawImage(img, 0, 0);
+        const [red, green, blue] = context.getImageData(0, 0, 1, 1).data;
+        return red > 240 && green < 10 && blue < 10;
+    }""")
+    product_link = page.get_by_role("article").nth(0).get_by_role("link", name=re.compile("Buy on Shopee"))
+    expect(product_link.get_by_text("Elevate your look", exact=True)).to_be_visible()
+    expect(product_link.get_by_text("✨", exact=True)).to_be_visible()
+    expect(product_link.locator("img")).to_be_visible()
+    expect(page.get_by_role("article").nth(1).get_by_text("Elevate your look")).to_have_count(0)
+    generated_src = generated.get_attribute("src")
+    purchase_url = product_link.evaluate("(link) => link.href")
+    source = Path(__file__).resolve().parents[1] / "Shopee Database/new_clothes_sample_full.csv"
+    with source.open(encoding="utf-8-sig", newline="") as catalog:
+        listing = next(row for row in csv.DictReader(catalog) if unquote(row["url"]) == unquote(purchase_url))
+    expect(product_link.get_by_text(listing["name"], exact=True)).to_be_visible()
+    context.route("https://shopee.co.th/**", lambda route: route.fulfill(body="Listing"))
+    with page.expect_popup() as opened:
+        product_link.locator("img").tap()
+    expect(opened.value).to_have_url(purchase_url)
+    opened.value.close()
     page.get_by_role("button", name="Choose look 1").tap()
     expect_heading(page, "Review your outfit")
     expect(page.get_by_text("Walking flats", exact=True)).to_be_visible()
     expect(page.get_by_role("link", name="Buy on Shopee")).to_have_js_property("href", purchase_url)
+    page.get_by_role("button", name="Preview outfit").tap()
+    expect_heading(page, "Virtual try-on")
+    expect(page.get_by_role("link", name="Buy on Shopee")).to_have_js_property("href", purchase_url)
+    page.get_by_role("button", name="Back to review and save").tap()
     page.get_by_role("button", name="Save outfit").tap()
     expect_heading(page, OCCASION)
     expect(page.get_by_text("Walking flats", exact=True)).to_be_visible()
@@ -168,7 +198,10 @@ def run_flow(browser, device, base):
     expect(shopping.get_by_role("link", name="Buy on Shopee")).to_have_js_property("href", purchase_url)
     expect(shopping.locator("img")).to_be_visible()
     expect(shopping.get_by_text(re.compile(r"THB"))).to_be_visible()
+    saved_photo = page.get_by_role("img", name=f"Full-body AI try-on for {OCCASION}")
+    expect(saved_photo).to_have_attribute("src", generated_src)
     shopping.get_by_role("button", name=re.compile("^Hide ")).tap()
+    expect(page.locator(f'img[src="{generated_src}"]')).to_have_count(0)
     expect(page.get_by_role("region", name="Shop this look")).to_have_count(0)
     saved_url = page.url
     context.close()

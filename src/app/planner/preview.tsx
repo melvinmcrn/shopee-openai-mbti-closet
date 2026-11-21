@@ -1,8 +1,10 @@
 "use client";
 
 import Image from "next/image";
+import { EnhancementCard, useLookEnhancement } from "./enhancement";
 import { useEffect, useState } from "react";
 import type { LoadTryOn } from "./try-on";
+import { WardrobePhotos } from "./wardrobe-photos";
 import { imageUrl, type Garment, type Look } from "./shared";
 
 type PreviewProps = {
@@ -20,16 +22,19 @@ const buttonClass =
 
 export function Preview({ look, loadTryOn, useProfilePhoto, setUseProfilePhoto, garments, onBack }: PreviewProps) {
   const slots = look.slots;
+  const enhancement = useLookEnhancement(look.id, slots);
+  const catalogItemId = enhancement.product === undefined ? undefined : enhancement.product?.id ?? null;
   const [attempt, setAttempt] = useState(0);
   const [generating, setGenerating] = useState(true);
-  const [preview, setPreview] = useState("");
+  const [preview, setPreview] = useState<string | null>(null);
   const [error, setError] = useState("");
   const garmentsById = new Map(garments.map((garment) => [garment.id, garment]));
   const selectedSlots = slotOrder.filter((slot) => slots[slot]);
 
   useEffect(() => {
     let active = true;
-    loadTryOn(look, useProfilePhoto).then(({ imageRef }) => {
+    if (catalogItemId === undefined) return;
+    loadTryOn(look, useProfilePhoto, catalogItemId).then(({ imageRef }) => {
       if (active) setPreview(imageRef);
     }).catch(cause => {
       if (active) setError(cause instanceof Error ? cause.message : "Couldn’t generate the try-on.");
@@ -37,7 +42,7 @@ export function Preview({ look, loadTryOn, useProfilePhoto, setUseProfilePhoto, 
       if (active) setGenerating(false);
     });
     return () => { active = false; };
-  }, [look, useProfilePhoto, attempt, loadTryOn]);
+  }, [look, useProfilePhoto, attempt, loadTryOn, catalogItemId]);
 
   return (
     <section className="space-y-6 text-text">
@@ -50,33 +55,8 @@ export function Preview({ look, loadTryOn, useProfilePhoto, setUseProfilePhoto, 
 
       <div className="grid items-start gap-5 md:grid-cols-2">
         <section className="rounded-2xl border border-divider bg-surface p-4 sm:p-6">
-          <h2 className="text-lg font-semibold">Your final pieces</h2>
-          <ul className="mt-3 divide-y divide-divider">
-            {selectedSlots.map((slot) => {
-              const garment = garmentsById.get(slots[slot]);
-              return (
-                <li key={slot} className="flex items-center gap-3 py-3">
-                  <div className="relative size-14 shrink-0 overflow-hidden rounded-lg bg-selected">
-                    {garment?.imageRef && (
-                      <Image
-                        src={imageUrl(garment.imageRef)}
-                        alt=""
-                        fill
-                        unoptimized
-                        sizes="56px"
-                        className="object-cover"
-                      />
-                    )}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold capitalize text-supporting">{slot}</p>
-                    <p className="break-words text-sm font-medium">{garment?.name ?? "Unavailable item"}</p>
-                    {garment?.color && <p className="text-xs text-supporting">{garment.color}</p>}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+          <WardrobePhotos garments={selectedSlots.flatMap(slot => garmentsById.get(slots[slot]) ?? [])} />
+          <EnhancementCard {...enhancement} />
         </section>
 
         <section className="space-y-4 rounded-2xl border border-divider bg-selected p-4 sm:p-6">
@@ -95,7 +75,7 @@ export function Preview({ look, loadTryOn, useProfilePhoto, setUseProfilePhoto, 
               </span>
             </span>
           </label>
-          {preview ? (
+          {preview && catalogItemId !== undefined ? (
             <div className="relative aspect-3/4 max-h-[36rem] overflow-hidden rounded-xl bg-selected">
               <Image
                 src={imageUrl(preview)}
@@ -105,7 +85,7 @@ export function Preview({ look, loadTryOn, useProfilePhoto, setUseProfilePhoto, 
                 sizes="(min-width: 768px) 45vw, 90vw"
                 className="object-contain"
                 onError={() => {
-                  setPreview("");
+                  setPreview(null);
                   setError("The try-on could not be loaded. Try generating it again.");
                 }}
               />
@@ -120,7 +100,7 @@ export function Preview({ look, loadTryOn, useProfilePhoto, setUseProfilePhoto, 
               >
                 Try again
               </button>}
-              {generating && (
+              {generating && catalogItemId !== undefined && (
                 <p role="status" className="text-sm text-supporting">Generating your outfit try-on…</p>
               )}
               {error && <p role="alert" className="text-sm font-medium text-danger">{error}</p>}
@@ -134,7 +114,7 @@ export function Preview({ look, loadTryOn, useProfilePhoto, setUseProfilePhoto, 
         className={`${buttonClass} border border-divider bg-surface text-secondary hover:bg-selected`}
         onClick={onBack}
       >
-        {preview ? "Back to review and save" : "Skip preview and return to save"}
+        {generating ? "Skip preview and return to save" : "Back to review and save"}
       </button>
     </section>
   );

@@ -1,10 +1,10 @@
 "use client";
 
 import { SavedPhoto, type FindTryOn } from "./saved-photo";
-import Image from "next/image";
-import { EnhancementProduct } from "./enhancement";
+import { WardrobePhotos } from "./wardrobe-photos";
+import { EnhancementProduct, type CatalogProduct } from "./enhancement";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { api, imageUrl, type Garment, type SavedLook } from "./shared";
+import { api, type SavedLook } from "./shared";
 
 type DetailProps = {
   findTryOn: FindTryOn;
@@ -15,52 +15,12 @@ type DetailProps = {
 
 type DetailResult = { look: SavedLook } | { error: string };
 type Wear = { id: string; date: string; rating: number | null; note: string | null };
-type Suggestion = {
-  id: string;
-  title: string;
-  url: string;
-  sponsored: boolean;
-  imageUrl?: string;
-  price?: number;
-  currency?: string;
-};
+type Suggestion = CatalogProduct & { catalogItemId: string; sponsored: boolean };
 type ItemsResult<T> = { items: T[] } | { error: string };
 
 const slotOrder = ["other", "top", "bottom", "dress", "shoes", "outerwear", "accessory"];
 const secondaryButton =
   "inline-flex min-h-11 items-center justify-center rounded-full border border-divider px-5 py-2 text-sm font-semibold text-secondary transition hover:bg-selected focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:opacity-60";
-
-function SavedGarment({ slot, garment }: { slot: string; garment: Garment }) {
-  const [imageFailed, setImageFailed] = useState(false);
-  const slotLabel = slot.replace(/[-_]/g, " ");
-
-  return (
-    <li className="flex min-w-0 items-center gap-2">
-      <div className="relative grid size-12 shrink-0 place-items-center overflow-hidden rounded-lg bg-selected">
-        {garment.imageRef && !imageFailed ? (
-          <Image
-            src={imageUrl(garment.imageRef)}
-            alt=""
-            fill
-            unoptimized
-            sizes="48px"
-            className="object-contain"
-            onError={() => setImageFailed(true)}
-          />
-        ) : (
-          <span aria-hidden="true" className="px-2 text-center text-xs capitalize text-supporting">
-            {garment.color || slotLabel}
-          </span>
-        )}
-      </div>
-      <div className="min-w-0">
-        <p className="text-xs font-medium capitalize text-supporting">{slotLabel}</p>
-        <p className="mt-1 wrap-break-word text-sm font-semibold">{garment.name}</p>
-        {garment.color && <p className="mt-1 text-xs capitalize text-supporting">{garment.color}</p>}
-      </div>
-    </li>
-  );
-}
 
 function useLookItems<T>(action: "wearList" | "shopping", lookId: string) {
   const [result, setResult] = useState<ItemsResult<T>>();
@@ -202,15 +162,6 @@ function WearHistory({ lookId, onWear }: { lookId: string; onWear: DetailProps["
   );
 }
 
-function shoppingHref(value: string) {
-  try {
-    const url = new URL(value);
-    if (url.protocol === "http:" || url.protocol === "https:") return url;
-  } catch {
-    return undefined;
-  }
-}
-
 function ShoppingSuggestion({
   item,
   lookId,
@@ -222,11 +173,6 @@ function ShoppingSuggestion({
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
-  const link = shoppingHref(item.url);
-  const product = link && item.imageUrl && item.price != null && item.currency
-    ? { ...item, url: link.href, imageUrl: item.imageUrl, price: item.price, currency: item.currency }
-    : null;
-
   async function hide() {
     setPending(true);
     setError("");
@@ -244,26 +190,7 @@ function ShoppingSuggestion({
     <li className="space-y-2 py-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 flex-1 basis-40 space-y-1">
-          {product ? (
-            <EnhancementProduct product={product} sponsored={item.sponsored} />
-          ) : (
-            <>
-              {item.sponsored && <p className="text-xs font-semibold text-supporting">Sponsored</p>}
-              {link ? (
-                <a
-                  className="wrap-break-word text-sm font-semibold text-secondary underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary"
-                  href={link.href}
-                  target="_blank"
-                  rel={item.sponsored ? "sponsored noopener noreferrer" : "noopener noreferrer"}
-                >
-                  {item.title}
-                  <span className="sr-only"> (opens in a new tab)</span>
-                </a>
-              ) : (
-                <p className="wrap-break-word text-sm font-semibold">{item.title}</p>
-              )}
-            </>
-          )}
+          <EnhancementProduct product={item} sponsored={item.sponsored} />
         </div>
         <button
           type="button"
@@ -280,13 +207,13 @@ function ShoppingSuggestion({
   );
 }
 
-function ShoppingSuggestions({ lookId }: { lookId: string }) {
-  const { result, retry } = useLookItems<Suggestion>("shopping", lookId);
-  const [hidden, setHidden] = useState<string[]>([]);
-  const suggestions = result && "items" in result
-    ? result.items.filter((item) => !hidden.includes(item.id))
-    : undefined;
-
+function ShoppingSuggestions({ lookId, result, retry, suggestions, onHidden }: {
+  lookId: string;
+  result?: ItemsResult<Suggestion>;
+  retry: () => void;
+  suggestions?: Suggestion[];
+  onHidden: (id: string) => void;
+}) {
   if (!result || suggestions?.length === 0) return null;
   return (
     <section aria-labelledby="saved-shopping-title" className="space-y-4 rounded-2xl border border-divider bg-surface p-4 sm:p-6">
@@ -301,7 +228,7 @@ function ShoppingSuggestions({ lookId }: { lookId: string }) {
               key={item.id}
               item={item}
               lookId={lookId}
-              onHidden={(id) => setHidden((items) => [...items, id])}
+              onHidden={onHidden}
             />
           ))}
         </ul>
@@ -313,6 +240,12 @@ function ShoppingSuggestions({ lookId }: { lookId: string }) {
 function SavedDetail({ id, onWear, onBack, findTryOn }: DetailProps) {
   const [result, setResult] = useState<DetailResult>();
   const [attempt, setAttempt] = useState(0);
+
+  const shopping = useLookItems<Suggestion>("shopping", id);
+  const [hidden, setHidden] = useState<string[]>([]);
+  const suggestions = shopping.result && "items" in shopping.result
+    ? shopping.result.items.filter(item => !hidden.includes(item.id)) : undefined;
+  const catalogItemId = suggestions === undefined ? undefined : suggestions[0]?.catalogItemId ?? null;
 
   useEffect(() => {
     let active = true;
@@ -366,20 +299,17 @@ function SavedDetail({ id, onWear, onBack, findTryOn }: DetailProps) {
 
       {look && (
         <>
-          <div className="mx-auto w-full max-w-sm"><SavedPhoto look={look} findTryOn={findTryOn} /></div>
-          <section aria-labelledby="saved-pieces-title">
-            <h2 id="saved-pieces-title" className="mb-3 text-lg font-semibold">Outfit pieces</h2>
-            <ul className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {slots.map(([slot, garment]) => (
-                <SavedGarment key={slot} slot={slot} garment={garment} />
-              ))}
-            </ul>
-          </section>
+          <div className="mx-auto w-full max-w-sm">{catalogItemId !== undefined && <SavedPhoto
+            key={JSON.stringify([look.id, catalogItemId])} look={look} catalogItemId={catalogItemId} findTryOn={findTryOn}
+          />}</div>
+          <WardrobePhotos garments={slots.map(([, garment]) => garment)} />
+          <ShoppingSuggestions lookId={look.id} {...shopping} suggestions={suggestions}
+            onHidden={id => setHidden(items => [...items, id])} />
           {look.explanation && (
             <p className="max-w-2xl text-sm leading-relaxed text-supporting"><strong>Original suggestion</strong> · {look.explanation}</p>
           )}
           <WearHistory lookId={look.id} onWear={onWear} />
-          <ShoppingSuggestions lookId={look.id} />
+
         </>
       )}
     </section>

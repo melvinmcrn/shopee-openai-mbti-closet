@@ -1,8 +1,9 @@
 "use client";
 
 import Image from "next/image";
-import { LookEnhancement } from "./enhancement";
+import { EnhancementCard, useLookEnhancement } from "./enhancement";
 import type { LoadTryOn } from "./try-on";
+import { WardrobePhotos } from "./wardrobe-photos";
 import { ProfilePhotoChoice } from "./profile-photo-choice";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
@@ -27,36 +28,42 @@ type Generation = {
 const secondaryButton =
   "inline-flex min-h-11 items-center justify-center rounded-full border border-divider px-5 py-2 text-sm font-semibold text-secondary transition hover:bg-selected focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:cursor-wait disabled:opacity-60";
 
-function StyledImage({ look, useProfilePhoto, loadTryOn }: { look: Look; useProfilePhoto: boolean; loadTryOn: LoadTryOn }) {
+function StyledImage({ look, catalogItemId, useProfilePhoto, loadTryOn }: {
+  look: Look;
+  catalogItemId: string | null;
+  useProfilePhoto: boolean;
+  loadTryOn: LoadTryOn;
+}) {
   const [attempt, setAttempt] = useState(0);
-  const [generated, setGenerated] = useState("");
+  const [generated, setGenerated] = useState<string | null>();
   const [error, setError] = useState("");
   useEffect(() => {
     let active = true;
     if (look.profileRef && !useProfilePhoto) return;
-    loadTryOn(look, useProfilePhoto).then(({ imageRef }) => {
+    loadTryOn(look, useProfilePhoto, catalogItemId).then(({ imageRef }) => {
       if (active) setGenerated(imageRef);
     }).catch(cause => {
       if (active) setError(cause instanceof Error ? cause.message : "Couldn’t generate the try-on.");
     });
     return () => { active = false; };
-  }, [look, attempt, useProfilePhoto, loadTryOn]);
+  }, [look, attempt, useProfilePhoto, catalogItemId, loadTryOn]);
+
+  if (error) return <button type="button" className={secondaryButton} onClick={() => {
+    setError("");
+    setGenerated(undefined);
+    setAttempt(count => count + 1);
+  }}>Retry styled image</button>;
+  if (generated === null) return null;
   return (
-    <div>
-      <div className="relative grid aspect-[2/3] place-items-center overflow-hidden rounded-xl bg-selected">
-        {generated ? (
-          <Image src={imageUrl(generated)} alt="Full-body virtual try-on of this outfit" fill unoptimized className="object-contain"
-            onError={() => { setGenerated(""); setError("Couldn’t load the try-on."); }} />
-        ) : (
-          <p role="status" className="px-5 text-center text-sm text-supporting">
-            {error || ( look.profileRef && !useProfilePhoto ? "Select “Use my profile photo” above to see this try-on." : "Creating your full-body try-on…")}
-          </p>
-        )}
-      </div>
-      {error && <button type="button" className={secondaryButton} onClick={() => {
-        setError("");
-        setAttempt(count => count + 1);
-      }}>Retry styled image</button>}
+    <div className="relative grid aspect-[2/3] place-items-center overflow-hidden rounded-xl bg-selected">
+      {generated ? (
+        <Image src={imageUrl(generated)} alt="Full-body virtual try-on of this outfit" fill unoptimized className="object-contain"
+          onError={() => { setGenerated(null); setError("Couldn’t load the try-on."); }} />
+      ) : (
+        <p role="status" className="px-5 text-center text-sm text-supporting">
+          {look.profileRef && !useProfilePhoto ? "Select “Use my profile photo” above to see this try-on." : "Creating your full-body try-on…"}
+        </p>
+      )}
     </div>
   );
 }
@@ -76,21 +83,27 @@ function LookCard({
   garments: Map<string, Garment>;
   onChoose: (look: Look) => void;
 }) {
+  const enhancement = useLookEnhancement(look.id, look.slots);
   return (
     <article className="flex min-w-0 flex-col rounded-2xl border border-divider bg-surface p-2 sm:p-3">
-      <StyledImage loadTryOn={loadTryOn} key={String(useProfilePhoto)} look={look} useProfilePhoto={useProfilePhoto} />
+      {enhancement.product !== undefined && Object.keys(look.slots).length > 0 && (
+        <StyledImage
+          key={JSON.stringify([useProfilePhoto, enhancement.product?.id])}
+          catalogItemId={enhancement.product?.id ?? null}
+          look={look}
+          loadTryOn={loadTryOn}
+          useProfilePhoto={useProfilePhoto}
+        />
+      )}
       <div className="flex flex-1 flex-col px-1 pb-1 pt-3 sm:px-2">
         <h2 className="font-heading text-lg text-text sm:text-2xl">Look {index + 1}</h2>
         {Object.keys(look.slots).length > 0 && (
-          <details className="mt-3 text-sm">
-            <summary className="cursor-pointer">{Object.keys(look.slots).length} wardrobe {Object.keys(look.slots).length === 1 ? "item" : "items"}</summary>
-            <ul className="mt-2 list-inside list-disc">
-              {Object.entries(look.slots).map(([slot, id]) => <li key={slot}>{garments.get(id)?.name || slot}</li>)}
-            </ul>
-            <p className="mt-2 text-supporting">{look.explanation}</p>
-          </details>
+          <div className="mt-3">
+            <WardrobePhotos garments={Object.values(look.slots).flatMap(id => garments.get(id) ?? [])} />
+          </div>
         )}
-        <LookEnhancement optionId={look.id} slots={look.slots} />
+        <EnhancementCard {...enhancement} />
+        {look.explanation && <p className="mt-2 text-sm text-supporting">{look.explanation}</p>}
         <div className="flex-1" />
         {!look.profileRef && <button
           type="button"
