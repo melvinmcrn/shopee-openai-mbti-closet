@@ -4,7 +4,7 @@ export type Brief = { id?: string; occasion: string; timing: string; location: s
 export type SavedLook = { id: string; occasion: string; explanation: string; createdAt: string; slots: Record<string, Garment>; originalSlots: Record<string, Garment> };
 
 export function imageUrl(imageRef: string) {
-  return "/api/planner/image/" + encodeURIComponent(imageRef);
+  return "/api/files/" + encodeURIComponent(imageRef);
 }
 
 export async function api<T>(action: string, input: object = {}): Promise<T> {

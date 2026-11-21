@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS planner_saved_looks (
   id TEXT PRIMARY KEY NOT NULL,
-  account_id TEXT NOT NULL,
+  account_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   option_id TEXT NOT NULL,
   occasion TEXT NOT NULL,
   slots TEXT NOT NULL,

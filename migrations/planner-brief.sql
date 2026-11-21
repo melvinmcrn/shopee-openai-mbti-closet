@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS planner_briefs (
-  account_id TEXT NOT NULL,
+  account_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   id TEXT NOT NULL,
   occasion TEXT NOT NULL,
   timing TEXT NOT NULL DEFAULT '',
