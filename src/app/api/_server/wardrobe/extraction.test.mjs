@@ -331,6 +331,19 @@ test("logs one allowlisted stage, HTTP status and request ID without provider co
   ]);
 });
 
+test("a provider content filter sends the saved draft directly to manual review", async (t) => {
+  const provider = t.mock.method(globalThis, "fetch", () => Response.json(
+    { error: { code: "moderation_blocked" } }, { status: 400 },
+  ));
+  const logger = t.mock.method(console, "warn", () => {});
+  const { run, files } = scenario(samplePhoto(), { OPENAI_API_KEY: "test" });
+  const response = await run();
+  assert.equal((await response.json()).nextAction, "manual_review");
+  assert.equal(provider.mock.callCount(), 1);
+  assert.equal(logger.mock.calls[0].arguments[1].stage, "provider_filtered");
+  assert.deepEqual([...files.keys()], [original]);
+});
+
 test("omits nonconforming request IDs and upstream error details from logs", async (t) => {
   t.mock.method(globalThis, "fetch", async () => Response.json(
     { internal: "private upstream error details" },
