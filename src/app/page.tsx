@@ -1,5 +1,3 @@
-import Link from "next/link";
-import { ClosetWordmark } from "./closet-wordmark";
 import { GoogleAccount } from "./google-account";
 
 function WardrobeCollage() {
@@ -32,17 +30,11 @@ function WardrobeCollage() {
 
 export default function Home() {
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-[390px] flex-1 flex-col px-6 pb-7 pt-5">
-      <header className="flex items-center justify-between border-b border-divider pb-4">
-        <Link href="/" className="flex h-[30px] items-center" aria-label="Closet home">
-          <ClosetWordmark />
-        </Link>
-        <span className="text-sm font-semibold text-secondary">Your personal stylist</span>
-      </header>
-
-      <section className="flex flex-1 flex-col pt-7">
+    <main className="mx-auto flex w-full max-w-[390px] flex-1 flex-col gap-7 px-6 py-7">
+      <section className="flex flex-1 flex-col">
         <WardrobeCollage />
-        <h1 className="mt-9 font-heading text-[39px] font-bold leading-[1.08] tracking-[-0.045em] text-text">
+        <p className="mt-7 text-sm font-semibold text-secondary">Your personal stylist</p>
+        <h1 className="mt-2 font-heading text-[39px] font-bold leading-[1.08] tracking-[-0.045em] text-text">
           Get dressed from<br />your own closet.
         </h1>
         <p className="mt-5 max-w-[34ch] text-[17px] leading-[1.45] text-supporting">

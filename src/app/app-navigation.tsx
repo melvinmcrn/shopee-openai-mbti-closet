@@ -1,3 +1,11 @@
+"use client";
+
+import Link from "next/link";
+import { useSelectedLayoutSegment } from "next/navigation";
+import type { ComponentPropsWithoutRef } from "react";
+import { ClosetWordmark } from "./closet-wordmark";
+import { usePlannerScreen } from "./planner/use-planner-screen";
+
 const destinations = [
   {
     label: "Home",
@@ -27,10 +35,36 @@ const destinations = [
   },
 ] as const;
 
-type FooterDestination = (typeof destinations)[number]["label"];
+function NavigationLink({ href, ...props }: ComponentPropsWithoutRef<"a"> & { href: string }) {
+  const segment = useSelectedLayoutSegment();
+  if (href.startsWith("#")) {
+    // The planner uses native hash changes to switch between its screens.
+    if (segment === "planner") return <a href={href} {...props} />;
+    return <Link href={`/planner${href}`} {...props} />;
+  }
+  return <Link href={href} {...props} />;
+}
 
-export function FooterNavigation({ active }: { active: FooterDestination }) {
-  const inPlanner = active === "Home" || active === "Saved";
+export function AppHeader() {
+  return (
+    <header className="sticky top-0 z-20 shrink-0 border-b border-divider bg-canvas pt-[env(safe-area-inset-top,0px)]">
+      <div className="mx-auto flex h-14 max-w-4xl items-center px-5 sm:px-8">
+        <NavigationLink href="#home" aria-label="Closet home" className="inline-flex min-h-11 items-center">
+          <ClosetWordmark />
+        </NavigationLink>
+      </div>
+    </header>
+  );
+}
+
+export function FooterNavigation() {
+  const segment = useSelectedLayoutSegment();
+  const screen = usePlannerScreen(segment === "planner");
+  let active: (typeof destinations)[number]["label"] | undefined;
+  if (segment === "closet" || segment === "wardrobe") active = "Wardrobe";
+  else if (segment === "account" || segment === "profile") active = "Profile";
+  else if (segment === "planner") active = screen.split("/")[0] === "saved" ? "Saved" : "Home";
+  else if (segment === null) active = "Home";
   return (
     <footer className="h-[var(--footer-navigation-height)] shrink-0">
       <nav
@@ -39,9 +73,9 @@ export function FooterNavigation({ active }: { active: FooterDestination }) {
       >
         <div className="mx-auto grid h-full max-w-4xl grid-cols-4">
           {destinations.map(({ label, href, icon }) => (
-            <a
+            <NavigationLink
               key={label}
-              href={!inPlanner && href.startsWith("#") ? `/planner${href}` : href}
+              href={href}
               aria-label={label}
               aria-current={label === active ? "page" : undefined}
               title={label}
@@ -60,7 +94,7 @@ export function FooterNavigation({ active }: { active: FooterDestination }) {
               >
                 {icon}
               </svg>
-            </a>
+            </NavigationLink>
           ))}
         </div>
       </nav>

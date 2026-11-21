@@ -86,7 +86,7 @@ export default function ConfirmStylePage() {
   }
 
   return (
-    <main className="min-h-screen flex-1 bg-selected px-5 py-10 text-text sm:px-8 sm:py-14">
+    <main className="flex-1 bg-selected px-5 py-10 text-text sm:px-8 sm:py-14">
       <div className="mx-auto max-w-2xl">
         <header className="border-b border-divider pb-7">
           <Link className="text-sm font-semibold text-secondary hover:underline" href="/wardrobe/confirm">

@@ -3,8 +3,6 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
-import { ClosetWordmark } from "../closet-wordmark";
-import { FooterNavigation } from "../footer-navigation";
 
 const categoryLabels = {
   top: "Top",
@@ -145,15 +143,7 @@ export default function ClosetPage() {
   const visibleItems = category === "all" ? items : items.filter((item) => item.category === category);
 
   return (
-    <main className="min-h-screen flex-1 bg-canvas text-text">
-      <header className="border-b border-divider">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-8 gap-y-3 px-5 py-4 sm:px-8">
-          <Link className="flex h-[30px] items-center" href="/" aria-label="Closet home">
-            <ClosetWordmark />
-          </Link>
-        </div>
-      </header>
-
+    <main className="flex-1 bg-canvas text-text">
       <div className="mx-auto max-w-6xl px-5 pb-16 pt-9 sm:px-8 sm:pt-14">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
@@ -323,7 +313,6 @@ export default function ClosetPage() {
           </ul>
         )}
       </div>
-      <FooterNavigation active="Wardrobe" />
     </main>
   );
 }

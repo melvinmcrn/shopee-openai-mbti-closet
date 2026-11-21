@@ -3,6 +3,8 @@
 :root {
   color-scheme: light;
   --footer-navigation-height: calc(68px + env(safe-area-inset-bottom, 0px));
+  scroll-padding-top: calc(3.5rem + 1px + env(safe-area-inset-top, 0px));
+  scroll-padding-bottom: var(--footer-navigation-height);
   --palette-primary: #ef5b5b;
   --palette-primary-hover: #e55353;
   --palette-on-primary: #fff;

@@ -2,8 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ClosetWordmark } from "../closet-wordmark";
-import { FooterNavigation } from "../footer-navigation";
+import { usePlannerScreen } from "./use-planner-screen";
 import { api, type Brief, type Garment, type Look } from "./shared";
 import { PlannerHome } from "./home";
 import { Occasion } from "./occasion";
@@ -19,7 +18,7 @@ import { WearEntry } from "./wear";
 const emptyBrief: Brief = { occasion: "", timing: "", location: "", formality: "", comfort: "", preferences: [] };
 
 export default function PlannerPage() {
-  const [screen, setScreen] = useState("home");
+  const screen = usePlannerScreen();
   const [brief, setBrief] = useState<Brief>(emptyBrief);
   const [loadTryOn] = useState(createTryOnLoader);
   const [useProfilePhoto, setUseProfilePhoto] = useState(false);
@@ -28,12 +27,7 @@ export default function PlannerPage() {
   const [loadError, setLoadError] = useState("");
   const [reload, setReload] = useState(0);
   useEffect(() => {
-    const readRoute = () => setScreen(window.location.hash.slice(1) || "home");
-    const changeScreen = () => {
-      readRoute();
-      window.scrollTo(0, 0);
-    };
-    readRoute();
+    const changeScreen = () => window.scrollTo(0, 0);
     window.addEventListener("hashchange", changeScreen);
     const restore = (event: PageTransitionEvent) => { if (event.persisted) window.location.reload(); };
     window.addEventListener("pageshow", restore);
@@ -73,21 +67,7 @@ export default function PlannerPage() {
   else if (screen === "refine" && look) content = <Refine useProfilePhoto={useProfilePhoto} look={look} garments={garments} onBack={() => go("compare")} onPreview={() => go("preview")} onSaved={id => go("saved/" + id)} />;
   else if (screen === "preview" && look) content = <Preview key={String(useProfilePhoto)} loadTryOn={loadTryOn} useProfilePhoto={useProfilePhoto} setUseProfilePhoto={setUseProfilePhoto} look={look} garments={garments} onBack={() => go("refine")} />;
   else content = <PlannerHome garments={garments} onNew={start} />;
-  const activeTab = screen === "home" ? "Home" : screen === "saved" ? "Saved" : null;
-  return <main className="min-h-screen bg-canvas px-5 py-6 text-text sm:px-10">
-    <div className="mx-auto max-w-4xl">
-      <header className="mb-7 flex items-center gap-5 border-b border-divider pb-4 text-sm font-medium">
-        <a href="#home" className="mr-auto flex h-[30px] items-center" aria-label="Outfit planner home">
-          <ClosetWordmark />
-        </a>
-        {!activeTab && (
-          <nav aria-label="Planner navigation" className="flex gap-5">
-            <a href="#saved">Saved</a><Link href="/account">Account</Link>
-          </nav>
-        )}
-      </header>
-      {content}
-    </div>
-    {activeTab && <FooterNavigation active={activeTab} />}
+  return <main className="flex-1 bg-canvas px-5 py-6 text-text sm:px-10">
+    <div className="mx-auto max-w-4xl">{content}</div>
   </main>;
 }

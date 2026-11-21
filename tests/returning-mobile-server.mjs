@@ -4,6 +4,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import jpeg from "jpeg-js";
 import { readSampleImage } from "../src/app/api/_server/read-sample-image.mjs";
 import { handleApi } from "../src/app/api/_server/handle-api.mjs";
 
@@ -64,19 +65,22 @@ const image = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/f6kAAAAASUVORK5CYII=",
   "base64",
 );
-const photos = new Map(["blouse", "trousers", "heels", "flats", "dress"].map(id => [id, image]));
+const tryOnJpeg = jpeg.encode({ width: 1, height: 1, data: Buffer.from([255, 255, 255, 255]) }).data.toString("base64");
+const photos = new Map(["blouse", "trousers", "heels", "flats", "dress"].map(id => [
+  id, { body: image, httpMetadata: { contentType: "image/png" } },
+]));
 const env = {
   readSampleImage,
   DB: db,
   BUCKET: {
     get: async id => {
-      const body = photos.get(id);
-      return body && {
-        body, size: body.byteLength, httpMetadata: { contentType: "image/png" },
-        arrayBuffer: () => new Blob([body]).arrayBuffer(),
+      const photo = photos.get(id);
+      return photo && {
+        ...photo, size: photo.body.byteLength,
+        arrayBuffer: () => new Blob([photo.body]).arrayBuffer(),
       };
     },
-    put: async (id, body) => { photos.set(id, Buffer.from(body)); },
+    put: async (id, body, { httpMetadata }) => { photos.set(id, { body: Buffer.from(body), httpMetadata }); },
     delete: async id => { photos.delete(id); },
   },
   AUTH_SECRET: crypto.randomUUID(),
@@ -100,10 +104,13 @@ for (const name of ["first-session", "returning-session", "rating-session", "oth
 // Keep candidate construction, Decisions parsing and ranking in the production code.
 let enhancementRequests = 0;
 async function decisionsFixture(url, options) {
+  if (url === "https://api.openai.com/v1/images/edits") {
+    return Response.json({ data: [{ b64_json: tryOnJpeg }] });
+  }
   if (url === "https://api.openai.com/v1/responses") {
     return Response.json({
       status: "completed",
-      output: [{ type: "image_generation_call", status: "completed", result: image.toString("base64") }],
+      output: [{ type: "image_generation_call", status: "completed", result: tryOnJpeg }],
     });
   }
   assert.equal(url, "https://api.openai.com/v1/decisions");
@@ -150,7 +157,7 @@ function reply(response, status, data, type = "application/json") {
 const server = createServer(async (request, response) => {
   const path = new URL(request.url, "http://localhost").pathname;
   try {
-    if (path === "/api/planner" || path.startsWith("/api/files/")) {
+    if (path.startsWith("/api/")) {
       const headers = new Headers(request.headers);
       const session = /(?:^|;\s*)planner-fixture=([^;]+)/u.exec(headers.get("Cookie") ?? "")?.[1];
       const token = sessions.get(session);
@@ -168,7 +175,8 @@ const server = createServer(async (request, response) => {
       return response.end(Buffer.from(await result.arrayBuffer()));
     }
 
-    const page = path === "/" ? "/index.html" : /^\/planner\/?$/u.test(path) ? "/planner.html" : path;
+    const route = path.replace(/\/$/u, "");
+    const page = !route ? "/index.html" : extname(route) ? route : route + ".html";
     const file = resolve(output, "." + page);
     if (!file.startsWith(output + sep)) return reply(response, 404, "Not found", "text/plain");
     return reply(response, 200, await readFile(file), types.get(extname(file)) ?? "application/octet-stream");
