@@ -1,12 +1,15 @@
 "use client";
 
 import Image from "next/image";
-import { useRef, useState } from "react";
-import { api, imageUrl, type Garment, type Look } from "./shared";
+import { useEffect, useState } from "react";
+import type { LoadTryOn } from "./try-on";
+import { imageUrl, type Garment, type Look } from "./shared";
 
 type PreviewProps = {
   look: Look;
-  slots: Record<string, string>;
+  loadTryOn: LoadTryOn;
+  useProfilePhoto: boolean;
+  setUseProfilePhoto: (value: boolean) => void;
   garments: Garment[];
   onBack: () => void;
 };
@@ -15,43 +18,33 @@ const slotOrder = ["other", "top", "bottom", "dress", "shoes", "outerwear", "acc
 const buttonClass =
   "min-h-11 rounded-xl px-4 py-2 text-sm font-semibold transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:cursor-not-allowed disabled:opacity-60";
 
-export function Preview({ look, slots, garments, onBack }: PreviewProps) {
-  const [useProfilePhoto, setUseProfilePhoto] = useState(false);
-  const [generating, setGenerating] = useState(false);
+export function Preview({ look, loadTryOn, useProfilePhoto, setUseProfilePhoto, garments, onBack }: PreviewProps) {
+  const slots = look.slots;
+  const [attempt, setAttempt] = useState(0);
+  const [generating, setGenerating] = useState(true);
   const [preview, setPreview] = useState("");
   const [error, setError] = useState("");
-  const pending = useRef(false);
   const garmentsById = new Map(garments.map((garment) => [garment.id, garment]));
   const selectedSlots = slotOrder.filter((slot) => slots[slot]);
 
-  async function generate() {
-    if (pending.current) return;
-    pending.current = true;
-    setGenerating(true);
-    setError("");
-
-    try {
-      const result = await api<{ imageRef: string }>("preview", {
-        optionId: look.id,
-        slots,
-        useProfilePhoto,
-      });
-      if (!result.imageRef) throw new Error("No illustration was returned. You can try again.");
-      setPreview(result.imageRef);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not generate the preview. Try again.");
-    } finally {
-      pending.current = false;
-      setGenerating(false);
-    }
-  }
+  useEffect(() => {
+    let active = true;
+    loadTryOn(look, useProfilePhoto).then(({ imageRef }) => {
+      if (active) setPreview(imageRef);
+    }).catch(cause => {
+      if (active) setError(cause instanceof Error ? cause.message : "Couldn’t generate the try-on.");
+    }).finally(() => {
+      if (active) setGenerating(false);
+    });
+    return () => { active = false; };
+  }, [look, useProfilePhoto, attempt, loadTryOn]);
 
   return (
     <section className="space-y-6 text-text">
       <header>
-        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Illustrated preview</h1>
+        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Virtual try-on</h1>
         <p className="mt-2 text-sm text-supporting">
-          Generate an optional illustration of your outfit. Details and fit may vary.
+          Generate a virtual try-on of your outfit. Details and fit may vary.
         </p>
       </header>
 
@@ -87,49 +80,48 @@ export function Preview({ look, slots, garments, onBack }: PreviewProps) {
         </section>
 
         <section className="space-y-4 rounded-2xl border border-divider bg-selected p-4 sm:p-6">
-          <h2 className="text-lg font-semibold">Outfit illustration</h2>
+          <h2 className="text-lg font-semibold">Outfit try-on</h2>
+          <label className="flex min-h-11 items-start gap-3 rounded-xl border border-divider bg-surface p-3 text-sm">
+            <input
+              type="checkbox"
+              checked={useProfilePhoto}
+              onChange={(event) => setUseProfilePhoto(event.target.checked)}
+              className="mt-0.5 size-4 shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary"
+            />
+            <span>
+              <span className="block font-semibold">Use my profile photo for this preview</span>
+              <span className="mt-1 block text-supporting">
+                With your permission, your profile photo will be sent to OpenAI to generate this try-on.
+              </span>
+            </span>
+          </label>
           {preview ? (
             <div className="relative aspect-3/4 max-h-[36rem] overflow-hidden rounded-xl bg-selected">
               <Image
                 src={imageUrl(preview)}
-                alt="Generated illustration of the selected outfit"
+                alt="Generated try-on of the selected outfit"
                 fill
                 unoptimized
                 sizes="(min-width: 768px) 45vw, 90vw"
                 className="object-contain"
                 onError={() => {
                   setPreview("");
-                  setError("The illustration could not be loaded. Try generating it again.");
+                  setError("The try-on could not be loaded. Try generating it again.");
                 }}
               />
             </div>
           ) : (
             <>
-              <label className="flex min-h-11 items-start gap-3 rounded-xl border border-divider bg-surface p-3 text-sm">
-                <input
-                  type="checkbox"
-                  checked={useProfilePhoto}
-                  disabled={generating}
-                  onChange={(event) => setUseProfilePhoto(event.target.checked)}
-                  className="mt-0.5 size-4 shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary"
-                />
-                <span>
-                  <span className="block font-semibold">Use my profile photo for this preview</span>
-                  <span className="mt-1 block text-supporting">
-                    With your permission, your profile photo will be sent to OpenAI to generate this illustration.
-                  </span>
-                </span>
-              </label>
-              <button
+              {error && <button
                 type="button"
                 className={`${buttonClass} bg-primary text-on-primary hover:bg-primary-hover`}
                 disabled={generating || !selectedSlots.length}
-                onClick={generate}
+                onClick={() => { setError(""); setGenerating(true); setAttempt(n => n + 1); }}
               >
-                {generating ? "Generating…" : error ? "Try again" : "Generate illustration"}
-              </button>
+                Try again
+              </button>}
               {generating && (
-                <p role="status" className="text-sm text-supporting">Generating your outfit illustration…</p>
+                <p role="status" className="text-sm text-supporting">Generating your outfit try-on…</p>
               )}
               {error && <p role="alert" className="text-sm font-medium text-danger">{error}</p>}
             </>
@@ -142,7 +134,7 @@ export function Preview({ look, slots, garments, onBack }: PreviewProps) {
         className={`${buttonClass} border border-divider bg-surface text-secondary hover:bg-selected`}
         onClick={onBack}
       >
-        {preview ? "Back to refine and save" : "Skip preview and return to save"}
+        {preview ? "Back to review and save" : "Skip preview and return to save"}
       </button>
     </section>
   );

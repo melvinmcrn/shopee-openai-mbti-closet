@@ -16,14 +16,14 @@ export type CatalogProduct = {
 export function EnhancementProduct({ product, sponsored = false }: { product: CatalogProduct; sponsored?: boolean }) {
   const [imageFailed, setImageFailed] = useState(false);
   return (
-    <div className="flex min-w-0 items-start gap-3 rounded-xl border border-divider bg-canvas p-3">
+    <div className="flex min-w-0 flex-wrap items-start gap-3 rounded-xl border border-divider bg-canvas p-3">
       {!imageFailed && (
         <Image src={product.imageUrl} alt="" width={80} height={80} unoptimized
           className="size-20 shrink-0 rounded-lg bg-selected object-contain"
           onError={() => setImageFailed(true)}
         />
       )}
-      <div className="min-w-0 space-y-1">
+      <div className="min-w-0 flex-1 basis-32 space-y-1">
         <p className="text-xs font-semibold text-secondary">Optional enhancement{sponsored && " · Sponsored"}</p>
         <p className="wrap-break-word text-sm font-semibold">{product.title}</p>
         <p className="text-sm">{new Intl.NumberFormat("en", { style: "currency", currency: product.currency }).format(product.price)}</p>

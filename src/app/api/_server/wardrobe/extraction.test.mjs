@@ -151,7 +151,7 @@ test("one Luna High Fast response supplies editable metadata and the exact priva
   const provider = t.mock.method(globalThis, "fetch", async (url, flags) => {
     assert.equal(url, "https://api.openai.com/v1/responses");
     assert.equal(flags.method, "POST");
-    assert.equal(flags.redirect, "error");
+    assert.equal(flags.redirect, "manual");
     assert.equal(flags.headers.Authorization, "Bearer secret");
     const modelRequest = JSON.parse(flags.body);
     assert.equal(modelRequest.model, "gpt-6-luna");

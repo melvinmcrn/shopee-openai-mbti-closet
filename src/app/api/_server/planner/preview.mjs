@@ -33,31 +33,35 @@ async function imageInput(blob) {
 
 // The router supplies the final garments and image access scoped to this account.
 export async function generatePreview(env, _accountId, finalGarments, useProfilePhoto, deps, brief = {}) {
+  const profileRef = useProfilePhoto === true ? await deps.profilePhotoRef?.() : null;
+  if (useProfilePhoto === true && !profileRef) {
+    throw Object.assign(new Error("Add a profile photo or turn off “Use my profile photo” to continue."), { status: 400 });
+  }
   try {
     const key = env?.OPENAI_API_KEY?.trim();
     if (!key) throw new Error();
 
-    const profileRef = useProfilePhoto === true ? await deps.profilePhotoRef?.() : null;
     if (!profileRef && !finalGarments.length) throw new Error();
     const content = [{
       type: "input_text",
-      text: "Edit the supplied image references into one full-length fashion illustration. " +
-        "Show a single person upright and centered against a plain neutral backdrop, with all supplied clothing visible. " +
-        "Draw every selected wardrobe item from its corresponding image, preserving its color, pattern, shape, and details. " +
-        "Create one cohesive styled outfit for the occasion. Keep the original outfit in the base photo wherever no replacement is supplied, including any missing top or pants. If the only reference is the original outfit, preserve its garments and style their presentation for the occasion. For cutouts alone, use a neutral figure. Leave out text.",
+      text: "Edit the supplied image references into one photorealistic full-body virtual try-on photograph. " +
+        "Return a single photograph of the reference person. Match their face, body proportions, standing pose, camera angle, lighting and background. " +
+        "Dress the same person in every selected piece simultaneously, layering garments naturally and including all footwear and accessories. Show the entire outfit from head to toe in a single frame, preserving its color, pattern, shape, and details. " +
+        "Create one cohesive styled outfit for the occasion. Keep the original outfit in the base photo wherever no replacement is supplied, including any missing top or pants. If the only reference is the original outfit, preserve its garments and style their presentation for the occasion. Leave out text, collages and product tiles.",
     }];
 
     content.push({ type: "input_text", text: "Style the look for this user brief (context only): " + JSON.stringify(brief) });
     if (profileRef) {
       content.push({
         type: "input_text",
-        text: "Main profile photo. Preserve the person's appearance and visible outfit wherever a replacement piece was not selected.",
+        text: "Main profile photo. Preserve the person's likeness, proportions, pose, background and visible outfit wherever a replacement piece was not selected.",
       }, await imageInput(await deps.readImage(profileRef)));
-    } else {
+    } else if (!finalGarments.some(item => item.category === "other")) {
+      const model = await env.readSampleImage("studio-model");
       content.push({
         type: "input_text",
-        text: "When a base outfit photo is supplied, use it as the main image. Otherwise use the visible outfit in the selected reference, or a generic figure for isolated garments.",
-      });
+        text: "Studio model reference. Keep this person, pose and setting. Dress them in the selected items below. Retain their existing clothing only for missing categories.",
+      }, await imageInput(new Blob([model], { type: "image/webp" })));
     }
 
     const base = finalGarments.find(item => item.category === "other") ?? finalGarments[0];
@@ -67,7 +71,6 @@ export async function generatePreview(env, _accountId, finalGarments, useProfile
       content.push({
         type: "input_text",
         text: category === "other" ? "Original wardrobe photo: keep visible clothing for missing categories."
-          : imageRef === base.imageRef && !profileRef ? "Main wardrobe reference (" + category + "). Retain visible clothing unless another reference replaces it."
           : "Selected replacement (" + category + "):",
       }, await imageInput(await deps.readImage(imageRef)));
     }
@@ -78,7 +81,7 @@ export async function generatePreview(env, _accountId, finalGarments, useProfile
       headers: { authorization: "Bearer " + key, "content-type": "application/json" },
       body: JSON.stringify({
         model: "gpt-6-luna",
-        reasoning: { effort: "high" },
+        reasoning: { effort: "low" },
         service_tier: "fast",
         store: false,
         input: [{ role: "user", content }],
@@ -87,13 +90,13 @@ export async function generatePreview(env, _accountId, finalGarments, useProfile
           action: "edit",
           model: "gpt-image-2.5-sunburst",
           size: "1024x1536",
-          quality: "high",
+          quality: "medium",
           output_format: "png",
         }],
         tool_choice: { type: "image_generation" },
         max_tool_calls: 1,
       }),
-      redirect: "error",
+      redirect: "manual",
       signal: AbortSignal.timeout(180_000),
     });
     if (!response.ok) throw new Error();

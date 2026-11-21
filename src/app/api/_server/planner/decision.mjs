@@ -11,7 +11,7 @@ export async function requestDecision(env, payload, request = fetch) {
       "content-type": "application/json",
     },
     body: JSON.stringify({ ...payload, model }),
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(15_000),
   });
   if (!response.ok) throw new Error("The Decisions request failed.");
