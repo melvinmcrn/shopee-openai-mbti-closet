@@ -6,6 +6,7 @@ const inlineImageTypes = new Set([
   "image/webp",
 ]);
 
+const unattachedFileGraceSeconds = 24 * 60 * 60;
 const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 function accountId(account) {
@@ -33,8 +34,8 @@ export async function writePrivateFile(env, account, body, contentType) {
 
   const fileId = `private/${userId}/${crypto.randomUUID()}`;
   const reserved = await env.DB.prepare(`
-    INSERT INTO private_files (file_id, user_id, state)
-    SELECT ?, id, 'uploading' FROM users WHERE id = ?
+    INSERT INTO private_files (file_id, user_id, state, state_changed_at)
+    SELECT ?, id, 'uploading', unixepoch() FROM users WHERE id = ?
     RETURNING file_id
   `).bind(fileId, userId).first();
   if (!reserved) throw new Error("File owner is unavailable");
@@ -44,7 +45,7 @@ export async function writePrivateFile(env, account, body, contentType) {
       httpMetadata: { contentType: imageContentType(contentType) },
     });
     const uploaded = await env.DB.prepare(`
-      UPDATE private_files SET state = 'ready'
+      UPDATE private_files SET state = 'ready', state_changed_at = unixepoch()
       WHERE file_id = ? AND user_id = ? AND state = 'uploading'
       RETURNING file_id
     `).bind(fileId, userId).first();
@@ -52,10 +53,15 @@ export async function writePrivateFile(env, account, body, contentType) {
     return uploaded.file_id;
   } catch (error) {
     try {
+      // A slow upload may finish after its registry entry already expired.
+      // Requeue this reserved ID so its late object is removed as well.
       await env.DB.prepare(`
-        UPDATE private_files SET state = 'deleting'
-        WHERE file_id = ? AND user_id = ? AND state = 'uploading'
-      `).bind(fileId, userId).run();
+        INSERT INTO private_files (file_id, user_id, state)
+        SELECT ?, ?, 'deleting'
+        WHERE NOT EXISTS (SELECT 1 FROM private_file_references WHERE file_id = ?)
+        ON CONFLICT(file_id) DO UPDATE SET state = 'deleting'
+        WHERE private_files.user_id = excluded.user_id
+      `).bind(fileId, userId, fileId).run();
       await deletePrivateFile(env, account, fileId);
     } catch {
       console.warn("Private file upload cleanup is pending");
@@ -106,6 +112,21 @@ export async function retryPrivateFileCleanup(env, account) {
   const userId = accountId(account);
   if (userId === null) return;
 
+  // Expire interrupted uploads and unused writes atomically with the reference check.
+  await env.DB.prepare(`
+    UPDATE private_files SET state = 'deleting'
+    WHERE file_id IN (
+      SELECT file_id FROM private_files
+      WHERE user_id = ? AND state IN ('ready', 'uploading')
+        AND state_changed_at <= unixepoch() - ?
+        AND NOT EXISTS (
+          SELECT 1 FROM private_file_references AS reference
+          WHERE reference.file_id = private_files.file_id
+        )
+      ORDER BY state_changed_at, file_id
+      LIMIT 10
+    )
+  `).bind(userId, unattachedFileGraceSeconds).run();
   const { results } = await env.DB.prepare(`
     SELECT file_id FROM private_files
     WHERE user_id = ? AND state = 'deleting'
