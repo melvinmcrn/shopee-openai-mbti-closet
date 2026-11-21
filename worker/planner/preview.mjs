@@ -41,9 +41,9 @@ export async function generatePreview(env, _accountId, finalGarments, useProfile
     const content = [{
       type: "input_text",
       text: "Edit the supplied image references into one full-length fashion illustration. " +
-        "Show a single person upright and centered against a plain neutral backdrop, with the complete outfit visible from head through both shoes. " +
+        "Show a single person upright and centered against a plain neutral backdrop, with all supplied clothing visible. " +
         "Draw every selected wardrobe item from its corresponding image, preserving its color, pattern, shape, and details. " +
-        "Keep the selected shoes clearly visible. Use only the selected wardrobe items. Keep the result clearly illustrated and leave out text.",
+        "Only include clothing items that were supplied; leave unselected clothing categories plain and unfilled. Use only the selected wardrobe items. Keep the result clearly illustrated and leave out text.",
     }];
 
     if (profileRef) {

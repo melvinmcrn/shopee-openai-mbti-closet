@@ -44,7 +44,7 @@ function d1Binding(database) {
   };
 }
 
-async function startPlanner(t, preview) {
+async function startPlanner(t, preview, optionSlots = original) {
   const database = new DatabaseSync(":memory:");
   t.after(() => database.close());
   const migrations = new URL("../drizzle/", import.meta.url);
@@ -69,7 +69,7 @@ async function startPlanner(t, preview) {
     const dependencies = {
       generateLooks: async () => ({
         status: "ready",
-        looks: [{ slots: original, explanation: "The dress works for dinner." }],
+        looks: [{ slots: optionSlots, explanation: "The dress works for dinner." }],
       }),
       preview,
     };
@@ -123,6 +123,25 @@ test("preview sends the final shoe's bytes without reading a profile photo by de
   assert.equal(preview.storeImage.mock.callCount(), 1);
   const [stored] = preview.storeImage.mock.calls[0].arguments;
   assert.deepEqual(Buffer.from(await stored.arrayBuffer()), png);
+});
+
+test("a dress-only option previews and saves without adding shoes", async (t) => {
+  const slots = { dress: dress.id };
+  const preview = {
+    readImage: t.mock.fn(async () => new Blob(["dress"], { type: "image/png" })),
+    fetch: async () => Response.json({
+      status: "completed",
+      output: [{ type: "image_generation_call", status: "completed", result: "iVBORw0KGgo=" }],
+    }),
+    storeImage: async () => "dress-preview.png",
+  };
+  const { dispatch, optionId, makeSession } = await startPlanner(t, preview, slots);
+  assert.deepEqual(await dispatch("preview", { optionId, slots }), { imageRef: "dress-preview.png" });
+  assert.deepEqual(preview.readImage.mock.calls.map(call => call.arguments[0]), [dress.imageRef]);
+  const saved = await dispatch("save", { optionId, slots });
+  const reopened = await makeSession()("detail", { id: saved.id });
+  assert.deepEqual(Object.keys(reopened.slots), ["dress"]);
+  assert.equal(reopened.slots.dress.id, dress.id);
 });
 
 test("an image provider failure still allows the refined outfit to be saved", async (t) => {

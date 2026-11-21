@@ -129,19 +129,29 @@ test("reports zero viable looks when Decisions marks every candidate unsuitable"
 
   assert.equal(provider.calls.length, 1);
   assert.equal(result.status, "insufficient");
-  assert.match(result.message, /No complete look matched/u);
+  assert.match(result.message, /No look matched/u);
   assert.equal(result.looks, undefined);
 });
 
 test("reports an insufficient wardrobe before contacting Decisions", async () => {
   const provider = mockDecisions((question) => responseAnswer(question, "formality", 0.1));
 
-  const result = await generateLooks(env, brief, [dress, top, bottom, { ...shoes, confirmed: false }], [], provider.request);
+  const result = await generateLooks(env, brief, [{ ...shoes, confirmed: false }], [], provider.request);
 
   assert.equal(provider.calls.length, 0);
   assert.equal(result.status, "insufficient");
-  assert.match(result.message, /Confirm shoes/u);
+  assert.match(result.message, /at least one confirmed clothing item/u);
   assert.equal(result.looks, undefined);
+});
+
+test("each supported category can generate a look on its own", async () => {
+  const accessory = garment("bag-1", "accessory", "Bag");
+  for (const item of [...wardrobe, accessory]) {
+    const provider = mockDecisions((question) => responseAnswer(question, "preferences", 0.1));
+    const result = await generateLooks(env, brief, [item], [], provider.request);
+    assert.equal(result.status, "ready", item.category);
+    assert.deepEqual(result.looks.map(({ slots }) => slots), [{ [item.category]: item.id }]);
+  }
 });
 
 test("rejects an invalid Decisions response without returning any partial looks", async (context) => {

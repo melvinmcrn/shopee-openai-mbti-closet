@@ -34,11 +34,8 @@ export function snapshotSlots(slots, garments) {
     };
   }
 
-  const hasValidBase = snapshot.dress
-    ? !snapshot.top && !snapshot.bottom
-    : snapshot.top && snapshot.bottom;
-  if (!snapshot.shoes || !hasValidBase) {
-    throw new TypeError("A look needs shoes and either a dress or a top and bottom");
+  if (!Object.keys(snapshot).length || (snapshot.dress && (snapshot.top || snapshot.bottom))) {
+    throw new TypeError("A look needs at least one garment, and a dress cannot be combined with a top or bottom");
   }
   return snapshot;
 }
