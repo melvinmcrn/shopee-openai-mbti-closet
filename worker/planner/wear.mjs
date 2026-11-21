@@ -11,7 +11,7 @@ function found(entry) {
 }
 
 function requireId(id) {
-  if (typeof id !== "string" || !id.trim()) {
+  if (typeof id !== "string" || !/^[1-9][0-9]{0,18}$/.test(id)) {
     throw new WearError(400, "Choose a saved look or wear entry.");
   }
   return id;
@@ -39,49 +39,59 @@ function feedback({ rating, note }) {
 
 async function listEntries(db, accountId, lookId) {
   const { results } = await db.prepare(
-    `SELECT wear.id, look.id AS lookId, wear.date, wear.rating, wear.note
-     FROM planner_saved_looks AS look
-     LEFT JOIN planner_wear_history AS wear ON wear.look_id = look.id
-     WHERE look.account_id = ? AND look.id = ?
-     ORDER BY wear.date DESC`,
+    `SELECT CAST(wear.id AS TEXT) AS id, CAST(look.id AS TEXT) AS lookId,
+            substr(wear.worn_at, 1, 10) AS date, wear.rating, wear.note
+     FROM saved_looks AS look
+     LEFT JOIN wear_feedback AS wear ON wear.saved_look_id = look.id
+     WHERE look.user_id = ? AND look.id = ?
+     ORDER BY date DESC, wear.id DESC`,
   ).bind(accountId, lookId).all();
   return found(results[0]).id === null ? [] : results;
 }
 
 async function addEntry(db, accountId, lookId, date) {
   await db.prepare(
-    `INSERT INTO planner_wear_history (id, look_id, date)
-     SELECT ?, id, ? FROM planner_saved_looks WHERE id = ? AND account_id = ?
-     ON CONFLICT (look_id, date) DO NOTHING`,
-  ).bind(crypto.randomUUID(), date, lookId, accountId).run();
+    `INSERT INTO wear_feedback (saved_look_id, worn_at)
+     SELECT look.id, ? FROM saved_looks AS look
+     WHERE look.id = ? AND look.user_id = ?
+     AND NOT EXISTS (
+       SELECT 1 FROM wear_feedback AS wear
+       WHERE wear.saved_look_id = look.id AND substr(wear.worn_at, 1, 10) = ?
+     )`,
+  ).bind(date + " 00:00:00", lookId, accountId, date).run();
 
   return found(await db.prepare(
-    `SELECT wear.id, wear.look_id AS lookId, wear.date, wear.rating, wear.note
-     FROM planner_wear_history AS wear
-     JOIN planner_saved_looks AS look ON look.id = wear.look_id
-     WHERE look.account_id = ? AND wear.look_id = ? AND wear.date = ?`,
+    `SELECT CAST(wear.id AS TEXT) AS id, CAST(wear.saved_look_id AS TEXT) AS lookId,
+            substr(wear.worn_at, 1, 10) AS date, wear.rating, wear.note
+     FROM wear_feedback AS wear
+     JOIN saved_looks AS look ON look.id = wear.saved_look_id
+     WHERE look.user_id = ? AND wear.saved_look_id = ? AND substr(wear.worn_at, 1, 10) = ?
+     ORDER BY wear.id DESC
+     LIMIT 1`,
   ).bind(accountId, lookId, date).first());
 }
 
 async function getEntry(db, accountId, id) {
   return found(await db.prepare(
-    `SELECT wear.id, wear.look_id AS lookId, wear.date, wear.rating, wear.note
-     FROM planner_wear_history AS wear
-     JOIN planner_saved_looks AS look ON look.id = wear.look_id
-     WHERE look.account_id = ? AND wear.id = ?`,
+    `SELECT CAST(wear.id AS TEXT) AS id, CAST(wear.saved_look_id AS TEXT) AS lookId,
+            substr(wear.worn_at, 1, 10) AS date, wear.rating, wear.note
+     FROM wear_feedback AS wear
+     JOIN saved_looks AS look ON look.id = wear.saved_look_id
+     WHERE look.user_id = ? AND wear.id = ?`,
   ).bind(accountId, id).first());
 }
 
 async function updateEntry(db, accountId, id, input) {
   const { rating, note } = feedback(input);
   return found(await db.prepare(
-    `UPDATE planner_wear_history
+    `UPDATE wear_feedback
      SET rating = CASE WHEN ? THEN ? ELSE rating END,
          note = CASE WHEN ? THEN ? ELSE note END
      WHERE id = ? AND EXISTS (
-       SELECT 1 FROM planner_saved_looks WHERE id = planner_wear_history.look_id AND account_id = ?
+       SELECT 1 FROM saved_looks WHERE id = wear_feedback.saved_look_id AND user_id = ?
      )
-     RETURNING id, look_id AS lookId, date, rating, note`,
+     RETURNING CAST(id AS TEXT) AS id, CAST(saved_look_id AS TEXT) AS lookId,
+               substr(worn_at, 1, 10) AS date, rating, note`,
   ).bind(Number(input.rating !== undefined), rating, Number(input.note !== undefined), note, id, accountId).first());
 }
 
