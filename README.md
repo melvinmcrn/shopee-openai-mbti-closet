@@ -10,7 +10,17 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
-The Next.js dev server serves the frontend. Google sign-in runs on the deployed Sites Worker.
+`npm run dev` builds the app, applies D1 migrations to the local database, and starts the Worker with local D1 and R2 bindings. Restart it after source changes. For frontend hot reload, use `npm run dev:frontend`. That command serves the Next.js UI only.
+
+To enable local sign-in, create an untracked `.dev.vars` file in the project root:
+
+```dotenv
+GOOGLE_CLIENT_ID=<local Google OAuth web client ID>
+GOOGLE_CLIENT_SECRET=<local Google OAuth web client secret>
+AUTH_SECRET=<random value from openssl rand -base64 32>
+```
+
+Add `http://localhost:3000/api/auth/callback/google` under **Authorized redirect URIs** in the local Google OAuth web client. Use `localhost` in the browser so the origin matches exactly.
 
 ## Production build
 

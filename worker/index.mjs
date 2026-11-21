@@ -3,10 +3,15 @@ import { Auth } from "@auth/core";
 import Google from "@auth/core/providers/google";
 import { retryPrivateFileCleanup, servePrivateFile } from "./private-files.mjs";
 
-const origin = "https://mbti-closet.stonyimpala.chatgpt.site";
+const productionOrigin = "https://mbti-closet.stonyimpala.chatgpt.site";
+const localOrigin = "http://localhost:3000";
 const authPath = "/api/auth";
 const accountPath = "/api/account";
 const filesPath = "/api/files";
+
+function authOrigin(env) {
+  return env.LOCAL_DEV === "1" ? localOrigin : productionOrigin;
+}
 
 function validSubject(subject) {
   return typeof subject === "string" && subject.length > 0;
@@ -17,7 +22,7 @@ function auth(request, env, readSubject = () => {}) {
     basePath: authPath,
     // The Worker rejects unexpected origins before calling Auth.js.
     trustHost: true,
-    useSecureCookies: true,
+    useSecureCookies: new URL(request.url).protocol === "https:",
     secret: env.AUTH_SECRET,
     session: { strategy: "jwt", maxAge: 8 * 60 * 60 },
     providers: [
@@ -64,7 +69,7 @@ function authConfigured(env) {
 
 async function readAccountSession(request, env) {
   let subject;
-  const sessionRequest = new Request(origin + authPath + "/session", {
+  const sessionRequest = new Request(authOrigin(env) + authPath + "/session", {
     headers: { Cookie: request.headers.get("Cookie") ?? "" },
   });
   const response = await auth(sessionRequest, env, (value) => {
@@ -126,6 +131,7 @@ function serveAsset(request, pathname) {
 const worker = {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    const origin = authOrigin(env);
     const { pathname } = url;
     const authRoute = pathname === authPath || pathname.startsWith(authPath + "/");
     const fileRoute = pathname === filesPath || pathname.startsWith(filesPath + "/");
