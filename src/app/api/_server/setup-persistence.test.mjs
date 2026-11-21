@@ -1,9 +1,9 @@
-import { readSampleImage } from "./read-sample-image.mjs";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { encode } from "@auth/core/jwt";
+import { encode as encodePng } from "fast-png";
 import { userData } from "./user-data.mjs";
 import { handleApi } from "./handle-api.mjs";
 
@@ -76,7 +76,6 @@ function setup(t) {
   };
 
   const env = {
-    readSampleImage,
     DB,
     BUCKET,
     AUTH_SECRET: authSecret,
@@ -130,12 +129,9 @@ test("setup saves three confirmed pieces and optional styles by Google account a
   assert.ok(Number.isSafeInteger(originalSession.user.id));
   assert.deepEqual(await jsonSuccess(await owner("/api/profile")), emptyProfile);
 
-  const { items: samples } = await jsonSuccess(await owner("/api/wardrobe/sample", { method: "POST" }));
+  const retiredSampleRoute = await owner("/api/wardrobe/sample", { method: "POST" });
+  assert.equal(retiredSampleRoute.status, 404);
   assert.deepEqual(await jsonSuccess(await owner("/api/wardrobe/items")), { items: [] });
-  const shoes = samples.filter(({ category }) => category === "shoes");
-  assert.equal(shoes.length, 2);
-  assert.notEqual(shoes[0].id, shoes[1].id);
-  assert.notEqual(shoes[0].imageUrl, shoes[1].imageUrl);
 
   const form = new FormData();
   form.set("draftKey", crypto.randomUUID());
@@ -150,20 +146,36 @@ test("setup saves three confirmed pieces and optional styles by Google account a
   assert.equal(top.name, "My uploaded top");
   assert.equal(top.category, "top");
 
-  const confirmed = [top];
-  const sampleShoeTypes = {
-    "White low-top sneakers": "Sneakers",
-    "Black penny loafers": "Loafers",
-  };
-  for (const piece of shoes) {
-    const name = `My ${piece.name.toLowerCase()}`;
-    const { item } = await jsonSuccess(await owner(`/api/wardrobe/items/${piece.id}`, {
+  const shoes = [];
+  const shoePhotos = [];
+  for (const [name, garmentType, color, value] of [
+    ["My white sneakers", "Sneakers", "White", 240],
+    ["My black loafers", "Loafers", "Black", 15],
+  ]) {
+    const bytes = encodePng({
+      width: 1, height: 1, channels: 4, data: Uint8Array.of(value, value, value, 255),
+    });
+    shoePhotos.push(bytes);
+    const form = new FormData();
+    form.set("draftKey", crypto.randomUUID());
+    form.set("image", new Blob([bytes], { type: "image/png" }), "shoes.png");
+    const { id } = await jsonSuccess(await owner("/api/wardrobe/upload", { method: "POST", form }));
+    const { item } = await jsonSuccess(await owner(`/api/wardrobe/items/${id}`, {
       method: "PATCH",
-      json: { name, confirm: true },
+      json: { name, category: "shoes", garmentType, color, confirm: true },
     }));
-    assert.deepEqual(item, { ...piece, name, garmentType: sampleShoeTypes[piece.name] });
-    confirmed.push(item);
+    assert.equal(item.name, name);
+    assert.equal(item.garmentType, garmentType);
+    shoes.push(item);
   }
+  assert.notEqual(shoes[0].id, shoes[1].id);
+  assert.notEqual(shoes[0].imageUrl, shoes[1].imageUrl);
+
+  // Model an item already added by the retired feature. Removing its route
+  // must not hide the item, its private image, or looks that reference it.
+  await env.DB.prepare("UPDATE wardrobe_items SET sample_slug = ? WHERE user_id = ? AND id = ?")
+    .bind("black-penny-loafers", originalSession.user.id, shoes[1].id).run();
+  const confirmed = [top, ...shoes];
 
   const styles = ["Casual", "Minimalist"];
   const setStyles = { method: "PATCH", json: { styles } };
@@ -171,12 +183,16 @@ test("setup saves three confirmed pieces and optional styles by Google account a
   assert.equal((await owner("/api/profile", { ...setStyles, origin: "https://elsewhere.example" })).status, 403);
   assert.deepEqual(await jsonSuccess(await owner("/api/profile")), emptyProfile);
   assert.deepEqual(await jsonSuccess(await owner("/api/profile", setStyles)), { ...emptyProfile, styles });
+  const photoForm = new FormData();
+  photoForm.set("image", new Blob([png], { type: "image/png" }), "profile.png");
+  const { facePhotoUrl } = await jsonSuccess(await owner("/api/profile/photo", { method: "PUT", form: photoForm }));
+  assert.ok(facePhotoUrl.startsWith("/api/files/"));
   const completed = await jsonSuccess(await owner("/api/profile", {
     method: "PATCH",
     json: { complete: true },
   }));
   assert.ok(Number.isFinite(Date.parse(completed.setupCompletedAt)));
-  assert.deepEqual(completed, { ...emptyProfile, styles, setupCompletedAt: completed.setupCompletedAt });
+  assert.deepEqual(completed, { ...emptyProfile, styles, facePhotoUrl, setupCompletedAt: completed.setupCompletedAt });
 
   const records = userData(env.DB, originalSession.user.id);
   const occasion = await records.createOutfitRequest({ occasion: "Dinner" });
@@ -216,17 +232,13 @@ test("setup saves three confirmed pieces and optional styles by Google account a
   assert.equal(topImageHead.headers.get("Content-Length"), String(png.byteLength));
   assert.equal(topImageHead.body, null);
 
-  const shoeImages = [];
-  for (const { imageUrl } of shoes) {
+  for (const [index, { imageUrl }] of shoes.entries()) {
     const image = await returningOwner(imageUrl);
     assert.equal(image.status, 200);
-    assert.equal(image.headers.get("Content-Type"), "image/webp");
+    assert.equal(image.headers.get("Content-Type"), "image/png");
     assert.equal(image.headers.get("Cache-Control"), "no-store");
-    const bytes = Buffer.from(await image.arrayBuffer());
-    assert.equal(bytes.toString("ascii", 8, 12), "WEBP");
-    shoeImages.push(bytes);
+    assert.deepEqual(new Uint8Array(await image.arrayBuffer()), shoePhotos[index]);
   }
-  assert.notDeepEqual(shoeImages[0], shoeImages[1]);
 
   const otherOwner = client(env, await signIn("different-google-owner", "after@example.com"));
   const otherSession = await jsonSuccess(await otherOwner("/api/account", account));
