@@ -6,7 +6,7 @@ export type TryOnResult = { imageRef: string | null; useProfilePhoto?: boolean; 
 
 export async function requestTryOn(action: "preview" | "savedPreview", input: object): Promise<TryOnResult> {
   const controller = new AbortController();
-  // Allow the server's three-minute render, one-minute inventory check and file transfers.
+  // Allow the server's three-minute render and file transfers.
   const timer = setTimeout(() => controller.abort(), 270_000);
   try {
     const result = await api<TryOnResult | null>(action, input, controller.signal);
