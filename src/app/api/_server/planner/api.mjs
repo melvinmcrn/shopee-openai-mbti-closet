@@ -6,7 +6,7 @@ import { wearAction } from "./wear.mjs";
 import { evaluateEnhancements, shoppingAction, suggestionsForLook } from "./shopping.mjs";
 import { readBaseCoverage } from "./base-coverage.mjs";
 import { combineBaseCoverage, effectiveWardrobeSlots } from "./wardrobe-completion.mjs";
-import { generatePreview, readProfileImage, profilePhotoRequired, profilePhotoChanged } from "./preview.mjs";
+import { generatePreview, readProfileImage, ProfilePhotoError, profilePhotoRequired, profilePhotoChanged } from "./preview.mjs";
 import { previewFiles, previewSelection, profilePhotoRef, readPreviewImage } from "./preview-files.mjs";
 import { saveLook, listLooks, getLook, snapshotSlots } from "./saved.mjs";
 
@@ -87,6 +87,15 @@ export async function dispatchPlanner(env, accountId, action, input = {}, depend
   }
   switch (action) {
     case "wardrobe": return wardrobe();
+    case "prepareTryOn": {
+      try {
+        await currentPortrait(await photo());
+      } catch (error) {
+        if (error instanceof ProfilePhotoError && error.code === "profile_photo_required") return { status: "photo_required" };
+        throw error;
+      }
+      return { status: "ready", brief: found(await saveBrief(db, accountId, input)) };
+    }
     case "saveBrief": return found(await saveBrief(db, accountId, input));
     case "option": return option(db, accountId, input.id);
     case "generate": {

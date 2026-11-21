@@ -126,6 +126,24 @@ async function startPlanner(t, preview, optionSlots = original, shoppingFetch, c
   return { dispatch, makeSession, optionId: option.id, database };
 }
 
+test("preparing a try-on keeps the brief editable until the account photo is readable", async t => {
+  const bucket = { get: t.mock.fn(async () => null) };
+  const { dispatch, makeSession } = await startPlanner(t, undefined, original, undefined, { env: { BUCKET: bucket } });
+  const brief = await dispatch("saveBrief", { occasion: "Lunch" });
+  const input = { ...brief, comfort: "Loose fit" };
+
+  assert.deepEqual(await makeSession(2)("prepareTryOn", input), { status: "photo_required" });
+  assert.equal(bucket.get.mock.callCount(), 0);
+  assert.deepEqual(await dispatch("prepareTryOn", input), { status: "photo_required" });
+  bucket.get.mock.mockImplementation(async () => new Blob(["broken photo"]));
+  assert.deepEqual(await dispatch("prepareTryOn", input), { status: "photo_required" });
+  bucket.get.mock.mockImplementation(async () => { throw new Error("Storage offline"); });
+  await assert.rejects(dispatch("prepareTryOn", input), /Storage offline/);
+
+  bucket.get.mock.mockImplementation(async ref => ref === profileRef ? portrait() : null);
+  assert.deepEqual(await dispatch("prepareTryOn", input), { status: "ready", brief: input });
+});
+
 test("deleting a garment confirms exactly the saved looks containing its final slot", async (t) => {
   const { dispatch, optionId, database } = await startPlanner(t);
   const env = { DB: d1Binding(database) };
