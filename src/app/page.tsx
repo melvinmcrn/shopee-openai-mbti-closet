@@ -1,5 +1,5 @@
-import Image from "next/image";
 import Link from "next/link";
+import { ClosetWordmark } from "./closet-wordmark";
 import { GoogleAccount } from "./google-account";
 
 function WardrobeCollage() {
@@ -35,7 +35,7 @@ export default function Home() {
     <main className="mx-auto flex min-h-dvh w-full max-w-[390px] flex-1 flex-col px-6 pb-7 pt-5">
       <header className="flex items-center justify-between border-b border-divider pb-4">
         <Link href="/" className="flex h-[30px] items-center" aria-label="Closet home">
-          <Image src="/closet-logo.svg" alt="" width={84} height={22} unoptimized />
+          <ClosetWordmark />
         </Link>
         <span className="text-sm font-semibold text-secondary">Your personal stylist</span>
       </header>

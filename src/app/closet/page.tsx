@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
+import { ClosetWordmark } from "../closet-wordmark";
 
 const categoryLabels = {
   top: "Top",
@@ -146,7 +147,9 @@ export default function ClosetPage() {
     <main className="min-h-screen flex-1 bg-canvas text-text">
       <header className="border-b border-divider">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-8 gap-y-3 px-5 py-4 sm:px-8">
-          <Link className="font-heading text-xl font-semibold" href="/">Closet</Link>
+          <Link className="flex h-[30px] items-center" href="/" aria-label="Closet home">
+            <ClosetWordmark />
+          </Link>
           <nav aria-label="Main" className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm font-semibold">
             <Link aria-current="page" className="underline underline-offset-4" href="/closet">Closet</Link>
             <Link className="hover:underline" href="/planner">Outfit planner</Link>

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { ClosetWordmark } from "../closet-wordmark";
 import { api, type Brief, type Garment, type Look } from "./shared";
 import { PlannerHome } from "./home";
 import { Occasion } from "./occasion";
@@ -68,7 +69,9 @@ export default function PlannerPage() {
   return <main className="min-h-screen bg-canvas px-5 py-6 text-text sm:px-10">
     <div className="mx-auto max-w-4xl">
       <nav aria-label="Planner navigation" className="mb-7 flex items-center gap-5 border-b border-divider pb-4 text-sm font-medium">
-        <a href="#home" className="mr-auto text-lg font-semibold">Closet</a>
+        <a href="#home" className="mr-auto flex h-[30px] items-center" aria-label="Outfit planner home">
+          <ClosetWordmark />
+        </a>
         <a href="#saved">Saved</a><Link href="/">Account</Link>
       </nav>
       {content}
