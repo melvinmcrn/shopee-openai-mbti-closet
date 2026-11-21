@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useState } from "react";
+import { SignOutButton } from "./sign-out-button";
 
 export function GoogleAccount() {
   const [account, setAccount] = useState<{ name?: string; email?: string } | null>(null);
@@ -68,9 +69,7 @@ export function GoogleAccount() {
       <div className="flex flex-col gap-2 rounded-2xl bg-selected p-4">
         <p className="text-sm text-text" role="status">Your profile is unavailable right now.</p>
         <p className="text-sm text-text">Signed in as {account.email ?? account.name}</p>
-        <a className="w-fit text-sm font-semibold text-secondary underline underline-offset-4" href="/api/auth/signout" target="_top">
-          Sign out of Closet
-        </a>
+        <SignOutButton label="Sign out of Closet" className="w-fit text-sm font-semibold text-secondary underline underline-offset-4" />
       </div>
     ) : (
       <p className="rounded-xl bg-selected px-4 py-3 text-sm text-text" role="status">

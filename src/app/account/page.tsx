@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { FooterNavigation } from "../footer-navigation";
+import { SignOutButton } from "../sign-out-button";
 import { styleOptions } from "../profile/style-options";
 
 type EditableProfile = {
@@ -186,9 +187,7 @@ export default function AccountPage() {
         <header className="flex flex-wrap items-center justify-between gap-4">
           <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">Account</h1>
           {!loading && !loadError && (
-            <form action="/api/auth/signout" method="get" target="_top">
-              <button type="submit" className={buttonClass} disabled={busy !== null}>Log out</button>
-            </form>
+            <SignOutButton label="Log out" className={buttonClass} disabled={busy !== null} />
           )}
         </header>
         {loading && <p role="status">Loading your profile…</p>}
