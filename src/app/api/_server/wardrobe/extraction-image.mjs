@@ -48,7 +48,7 @@ function sourcePoint(x, y, width, height, orientation) {
   }
 }
 
-async function decodePng(bytes, validateCutout = false) {
+async function decodePng(bytes, validateCutout = false, expectedSheet) {
   if (bytes.length < 33) throw new ExtractionImageError("The PNG photo could not be decoded.");
   const header = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const width = header.getUint32(16);
@@ -57,7 +57,10 @@ async function decodePng(bytes, validateCutout = false) {
   const color = bytes[25];
   const indexed = validateCutout && color === 3;
   const channels = indexed ? 1 : { 0: 1, 2: 3, 4: 2, 6: 4 }[color];
-  if (validateCutout && (width > maxCutoutDimension || height > maxCutoutDimension ||
+  if (expectedSheet && (width !== expectedSheet.width || height !== expectedSheet.height)) {
+    throw new ExtractionImageError("Unexpected cutout sheet dimensions.");
+  }
+  if (validateCutout && !expectedSheet && (width > maxCutoutDimension || height > maxCutoutDimension ||
       width * height > maxCutoutPixels)) {
     throw new ExtractionImageError("Invalid cutout dimensions.");
   }
@@ -144,7 +147,7 @@ async function readImage(bytes) {
   throw new ExtractionImageError("Automatic extraction accepts JPEG and PNG photos. You can review this photo manually.");
 }
 
-export async function normalizePhoto(bytes) {
+export async function normalizePhoto(bytes, dimension = maxDimension) {
   let photo;
   try {
     photo = await readImage(bytes);
@@ -157,7 +160,7 @@ export async function normalizePhoto(bytes) {
   const rotated = orientation >= 5 && orientation <= 8;
   const orientedWidth = rotated ? photo.height : photo.width;
   const orientedHeight = rotated ? photo.width : photo.height;
-  const ratio = Math.min(1, maxDimension / Math.max(orientedWidth, orientedHeight));
+  const ratio = Math.min(1, dimension / Math.max(orientedWidth, orientedHeight));
   const width = Math.max(1, Math.round(orientedWidth * ratio));
   const height = Math.max(1, Math.round(orientedHeight * ratio));
   const data = new Uint8Array(width * height * 4);
@@ -224,4 +227,15 @@ export async function validateCutoutPng(bytes) {
   // A real cutout needs both visible fabric and a genuinely transparent background.
   const minPixels = Math.ceil(png.width * png.height * 0.005);
   return transparent >= minPixels && solid >= minPixels;
+}
+
+
+// Batch edits are cropped from the provider's existing alpha pixels, not masked.
+export async function readCutoutSheet(bytes, width, height) {
+  if (bytes.length < 33 || bytes.length > maxCutoutBytes || !hasPngSignature(bytes)) {
+    throw new ExtractionImageError("Invalid cutout sheet PNG.");
+  }
+  const png = await decodePng(bytes, true, { width, height });
+  if (png.channels !== 4 || png.depth !== 8) throw new ExtractionImageError("Expected an RGBA cutout sheet.");
+  return png.data;
 }

@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { encode } from "fast-png";
+import { decode, encode } from "fast-png";
 import { requestWardrobeUpload } from "../../../wardrobe/add/request-wardrobe-upload.mjs";
 import { wardrobeApi } from "../wardrobe-api.mjs";
+import { sheetGrid } from "./extraction-sheet.mjs";
 
 function fixture(t) {
   const sqlite = new DatabaseSync(":memory:");
@@ -258,4 +259,137 @@ test("retry does not resurrect an archived draft or extract an already confirmed
   assert.equal((await send(key, 1, photoPng)).status, 404);
   assert.equal(sqlite.prepare("SELECT count(*) AS count FROM wardrobe_items").get().count, 1);
   assert.equal(provider.mock.callCount(), 0);
+});
+
+function postBatch(env, entries, userId = 1) {
+  const form = new FormData();
+  form.set("batch", JSON.stringify(entries.map(({ key }) => key)));
+  for (const { key, photo } of entries) {
+    if (photo) form.set("image:" + key, photo);
+  }
+  return wardrobeApi(new Request("https://wardrobe.example/api/wardrobe/upload", { method: "POST", body: form }), env, userId);
+}
+
+function responseSheet(count, { gapBleed = false, blankSlot, duplicateSlot = false } = {}) {
+  const grid = sheetGrid(count);
+  const data = new Uint8Array(grid.width * grid.height * 4);
+  const slots = [];
+  for (let i = 0; i < count; i++) {
+    const red = 32 + i;
+    const top = Math.floor(i / grid.columns) * grid.tile + Math.floor(grid.tile / 2) - 32;
+    const left = (i % grid.columns) * grid.tile + Math.floor(grid.tile / 2) - 32;
+    if (i !== blankSlot) {
+      for (let y = 0; y < 64; y++) {
+        for (let x = 0; x < 64; x++) data.set([red, 64, 128, 255], ((top + y) * grid.width + left + x) * 4);
+      }
+    }
+    slots.unshift({
+      slot: duplicateSlot && i === 1 ? 1 : i + 1,
+      garment_found: true, name: `Shirt ${i + 1}`, category: "top", garment_type: "Shirt", color: "Blue",
+    });
+  }
+  if (gapBleed) data[3] = 255;
+  const bytes = encode({ width: grid.width, height: grid.height, data });
+  return Response.json({
+    status: "completed",
+    output: [
+      { type: "image_generation_call", status: "completed", result: Buffer.from(bytes).toString("base64") },
+      { type: "message", role: "assistant", status: "completed", content: [{
+        type: "output_text", text: JSON.stringify({ slots }),
+      }] },
+    ],
+  });
+}
+
+test("a 20-photo multipart upload makes one live-style Responses request and stores matched private drafts", async (t) => {
+  const { env, files, sqlite } = fixture(t);
+  env.OPENAI_API_KEY = "mock-key";
+  const entries = Array.from({ length: 20 }, () => ({ key: crypto.randomUUID(), photo: testPhoto }));
+  const grid = sheetGrid(20);
+  const provider = t.mock.method(globalThis, "fetch", (url, init) => {
+    assert.equal(url, "https://api.openai.com/v1/responses");
+    const sent = JSON.parse(init.body);
+    assert.equal(sent.model, "gpt-6-luna");
+    assert.deepEqual(sent.reasoning, { effort: "high" });
+    assert.equal(sent.service_tier, "fast");
+    assert.equal(sent.store, false);
+    assert.equal(sent.max_tool_calls, 1);
+    assert.equal(sent.tools[0].size, `${grid.width}x${grid.height}`);
+    const image = sent.input[0].content.find(({ type }) => type === "input_image");
+    const input = decode(Buffer.from(image.image_url.split(",")[1], "base64"));
+    assert.equal(input.width, grid.width);
+    assert.equal(input.height, grid.height);
+    assert.equal(sent.text.format.schema.properties.slots.items.properties.slot.enum.length, 20);
+    return responseSheet(20);
+  });
+  const response = await postBatch(env, entries);
+  assert.equal(response.status, 200);
+  const { items } = await response.json();
+  assert.equal(items.length, 20);
+  for (const [i, item] of items.entries()) {
+    assert.equal(item.draftKey, entries[i].key);
+    assert.equal(item.extraction.status, "ready");
+    assert.equal(item.extraction.item.name, `Shirt ${i + 1}`);
+    const file = decode(files.get(item.extraction.item.imageFileId).body);
+    assert.equal(file.data[(Math.floor(file.height / 2) * file.width + Math.floor(file.width / 2)) * 4], 32 + i);
+    assert.equal(file.data[3], 0);
+  }
+  assert.equal(files.size, 20);
+  assert.equal(sqlite.prepare("SELECT count(*) AS count FROM wardrobe_items WHERE confirmed_at IS NULL").get().count, 20);
+  assert.equal(provider.mock.callCount(), 1);
+
+  const repeated = await (await postBatch(env, entries.map(({ key }) => ({ key })))).json();
+  assert.deepEqual(repeated.items, items);
+  assert.equal(provider.mock.callCount(), 1);
+  const foreign = await (await postBatch(env, entries.map(({ key }) => ({ key })), 2)).json();
+  assert.ok(foreign.items.every(({ status, id }) => status === 404 && !id));
+});
+
+test("an empty cutout slot keeps that original and retry uses the same draft without re-uploading", async (t) => {
+  const { env, files, sqlite } = fixture(t);
+  env.OPENAI_API_KEY = "mock-key";
+  let calls = 0;
+  const provider = t.mock.method(globalThis, "fetch", (url, init) => {
+    const size = JSON.parse(init.body).tools[0].size;
+    assert.equal(size, calls === 0 ? "1216x608" : "1024x1024");
+    return calls++ === 0 ? responseSheet(2, { blankSlot: 0 }) : completedExtraction();
+  });
+  const entries = Array.from({ length: 2 }, () => ({ key: crypto.randomUUID(), photo: testPhoto }));
+  const { items } = await (await postBatch(env, entries)).json();
+  assert.equal(items[0].extraction.status, "manual");
+  assert.equal(items[1].extraction.status, "ready");
+  const originalId = sqlite.prepare("SELECT image_file_id FROM wardrobe_items WHERE id = ?").get(items[0].id).image_file_id;
+  assert.deepEqual(files.get(originalId).body, photoPng);
+  const retried = await (await postBatch(env, [{ key: entries[0].key }])).json();
+  assert.equal(retried.items[0].id, items[0].id);
+  assert.equal(retried.items[0].extraction.status, "ready");
+  assert.equal(provider.mock.callCount(), 2);
+});
+
+for (const malformed of [{ gapBleed: true }, { duplicateSlot: true }]) {
+  test("ambiguous batch sheet or metadata leaves the originals safely in manual review " + Object.keys(malformed)[0], async (t) => {
+    const { env, files } = fixture(t);
+    env.OPENAI_API_KEY = "mock-key";
+    t.mock.method(console, "warn", () => {});
+    const provider = t.mock.method(globalThis, "fetch", () => responseSheet(2, malformed));
+    const entries = Array.from({ length: 2 }, () => ({ key: crypto.randomUUID(), photo: testPhoto }));
+    const { items } = await (await postBatch(env, entries)).json();
+    assert.ok(items.every((item) => item.extraction.status === "manual"));
+    assert.equal(files.size, 2);
+    for (const { body } of files.values()) assert.deepEqual(body, photoPng);
+    assert.equal(provider.mock.callCount(), 1);
+  });
+}
+
+test("rejects more than 20 photos, duplicate keys, and oversized batch data before creating drafts", async (t) => {
+  const { env, files, sqlite } = fixture(t);
+  const tooMany = Array.from({ length: 21 }, () => ({ key: crypto.randomUUID(), photo: testPhoto }));
+  assert.equal((await postBatch(env, tooMany)).status, 400);
+  const [one] = tooMany;
+  assert.equal((await postBatch(env, [one, { ...one, key: one.key.toUpperCase() }])).status, 400);
+  assert.equal((await postBatch(env, [{
+    ...one, photo: new File([new Uint8Array(3_950_001)], "oversized.jpg", { type: "image/jpeg" }),
+  }])).status, 413);
+  assert.equal(sqlite.prepare("SELECT count(*) AS count FROM wardrobe_items").get().count, 0);
+  assert.equal(files.size, 0);
 });
