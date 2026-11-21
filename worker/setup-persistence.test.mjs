@@ -156,13 +156,17 @@ test("setup saves three confirmed pieces and optional styles by Google account a
   assert.equal(top.category, "top");
 
   const confirmed = [top];
+  const sampleShoeTypes = {
+    "White low-top sneakers": "Sneakers",
+    "Black penny loafers": "Loafers",
+  };
   for (const piece of shoes) {
     const name = `My ${piece.name.toLowerCase()}`;
     const { item } = await jsonSuccess(await owner(`/api/wardrobe/items/${piece.id}`, {
       method: "PATCH",
       json: { name, confirm: true },
     }));
-    assert.deepEqual(item, { ...piece, name });
+    assert.deepEqual(item, { ...piece, name, garmentType: sampleShoeTypes[piece.name] });
     confirmed.push(item);
   }
 

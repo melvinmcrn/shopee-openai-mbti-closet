@@ -1,9 +1,9 @@
 import type { NextConfig } from "next";
 
+const vercel = process.env.MBTI_TARGET === "vercel";
 const nextConfig: NextConfig = {
-  // Sites accepts static exports in `out/`; keep the app deployable without a
-  // Next.js server runtime.
-  output: "export",
+  // The Sites Worker serves the export. Vercel runs the App Router API.
+  ...(vercel ? {} : { output: "export", pageExtensions: ["tsx", "jsx", "js"] }),
 };
 
 export default nextConfig;

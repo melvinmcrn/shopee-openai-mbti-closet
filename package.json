@@ -5,7 +5,10 @@
   "scripts": {
     "dev": "npm run build && npm start",
     "dev:frontend": "next dev",
+    "dev:vercel": "MBTI_TARGET=vercel next dev --webpack",
     "build": "next build --webpack && node scripts/build-sites.mjs",
+    "build:vercel": "MBTI_TARGET=vercel next build --webpack",
+    "start:vercel": "MBTI_TARGET=vercel next start",
     "prestart": "wrangler d1 migrations apply DB --local --config wrangler.local.jsonc",
     "start": "wrangler dev --config wrangler.local.jsonc",
     "lint": "eslint",
@@ -13,9 +16,11 @@
   },
   "dependencies": {
     "@auth/core": "^0.41.3",
+    "@supabase/supabase-js": "^2.119.2",
     "fast-png": "^8.0.0",
     "jpeg-js": "^0.4.4",
     "next": "16.4.6",
+    "postgres": "^4.1.1",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },

@@ -38,7 +38,7 @@ The app exports to `out/` and is bundled with the Sites Worker at `dist/server/i
 
 ## PWA files
 
-- `src/app/manifest.ts` provides the install metadata.
+- `src/app/manifest.webmanifest` provides the install metadata.
 - `public/sw.js` caches a public offline page and install assets.
 - `src/app/service-worker-registration.tsx` registers the service worker in the browser.
 - `public/icon.svg` and `public/icon-maskable.svg` provide the app icons.
@@ -52,6 +52,26 @@ https://mbti-closet.stonyimpala.chatgpt.site/api/auth/callback/google
 ```
 
 Visitors must first have access to the private Site. The Google account session is separate from Sites access, and Google sign-out ends only the app session.
+
+## Vercel development with Supabase
+
+Vercel uses `npm run build:vercel` from `vercel.json`. Its Next.js Route Handler runs the same account, profile, wardrobe, private file, and planner APIs as the Sites Worker. The default `npm run build` still produces the Sites export and Worker with D1 and R2 bindings.
+
+1. Create a separate Supabase development project and apply the SQL in `supabase/migrations/` there. Use the [Supabase CLI migration workflow](https://supabase.com/docs/guides/deployment/database-migrations) to link the development project and run `supabase db push`. Keep the `app` schema out of Supabase's exposed schemas.
+2. Create a **private** Storage bucket named `closet-private`. The app checks file ownership before it reads or serves an object. Give the backend the project URL and a [Supabase secret key](https://supabase.com/docs/guides/api/api-keys), available only in server environment variables.
+3. Set the variables listed in `.env.vercel.example` in Vercel. Use the Supabase transaction pooler connection string for `DATABASE_URL` with a dedicated runtime login. Set `APP_ORIGIN` to the exact stable Vercel development origin and set a separate `AUTH_SECRET`. `OPENAI_API_KEY` enables the existing AI features in development.
+4. In the development Google OAuth web client, add `https://shopee-openai-mbti-closet.vercel.app/api/auth/callback/google` under **Authorized redirect URIs**. If you use a different stable development domain, use that domain in both the callback and `APP_ORIGIN`. Log in from the configured domain so the OAuth cookies and origin checks agree.
+
+To run this target locally, copy `.env.vercel.example` to `.env.local`, fill in the development values, register `http://localhost:3000/api/auth/callback/google`, and run `npm run dev:vercel`. For Vercel development, use images under 4 MB to stay below the default [Function payload limit](https://vercel.com/docs/functions/limitations). ChatGPT Sites uses its existing upload limits.
+
+Create the development runtime login from an admin `psql` session after applying the migration. The two SQL statements grant this login only the permissions defined by the migration. The psql password command prompts without putting the password in the command history.
+
+```sql
+CREATE ROLE mbti_closet_vercel LOGIN;
+GRANT mbti_closet_runtime TO mbti_closet_vercel;
+```
+
+In the same session, run `\password mbti_closet_vercel`. In the pooler connection string, replace the `postgres` role in the username with `mbti_closet_vercel`, retain the project reference, and use the new password. Set `SUPABASE_DB_CA` to the full PEM certificate from Supabase Database Settings so the runtime can verify the pooler’s identity. Keep database and Storage secrets in Vercel’s server environment.
 
 ## Storage interfaces for Worker handlers
 

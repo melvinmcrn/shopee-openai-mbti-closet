@@ -9,8 +9,8 @@ const authPath = "/api/auth";
 const accountPath = "/api/account";
 const filesPath = "/api/files";
 
-function authOrigin(env) {
-  return env.LOCAL_DEV === "1" ? localOrigin : productionOrigin;
+export function authOrigin(env) {
+  return env.APP_ORIGIN ?? (env.LOCAL_DEV === "1" ? localOrigin : productionOrigin);
 }
 
 function validSubject(subject) {
@@ -137,6 +137,9 @@ const worker = {
     const fileRoute = pathname === filesPath || pathname.startsWith(filesPath + "/");
     const wardrobeRoute = pathname.startsWith("/api/wardrobe/") || pathname === "/api/profile" || pathname === "/api/profile/photo";
     if (!authRoute && !fileRoute && !wardrobeRoute && pathname !== accountPath) {
+      if (pathname === "/api" || pathname.startsWith("/api/")) {
+        return privateResponse(new Response(null, { status: 404 }));
+      }
       return serveAsset(request, pathname);
     }
     if (url.origin !== origin) {

@@ -1,8 +1,7 @@
-import site, { resolveAccount } from "./index.mjs";
+import site, { authOrigin, resolveAccount } from "./index.mjs";
 import { dispatchPlanner } from "./planner/api.mjs";
 import { BriefValidationError } from "./planner/brief.mjs";
 
-const origin = "https://mbti-closet.stonyimpala.chatgpt.site";
 function json(value, status = 200) {
   return Response.json(value, { status, headers: { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" } });
 }
@@ -14,6 +13,7 @@ const plannerWorker = {
       return site.fetch(new Request(new URL("/planner.html", url), request), env, ctx);
     }
     if (url.pathname !== "/api/planner") return site.fetch(request, env, ctx);
+    const origin = authOrigin(env);
     if (request.method !== "POST") return json({message:"POST required."}, 405);
     if (url.origin !== origin || request.headers.get("Origin") !== origin) return json({ message:"Forbidden." }, 403);
     try {

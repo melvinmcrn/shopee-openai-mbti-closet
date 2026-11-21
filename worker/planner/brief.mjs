@@ -51,7 +51,7 @@ const comfortForRequest = `
     SELECT group_concat(choice, ', ')
     FROM (
       SELECT choice FROM request_comfort_choices WHERE request_id = request.id ORDER BY choice
-    )
+    ) AS sorted_comfort_choices
   ), '')
 `;
 
@@ -69,7 +69,7 @@ function selectBrief(db, accountId, id) {
           FROM request_clothing_choices
           WHERE request_id = request.id
           ORDER BY category
-        )
+        ) AS sorted_categories
       ) AS preferences
     FROM outfit_requests AS request
     WHERE request.user_id = ? AND request.id = ?

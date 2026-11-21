@@ -206,21 +206,23 @@ export function userData(db, userId) {
     }) {
       const comfort = [...new Set(comfortChoices)];
       const clothing = JSON.stringify(clothingChoices);
-      // The new request is the owner's highest ID within this atomic batch.
-      const newRequestId = "(SELECT MAX(id) FROM outfit_requests WHERE user_id = ?)";
+      // The planner also supplies explicit request IDs. Keep this request's
+      // children tied to the inserted ID even when another request ID is higher.
+      const [high, low] = crypto.getRandomValues(new Uint32Array(2));
+      const requestId = (high & 0x1fffff) * 0x100000000 + low || 1;
       const [created] = await db.batch([
         statement(`
-          INSERT INTO outfit_requests (user_id, occasion, planned_for, location_or_weather, formality)
-          VALUES (?, ?, ?, ?, ?) RETURNING ${requestColumns}
-        `, userId, occasion, plannedFor, locationOrWeather, formality),
+          INSERT INTO outfit_requests (id, user_id, occasion, planned_for, location_or_weather, formality)
+          VALUES (?, ?, ?, ?, ?, ?) RETURNING ${requestColumns}
+        `, requestId, userId, occasion, plannedFor, locationOrWeather, formality),
         statement(`
           INSERT INTO request_comfort_choices (request_id, choice)
-          SELECT ${newRequestId}, value FROM json_each(?)
-        `, userId, JSON.stringify(comfort)),
+          SELECT ?, value FROM json_each(?)
+        `, requestId, JSON.stringify(comfort)),
         statement(`
           INSERT INTO request_clothing_choices (request_id, category, garment_type)
-          SELECT DISTINCT ${newRequestId}, value ->> '$.category', value ->> '$.garmentType' FROM json_each(?)
-        `, userId, clothing),
+          SELECT DISTINCT CAST(? AS bigint), value ->> '$.category', value ->> '$.garmentType' FROM json_each(?)
+        `, requestId, clothing),
       ]);
       return data.getOutfitRequest(created.results[0].id);
     },

@@ -18,7 +18,7 @@ async function readProfile(db, userId) {
     SELECT p.height_cm, p.weight_kg, p.face_photo_file_id, p.setup_completed_at,
       (SELECT json_group_array(style) FROM (
         SELECT style FROM style_preferences WHERE user_id = u.id ORDER BY style
-      )) AS styles
+      ) AS sorted_styles) AS styles
     FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE u.id = ?
   `).bind(userId).first();
   return Response.json({
