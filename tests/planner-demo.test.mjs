@@ -59,7 +59,7 @@ function d1Binding(database) {
 
 function migrate(database) {
   const directory = new URL("../drizzle/", import.meta.url);
-  for (const filename of readdirSync(directory).sort()) {
+  for (const filename of readdirSync(directory).filter(name => name.endsWith(".sql")).sort()) {
     database.exec(readFileSync(new URL(filename, directory), "utf8"));
   }
 }
