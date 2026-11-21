@@ -1,30 +1,40 @@
 import assert from "node:assert/strict";
+import { readdirSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { decode, encode } from "fast-png";
+import { retryPrivateFileCleanup } from "../private-files.mjs";
+import { fileUrl } from "../wardrobe-files.mjs";
 import { extract } from "./extract.mjs";
 import { fixtures } from "./extraction-fixtures.mjs";
 
-const original = "users/9/wardrobe/fix/original";
+const original = "private/9/abcde000-0000-4000-8000-000000000000";
 const request = () => new Request("https://closet.example/api/wardrobe/items/1/extract", { method: "POST" });
 const fixturePhoto = (name) => readFile(new URL("./extraction-fixtures/" + name + ".png", import.meta.url));
 
 function scenario(bytes, config) {
   const db = new DatabaseSync(":memory:");
-  db.exec(`
-    CREATE TABLE wardrobe_items (
-      id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, category TEXT, garment_type TEXT,
-      color TEXT, image_file_id TEXT, confirmed_at TEXT, archived_at TEXT
-    );
-  `);
+  const migrations = new URL("../../drizzle/", import.meta.url);
+  const filesInOrder = readdirSync(migrations).sort();
+  for (const name of ["stylist", "private_files", "private_file_expiry", "wardrobe_extraction"]) {
+    const file = filesInOrder.find((entry) => entry.endsWith("_" + name + ".sql"));
+    assert.ok(file, "Missing migration for " + name);
+    db.exec(readFileSync(new URL(file, migrations), "utf8"));
+  }
+  db.exec("INSERT INTO users (id, auth_provider, auth_subject) VALUES (9, 'google', 'subject')");
+  db.prepare("INSERT INTO private_files (file_id,user_id,state) VALUES (?,9,'ready')").run(original);
   db.prepare("INSERT INTO wardrobe_items (id,user_id,name,category,image_file_id) VALUES (1,9,'Untitled garment','other',?)").run(original);
   const files = new Map([[original, { bytes, type: "image/png" }]]);
   const env = {
     ...config,
     DB: {
       prepare: (sql) => ({
-        bind: (...params) => ({ first: async () => db.prepare(sql).get(...params) ?? null }),
+        bind: (...params) => ({
+          first: async () => db.prepare(sql).get(...params) ?? null,
+          all: async () => ({ results: db.prepare(sql).all(...params) }),
+          run: async () => db.prepare(sql).run(...params),
+        }),
       }),
     },
     BUCKET: {
@@ -62,11 +72,13 @@ for (const fixture of fixtures) {
     assert.equal(item.category, fixture.category);
     assert.equal(item.garmentType, fixture.garment_type);
     assert.equal(item.color, fixture.color);
-    assert.equal(item.imageUrl, "/api/files/" + encodeURIComponent(item.imageFileId));
-    assert.match(item.imageFileId, /^users\/9\/wardrobe\//);
+    assert.equal(item.imageUrl, fileUrl(item.imageFileId));
+    assert.match(item.imageFileId, /^private\/9\/[0-9a-f-]{36}$/);
     assert.equal(files.size, 1);
     assert.equal(files.get(item.imageFileId).type, "image/png");
-    assert.equal(db.prepare("SELECT confirmed_at FROM wardrobe_items").get().confirmed_at, null);
+    const draft = db.prepare("SELECT confirmed_at, extraction_source FROM wardrobe_items").get();
+    assert.equal(draft.confirmed_at, null);
+    assert.equal(draft.extraction_source, "fixture");
 
     const png = decode(files.get(item.imageFileId).bytes);
     const photo = decode(bytes);
@@ -202,4 +214,24 @@ test("a manual edit during extraction takes precedence", async (t) => {
   assert.equal((await response.json()).code, "draft_changed");
   assert.equal(scenarioState.db.prepare("SELECT name FROM wardrobe_items").get().name, "My bag");
   assert.deepEqual([...scenarioState.files.keys()], [original]);
+});
+
+test("detached originals remain queued when object deletion fails", async (t) => {
+  const { run, files, db, env } = scenario(await fixturePhoto("shirt"), { WARDROBE_EXTRACTION_FIXTURES: "1" });
+  const remove = env.BUCKET.delete;
+  let failOnce = true;
+  env.BUCKET.delete = async (key) => {
+    if (key === original && failOnce) {
+      failOnce = false;
+      throw new Error("Temporary object storage failure");
+    }
+    return remove(key);
+  };
+  t.mock.method(console, "error", () => {});
+  const { item } = await (await run()).json();
+  assert.equal(db.prepare("SELECT state FROM private_files WHERE file_id = ?").get(original).state, "deleting");
+  assert.equal(files.has(original), true);
+  await retryPrivateFileCleanup(env, { id: 9 });
+  assert.deepEqual([...files.keys()], [item.imageFileId]);
+  assert.equal(db.prepare("SELECT state FROM private_files WHERE file_id = ?").get(original), undefined);
 });

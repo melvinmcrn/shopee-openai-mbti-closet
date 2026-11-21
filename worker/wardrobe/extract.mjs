@@ -1,11 +1,11 @@
-import { deleteFile, fileUrl, getFile, putFile } from "../wardrobe-files.mjs";
+import { deletePrivateFile, readPrivateFile, writePrivateFile } from "../private-files.mjs";
+import { fileUrl } from "../wardrobe-files.mjs";
 import { fixtures } from "./extraction-fixtures.mjs";
 import { cutout, ExtractionImageError, normalizePhoto } from "./extraction-image.mjs";
 import { LunaExtractionError, lunaExtraction } from "./extraction-luna.mjs";
 
-const columns = "id, name, category, garment_type, color, image_file_id, confirmed_at";
+const columns = "id, name, category, garment_type, color, image_file_id, confirmed_at, extraction_source";
 const maxPhotoBytes = 8 * 1024 * 1024;
-const outputSuffix = /\.extraction-(fixture|luna)-[0-9a-f-]{36}\.png$/;
 const unavailable = "Luna High Fast extraction is currently unavailable. You can review the photo manually.";
 
 function response(body, status = 200) {
@@ -16,9 +16,9 @@ function failure(error, code, status) {
   return response({ error, code }, status);
 }
 
-function result(row, source) {
+function result(row) {
   return response({
-    source,
+    source: row.extraction_source,
     item: {
       id: row.id,
       name: row.name,
@@ -31,26 +31,19 @@ function result(row, source) {
   });
 }
 
-function loadItem(env, userId, itemId, includeArchived = false) {
+function loadItem(env, userId, itemId) {
   return env.DB.prepare(`
     SELECT ${columns} FROM wardrobe_items
-    WHERE user_id = ? AND id = ? AND (? OR archived_at IS NULL)
-  `).bind(userId, itemId, includeArchived ? 1 : 0).first();
+    WHERE user_id = ? AND id = ? AND archived_at IS NULL
+  `).bind(userId, itemId).first();
 }
 
-async function removeUnusedFile(env, userId, key) {
+async function removeUnusedFile(env, account, key) {
   try {
-    await deleteFile(env, userId, key);
+    await deletePrivateFile(env, account, key);
   } catch (error) {
     console.error("Wardrobe extraction file cleanup failed", error.name);
   }
-}
-
-async function existingResult(env, userId, row) {
-  const match = outputSuffix.exec(row.image_file_id);
-  if (!match) return null;
-  await removeUnusedFile(env, userId, row.image_file_id.slice(0, match.index));
-  return result(row, match[1]);
 }
 
 async function fixtureFor(bytes) {
@@ -66,20 +59,20 @@ export async function extract(request, env, userId, id) {
   const draft = await loadItem(env, userId, itemId);
   if (!draft) return failure("Wardrobe item not found.", "item_not_found", 404);
 
-  const previous = await existingResult(env, userId, draft);
-  if (previous) return previous;
+  if (draft.extraction_source) return result(draft);
   if (draft.confirmed_at) return failure("This wardrobe item is already confirmed.", "draft_changed", 409);
 
   const fixturesEnabled = env.WARDROBE_EXTRACTION_FIXTURES === "1";
   const apiKey = env.OPENAI_API_KEY?.trim();
   if (!apiKey && !fixturesEnabled) return failure(unavailable, "extraction_unavailable", 503);
 
-  const photoFile = await getFile(env, userId, draft.image_file_id);
+  const account = { id: userId };
+  const photoFile = await readPrivateFile(env, account, draft.image_file_id);
   if (!photoFile) {
     // A parallel request may have already replaced the original.
     const current = await loadItem(env, userId, itemId);
-    const completed = current && await existingResult(env, userId, current);
-    return completed || failure("The wardrobe photo could not be found.", "photo_not_found", 404);
+    return current?.extraction_source ? result(current)
+      : failure("The wardrobe photo could not be found.", "photo_not_found", 404);
   }
   if (photoFile.size > maxPhotoBytes) {
     return failure("Choose a photo that is 8 MB or smaller for extraction.", "unsupported_photo", 413);
@@ -103,34 +96,34 @@ export async function extract(request, env, userId, id) {
   }
 
   // Each run writes a separate object so parallel model responses cannot overwrite the winner.
-  const key = draft.image_file_id + ".extraction-" + source + "-" + crypto.randomUUID() + ".png";
-  await putFile(env, userId, key, png, "image/png");
+  const key = await writePrivateFile(env, account, png, "image/png");
   let updated;
   try {
     updated = await env.DB.prepare(`
-      UPDATE wardrobe_items SET name = ?, category = ?, garment_type = ?, color = ?, image_file_id = ?
+      UPDATE wardrobe_items SET name = ?, category = ?, garment_type = ?, color = ?, image_file_id = ?, extraction_source = ?
       WHERE user_id = ? AND id = ? AND confirmed_at IS NULL AND archived_at IS NULL
+        AND extraction_source IS NULL
         AND image_file_id = ? AND name IS ? AND category IS ? AND garment_type IS ? AND color IS ?
       RETURNING ${columns}
     `).bind(
-      extracted.name, extracted.category, extracted.garment_type, extracted.color, key,
+      extracted.name, extracted.category, extracted.garment_type, extracted.color, key, source,
       userId, itemId, draft.image_file_id, draft.name, draft.category, draft.garment_type, draft.color,
     ).first();
   } catch (error) {
-    // D1 might have committed before the connection failed. Check before deleting anything.
-    const current = await loadItem(env, userId, itemId, true);
-    if (current?.image_file_id === key) return existingResult(env, userId, current);
-    await removeUnusedFile(env, userId, key);
+    // A committed reference prevents cleanup even if D1 lost the response.
+    await removeUnusedFile(env, account, key);
+    const current = await loadItem(env, userId, itemId);
+    if (current?.extraction_source) return result(current);
     throw error;
   }
 
   if (!updated) {
-    await removeUnusedFile(env, userId, key);
+    await removeUnusedFile(env, account, key);
     const current = await loadItem(env, userId, itemId);
-    const completed = current && await existingResult(env, userId, current);
-    return completed || failure("This wardrobe draft changed during extraction.", "draft_changed", 409);
+    return current?.extraction_source ? result(current)
+      : failure("This wardrobe draft changed during extraction.", "draft_changed", 409);
   }
 
-  await removeUnusedFile(env, userId, draft.image_file_id);
-  return result(updated, source);
+  await removeUnusedFile(env, account, draft.image_file_id);
+  return result(updated);
 }
