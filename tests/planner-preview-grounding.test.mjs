@@ -11,12 +11,20 @@ const product = {
   imageUrl: "https://down-th.img.susercontent.com/file/pendant",
 };
 const listingBytes = Uint8Array.of(255, 216, 255, 225, 42);
+const top = { ...product, id: "85", title: "Linen tank", category: "women tank top",
+  imageUrl: "https://down-th.img.susercontent.com/file/tank" };
+const pants = { ...product, id: "86", title: "Linen trousers", category: "business women pants",
+  imageUrl: "https://down-th.img.susercontent.com/file/trousers" };
+const topBytes = Uint8Array.of(255, 216, 255, 225, 43);
+const pantsBytes = Uint8Array.of(255, 216, 255, 225, 44);
 
 function setup(t, observed) {
   return {
     readImage: async () => jpeg,
     fetch: t.mock.fn(async url => {
       if (url === product.imageUrl) return new Response(listingBytes);
+      if (url === top.imageUrl) return new Response(topBytes);
+      if (url === pants.imageUrl) return new Response(pantsBytes);
       if (url.endsWith("/images/edits")) return Response.json({ data: [{ b64_json: "/9j/4A==" }] });
       return Response.json({
         status: "completed", output: [{ type: "message", role: "assistant", status: "completed",
@@ -44,7 +52,7 @@ test("a missing base garment falls back to source photos without generating fill
 
 test("the selected catalog listing is rendered and verified against its own image", async t => {
   const deps = setup(t, ["item_2", "item_1"]);
-  const result = await generatePreview(env, 1, [dress], false, deps, product);
+  const result = await generatePreview(env, 1, [dress], false, deps, [product]);
   assert.deepEqual(result, { imageRef: "verified-photo" });
   const [cdn, edit, audit] = deps.fetch.mock.calls.map(call => call.arguments);
   assert.equal(cdn[0], product.imageUrl);
@@ -62,7 +70,7 @@ test("the selected catalog listing is rendered and verified against its own imag
 
 test("a try-on that omits the suggested piece cannot be saved", async t => {
   const deps = setup(t, ["item_1"]);
-  const result = await generatePreview(env, 1, [dress], false, deps, product);
+  const result = await generatePreview(env, 1, [dress], false, deps, [product]);
   assert.deepEqual(result, { imageRef: null });
   assert.equal(deps.storeImage.mock.callCount(), 0);
 });
@@ -70,14 +78,38 @@ test("a try-on that omits the suggested piece cannot be saved", async t => {
 test("a catalog bottom can complete a wardrobe top for a full-body try-on", async t => {
   const deps = setup(t, ["item_1", "item_2"]);
   const result = await generatePreview(env, 1, [{ ...dress, category: "top" }], false, deps,
-    { ...product, category: "business women pants", title: "Linen trousers" });
+    [{ ...product, category: "business women pants", title: "Linen trousers" }]);
   assert.deepEqual(result, { imageRef: "verified-photo" });
+});
+
+test("both catalog basics can form an outfit and each listing photo is checked independently", async t => {
+  const deps = setup(t, ["item_1", "item_2"]);
+  deps.profilePhotoRef = async () => "profile";
+  const result = await generatePreview(env, 1, [], true, deps, [top, pants]);
+  assert.deepEqual(result, { imageRef: "verified-photo" });
+  const calls = deps.fetch.mock.calls.map(call => call.arguments);
+  const images = calls.find(([url]) => url.endsWith("/images/edits"))[1].body.getAll("image[]");
+  assert.equal(images.length, 3);
+  assert.deepEqual(new Uint8Array(await images[1].arrayBuffer()), topBytes);
+  assert.deepEqual(new Uint8Array(await images[2].arrayBuffer()), pantsBytes);
+  const audit = JSON.parse(calls.find(([url]) => url.endsWith("/responses"))[1].body).input[0].content;
+  assert.deepEqual([JSON.parse(audit[0].text).name, JSON.parse(audit[2].text).name], [top.title, pants.title]);
+  assert.deepEqual([audit[1].image_url, audit[3].image_url],
+    [topBytes, pantsBytes].map(bytes => "data:image/jpeg;base64," + Buffer.from(bytes).toString("base64")));
+});
+
+test("a multi-product look is withheld when any one of its real pieces is absent", async t => {
+  const deps = setup(t, ["item_1", "item_3"]);
+  const result = await generatePreview(env, 1, [{ ...dress, category: "shoes" }], false, deps, [top, pants]);
+  assert.deepEqual(result, { imageRef: null });
+  assert.equal(deps.fetch.mock.callCount(), 4);
+  assert.equal(deps.storeImage.mock.callCount(), 0);
 });
 
 test("an unavailable or untrusted catalog image cannot be replaced by an invented reference", async t => {
   const deps = setup(t, ["item_1", "item_2"]);
   await assert.rejects(generatePreview(env, 1, [dress], false, deps,
-    { ...product, imageUrl: "https://example.invalid/listing" }));
+    [{ ...product, imageUrl: "https://example.invalid/listing" }]));
   assert.equal(deps.fetch.mock.callCount(), 0);
   assert.equal(deps.storeImage.mock.callCount(), 0);
 });

@@ -217,7 +217,7 @@ function ShoppingSuggestions({ lookId, result, retry, suggestions, onHidden }: {
   if (!result || suggestions?.length === 0) return null;
   return (
     <section aria-labelledby="saved-shopping-title" className="space-y-4 rounded-2xl border border-divider bg-surface p-4 sm:p-6">
-      <h2 id="saved-shopping-title" className="text-lg font-semibold">Shop this look</h2>
+      <h2 id="saved-shopping-title" className="text-lg font-semibold">Elevate your look</h2>
       {result && "error" in result && (
         <SectionError error={result.error} retry={retry} label="Retry shopping suggestions" />
       )}
@@ -245,7 +245,7 @@ function SavedDetail({ id, onWear, onBack, findTryOn }: DetailProps) {
   const [hidden, setHidden] = useState<string[]>([]);
   const suggestions = shopping.result && "items" in shopping.result
     ? shopping.result.items.filter(item => !hidden.includes(item.id)) : undefined;
-  const catalogItemId = suggestions === undefined ? undefined : suggestions[0]?.catalogItemId ?? null;
+  const catalogItemIds = suggestions?.map(item => item.catalogItemId);
 
   useEffect(() => {
     let active = true;
@@ -299,12 +299,18 @@ function SavedDetail({ id, onWear, onBack, findTryOn }: DetailProps) {
 
       {look && (
         <>
-          <div className="mx-auto w-full max-w-sm">{catalogItemId !== undefined && <SavedPhoto
-            key={JSON.stringify([look.id, catalogItemId])} look={look} catalogItemId={catalogItemId} findTryOn={findTryOn}
-          />}</div>
-          <WardrobePhotos garments={slots.map(([, garment]) => garment)} />
-          <ShoppingSuggestions lookId={look.id} {...shopping} suggestions={suggestions}
-            onHidden={id => setHidden(items => [...items, id])} />
+          <div className="flex flex-col gap-6 md:flex-row md:items-start">
+            <div className="mx-auto w-full max-w-sm empty:hidden md:mx-0 md:w-2/5 md:shrink-0">
+              {catalogItemIds !== undefined && (
+                <SavedPhoto look={look} catalogItemIds={catalogItemIds} findTryOn={findTryOn} />
+              )}
+            </div>
+            <div className="min-w-0 flex-1 space-y-4 empty:hidden">
+              <WardrobePhotos garments={slots.map(([, garment]) => garment)} />
+              <ShoppingSuggestions lookId={look.id} {...shopping} suggestions={suggestions}
+                onHidden={id => setHidden(items => [...items, id])} />
+            </div>
+          </div>
           {look.explanation && (
             <p className="max-w-2xl text-sm leading-relaxed text-supporting"><strong>Original suggestion</strong> · {look.explanation}</p>
           )}

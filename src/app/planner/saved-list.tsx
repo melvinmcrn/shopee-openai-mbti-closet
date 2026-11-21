@@ -85,14 +85,16 @@ export function SavedList({ onOpen, onNew, findTryOn }: SavedListProps) {
           {state.looks.map((look) => (
             <li key={look.id} className="min-w-0">
               <article className="flex h-full flex-col rounded-2xl border border-divider bg-surface p-5 shadow-sm">
-                <SavedPhoto look={look} findTryOn={findTryOn} catalogItemId={look.enhancement?.id ?? null} />
+                <SavedPhoto look={look} findTryOn={findTryOn} catalogItemIds={look.enhancements.map(product => product.id)} />
                 <h2 className="mt-3 break-words font-heading text-2xl">{look.occasion}</h2>
                 <time dateTime={look.createdAt} className="mt-1 text-sm text-supporting">
                   {dateFormat.format(new Date(look.createdAt))}
                 </time>
                 <div className="mt-4">
                   <WardrobePhotos garments={Object.values(look.slots)} />
-                  {look.enhancement && <div className="mt-3"><EnhancementProduct product={look.enhancement} /></div>}
+                  {look.enhancements.map(product => (
+                    <div key={product.id} className="mt-3"><EnhancementProduct product={product} /></div>
+                  ))}
                 </div>
                 <p className="mt-5 flex-1 text-sm leading-relaxed text-supporting">
                   <strong>Original suggestion</strong> · {look.explanation}

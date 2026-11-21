@@ -21,7 +21,6 @@ export default function PlannerPage() {
   const screen = usePlannerScreen();
   const [brief, setBrief] = useState<Brief>(emptyBrief);
   const [loadTryOn] = useState(createTryOnLoader);
-  const [useProfilePhoto, setUseProfilePhoto] = useState(false);
   const [look, setLook] = useState<Look>();
   const [garments, setGarments] = useState<Garment[]>();
   const [loadError, setLoadError] = useState("");
@@ -49,7 +48,6 @@ export default function PlannerPage() {
   function start() {
     setBrief({ ...emptyBrief, preferences: [] });
     setLook(undefined);
-    setUseProfilePhoto(false);
     go("occasion");
   }
   const [, savedId, wearId] = screen.split("/");
@@ -62,12 +60,12 @@ export default function PlannerPage() {
     ? <div className="text-danger" role="alert">{loadError} <Link className="underline" href="/account">Account</Link> · <button onClick={() => {setLoadError(""); setReload(n => n + 1);}}>Retry</button></div>
     : <p role="status">Opening your closet…</p>;
   else if (screen === "occasion") content = <Occasion key={brief.id || "new"} brief={brief} onBack={() => go("home")} onNext={saved => { setBrief(saved); go("style"); }} />;
-  else if (screen === "style" && brief.id) content = <Style useProfilePhoto={useProfilePhoto} setUseProfilePhoto={setUseProfilePhoto} brief={brief} onBack={() => go("occasion")} onNext={saved => { setBrief(saved); go("compare"); }} />;
-  else if (screen === "compare" && brief.id) content = <Compare loadTryOn={loadTryOn} useProfilePhoto={useProfilePhoto} setUseProfilePhoto={setUseProfilePhoto} briefId={brief.id} garments={garments} onEdit={() => go("style")} onChoose={chosen => { setLook(chosen); go("refine"); }} />;
-  else if (screen === "refine" && look) content = <Refine useProfilePhoto={useProfilePhoto} look={look} garments={garments} onBack={() => go("compare")} onPreview={() => go("preview")} onSaved={id => go("saved/" + id)} />;
-  else if (screen === "preview" && look) content = <Preview key={String(useProfilePhoto)} loadTryOn={loadTryOn} useProfilePhoto={useProfilePhoto} setUseProfilePhoto={setUseProfilePhoto} look={look} garments={garments} onBack={() => go("refine")} />;
+  else if (screen === "style" && brief.id) content = <Style brief={brief} onBack={() => go("occasion")} onNext={saved => { setBrief(saved); go("compare"); }} />;
+  else if (screen === "compare" && brief.id) content = <Compare loadTryOn={loadTryOn} briefId={brief.id} garments={garments} onEdit={() => go("style")} onChoose={chosen => { setLook(chosen); go("refine"); }} />;
+  else if (screen === "refine" && look) content = <Refine look={look} garments={garments} onBack={() => go("compare")} onPreview={() => go("preview")} onSaved={id => { loadTryOn.rememberSaved(look, id); go("saved/" + id); }} />;
+  else if (screen === "preview" && look) content = <Preview loadTryOn={loadTryOn} look={look} garments={garments} onBack={() => go("refine")} />;
   else content = <PlannerHome garments={garments} onNew={start} />;
   return <main className="flex-1 bg-canvas px-5 py-6 text-text sm:px-10">
-    <div className="mx-auto max-w-4xl">{content}</div>
+    <div className={screen === "compare" ? "mx-auto max-w-7xl" : "mx-auto max-w-4xl"}>{content}</div>
   </main>;
 }

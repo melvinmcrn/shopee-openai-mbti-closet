@@ -60,13 +60,14 @@ function selectSlots(table, lookKey, lookId) {
 
 async function readLooks(db, accountId, id) {
   const { results } = await db.prepare(`
-    SELECT look.id, look.source_option_id, look.use_profile_photo,
+    SELECT look.id, look.source_option_id, look.use_profile_photo, profile.face_photo_file_id AS profile_ref,
       (SELECT json_group_object(preview.selection, preview.file_id) FROM planner_previews AS preview
        WHERE preview.user_id = look.user_id AND preview.option_id = look.source_option_id) AS previews, look.name AS occasion, option.explanation,
       strftime('%Y-%m-%dT%H:%M:%fZ', look.saved_at) AS created_at,
       ${selectSlots("saved_look_items", "saved_look_id", "look.id")} AS slots,
       ${selectSlots("outfit_option_items", "option_id", "look.source_option_id")} AS original_slots
     FROM saved_looks AS look
+    LEFT JOIN profiles profile ON profile.user_id = look.user_id
     JOIN outfit_options AS option ON option.user_id = look.user_id AND option.id = look.source_option_id
     JOIN generation_runs AS run ON run.user_id = look.user_id AND run.id = option.run_id
     JOIN outfit_requests AS request ON request.user_id = look.user_id AND request.id = run.request_id
@@ -81,16 +82,18 @@ async function readLooks(db, accountId, id) {
   ));
   return results.map((row, i) => {
     const slots = selections[i];
-    const enhancement = products.get(String(row.id)) ?? null;
+    const enhancements = products.get(String(row.id)) ?? [];
+    const personal = row.use_profile_photo == null ? Boolean(row.profile_ref) : row.use_profile_photo === 1;
     const originalSlots = JSON.parse(row.original_slots);
     const previews = JSON.parse(row.previews);
-    const selection = previewSelection(slots, row.use_profile_photo === 1, enhancement);
+    const selection = previewSelection(slots, personal, enhancements, row.profile_ref);
     return {
       id: String(row.id),
       optionId: String(row.source_option_id),
-      useProfilePhoto: row.use_profile_photo === 1,
+      useProfilePhoto: personal,
       previewRef: previews[selection] ?? null,
-      enhancement,
+      enhancements,
+      enhancement: enhancements[0] ?? null,
       occasion: row.occasion,
       slots,
       originalSlots,

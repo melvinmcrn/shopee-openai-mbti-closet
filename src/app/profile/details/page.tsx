@@ -183,7 +183,7 @@ export default function ProfileDetailsPage() {
 
           <section aria-labelledby="photo-title" className="space-y-3 rounded-3xl border border-divider bg-surface p-5 sm:p-6">
             <h2 className="text-lg font-semibold" id="photo-title">Face photo</h2>
-            <p id="photo-info" className="text-sm text-supporting">Your photo is private. Choose a JPEG, PNG, or WebP up to 8 MB.</p>
+            <p id="photo-info" className="text-sm text-supporting">When you create a try-on, OpenAI uses this photo to show the outfit on you. Choose a JPEG, PNG, or WebP up to 8 MB.</p>
 
             {visiblePhotoUrl && (
               <Image

@@ -90,7 +90,8 @@ async function prepareDraft(env, userId, itemId, dimension) {
     if (fixture) {
       return { draft, fixture };
     }
-    return { draft, photo: await normalizePhoto(bytes, dimension), apiKey };
+    const normalize = env.normalizeWardrobePhoto ?? normalizePhoto;
+    return { draft, photo: await normalize(bytes, dimension), apiKey };
   } catch (error) {
     if (error instanceof ExtractionImageError) return failure(error.message, "unsupported_photo", error.status);
     throw error;

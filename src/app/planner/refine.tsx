@@ -7,7 +7,6 @@ import { api, type Garment, type Look } from "./shared";
 
 type RefineProps = {
   look: Look;
-  useProfilePhoto: boolean;
   garments: Garment[];
   onSaved: (id: string) => void;
   onPreview: () => void;
@@ -18,7 +17,7 @@ const slotOrder = ["other", "top", "bottom", "dress", "shoes", "outerwear", "acc
 const controlClass =
   "min-h-11 rounded-xl px-4 py-2 text-sm font-semibold transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:cursor-not-allowed disabled:opacity-60";
 
-export function Refine({ look, useProfilePhoto, garments, onSaved, onPreview, onBack }: RefineProps) {
+export function Refine({ look, garments, onSaved, onPreview, onBack }: RefineProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const savePending = useRef(false);
@@ -32,7 +31,7 @@ export function Refine({ look, useProfilePhoto, garments, onSaved, onPreview, on
     setError("");
 
     try {
-      const saved = await api<{ id: string }>("save", { optionId: look.id, slots: look.slots, useProfilePhoto });
+      const saved = await api<{ id: string }>("save", { optionId: look.id, slots: look.slots });
       onSaved(saved.id);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save this outfit. Try again.");

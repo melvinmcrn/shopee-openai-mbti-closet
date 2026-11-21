@@ -11,6 +11,7 @@ export type CatalogProduct = {
   imageUrl: string;
   price: number;
   currency: string;
+  wardrobeGap?: "top" | "bottom";
 };
 
 export function EnhancementProduct({ product, sponsored = false }: { product: CatalogProduct; sponsored?: boolean }) {
@@ -32,6 +33,7 @@ export function EnhancementProduct({ product, sponsored = false }: { product: Ca
         <p className="flex flex-wrap items-center gap-x-1 text-xs font-semibold text-secondary">
           <span aria-hidden="true">✨</span>
           <span>Elevate your look</span>
+          {product.wardrobeGap && <span>· {product.wardrobeGap === "top" ? "Suggested top" : "Suggested pants"}</span>}
           {sponsored && <span>· Sponsored</span>}
         </p>
         <p className="wrap-break-word text-sm font-semibold">{product.title}</p>
@@ -48,33 +50,38 @@ export function useLookEnhancement(optionId: string, slots: Record<string, strin
   const selection = JSON.stringify(slots, Object.keys(slots).sort());
   const key = optionId + selection;
   const [attempt, setAttempt] = useState(0);
-  const [result, setResult] = useState<{ key: string; product?: CatalogProduct | null; failed?: boolean }>();
+  const [result, setResult] = useState<{ key: string; products?: CatalogProduct[]; failed?: boolean }>();
 
   useEffect(() => {
-    if (selection === "{}") return;
     let active = true;
     const timer = setTimeout(() => {
-      api<CatalogProduct | null>("enhancement", { optionId, slots: JSON.parse(selection) })
-        .then(product => { if (active) setResult({ key, product }); })
+      api<CatalogProduct[]>("enhancements", { optionId, slots: JSON.parse(selection) })
+        .then(products => { if (active) setResult({ key, products }); })
         .catch(() => { if (active) setResult({ key, failed: true }); });
     }, 150);
     return () => { active = false; clearTimeout(timer); };
   }, [optionId, key, selection, attempt]);
 
-  const product = selection === "{}" ? null : result?.key === key ? result.product : undefined;
+  const products = result?.key === key ? result.products : undefined;
   function retry() {
     setResult(undefined);
     setAttempt(value => value + 1);
   }
-  return { product, failed: result?.key === key && result.failed, retry };
+  return { products, failed: result?.key === key && result.failed, retry };
 }
 
-export function EnhancementCard({ product, failed, retry }: ReturnType<typeof useLookEnhancement>) {
+export function EnhancementCard({ products, failed, retry }: ReturnType<typeof useLookEnhancement>) {
   if (failed) return (
     <button type="button" className="min-h-11 text-sm font-semibold text-secondary underline"
       onClick={retry}>Retry enhancement check</button>
   );
-  return product && <div className="my-3"><EnhancementProduct key={product.id} product={product} /></div>;
+  if (!products) return <p role="status" className="my-3 text-sm text-supporting">Checking for pieces to complete your look…</p>;
+  if (!products.length) return null;
+  return (
+    <section aria-label="Elevate your look" className="my-3 space-y-2">
+      {products.map(product => <EnhancementProduct key={product.id} product={product} />)}
+    </section>
+  );
 }
 
 export function LookEnhancement({ optionId, slots }: { optionId: string; slots: Record<string, string> }) {

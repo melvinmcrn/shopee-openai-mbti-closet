@@ -5,9 +5,17 @@ import type { LoadTryOn, TryOnResult } from "./try-on";
 
 export type FindTryOn = LoadTryOn["find"];
 
-export function SavedPhoto({ look, findTryOn, catalogItemId }: { look: SavedLook; findTryOn: FindTryOn; catalogItemId: string | null }) {
-  const cached = (look.enhancement?.id ?? null) === catalogItemId ? look.previewRef : null;
-  const existing = cached ? undefined : findTryOn(look, catalogItemId);
+type SavedPhotoProps = { look: SavedLook; findTryOn: FindTryOn; catalogItemIds: string[] };
+
+export function SavedPhoto(props: SavedPhotoProps) {
+  return <SavedPhotoForSelection key={JSON.stringify([props.look.id, props.look.previewRef, [...props.catalogItemIds].sort()])} {...props} />;
+}
+
+function SavedPhotoForSelection({ look, findTryOn, catalogItemIds }: SavedPhotoProps) {
+  const visible = look.enhancements.filter(product => catalogItemIds.includes(product.id));
+  const matchesDetail = visible.length === catalogItemIds.length && visible.length === look.enhancements.length;
+  const cached = matchesDetail ? look.previewRef : null;
+  const existing = !cached && matchesDetail ? findTryOn(look, visible) : undefined;
   const [imageRef, setImageRef] = useState(cached);
   const [loading, setLoading] = useState(Boolean(existing));
   const [error, setError] = useState("");
@@ -32,7 +40,7 @@ export function SavedPhoto({ look, findTryOn, catalogItemId }: { look: SavedLook
     setLoading(true);
     setError("");
     try {
-      const result = await api<TryOnResult>("savedPreview", { id: look.id, catalogItemId });
+      const result = await api<TryOnResult>("savedPreview", { id: look.id, catalogItemIds });
       setImageRef(result.imageRef);
       setChecked(true);
     } catch (cause) {

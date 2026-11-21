@@ -19,7 +19,12 @@ export async function generateOptions(env, accountId, brief, garments, prior, de
     RETURNING CAST(id AS TEXT) AS id
   `).bind(accountId, brief.id).first();
   try {
-    const generation = await decide(env, brief, garments, prior);
+    const profile = garments.length === 0
+      ? await db.prepare("SELECT face_photo_file_id AS ref FROM profiles WHERE user_id=?").bind(accountId).first()
+      : null;
+    const generation = profile?.ref
+      ? { status: "ready", looks: [{ slots: {}, profileRef: profile.ref, explanation: "Check the catalog for pieces that fit your plans." }] }
+      : await decide(env, brief, garments, prior);
     if (generation.status !== "ready") {
       await db.prepare("UPDATE generation_runs SET status=?, error_code=? WHERE user_id=? AND id=?")
         .bind(generation.status === "insufficient" ? "completed" : "failed", generation.status, accountId, run.id).run();
@@ -27,7 +32,7 @@ export async function generateOptions(env, accountId, brief, garments, prior, de
     }
     const writes = [];
     for (const [i, look] of generation.looks.entries()) {
-      const selected = snapshotSlots(look.slots, garments);
+      const selected = profile?.ref ? {} : snapshotSlots(look.slots, garments);
       writes.push(db.prepare(`
         INSERT INTO outfit_options (user_id,run_id,position,title,explanation) VALUES (?,?,?,?,?)
       `).bind(accountId, run.id, i + 1, brief.occasion, look.explanation));

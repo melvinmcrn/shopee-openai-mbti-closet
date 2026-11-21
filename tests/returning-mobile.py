@@ -143,10 +143,11 @@ def run_flow(browser, device, base):
     expect_heading(page, "Today’s style")
     expect(page.get_by_text("Garment preferences", exact=True)).to_have_count(0)
     expect(page.locator("input[name=preferences]")).to_have_count(0)
-    expect(page.get_by_role("checkbox", name=re.compile("^Use my profile photo"))).not_to_be_checked()
+    expect(page.get_by_role("checkbox", name=re.compile("profile photo", re.I))).to_have_count(0)
     page.get_by_role("button", name="Continue").tap()
 
     expect_heading(page, "Compare looks")
+    expect(page.get_by_role("checkbox", name=re.compile("profile photo", re.I))).to_have_count(0)
     expect(page.get_by_role("article")).to_have_count(2)
     expect(page.get_by_role("article").nth(0)).to_contain_text("Silk blouse")
     expect(page.get_by_role("article").nth(1)).to_contain_text("Column dress")
@@ -154,7 +155,9 @@ def run_flow(browser, device, base):
     for name in ["Silk blouse", "Wool trousers", "Walking flats"]:
         expect(first.get_by_role("group", name="Selected wardrobe photos").get_by_role("img", name=name)).to_be_visible()
     fallback = page.get_by_role("article").nth(1).get_by_role("group", name="Selected wardrobe photos")
-    expect(fallback.locator('img[src="/api/files/dress"]')).to_be_visible()
+    dress_photo = fallback.get_by_role("img", name="Column dress")
+    expect(dress_photo).to_be_visible()
+    assert urlparse(dress_photo.evaluate("img => img.src")).path == "/api/files/dress", dress_photo.get_attribute("src")
     expect(page.get_by_role("article").nth(1).get_by_role("img", name="Full-body virtual try-on of this outfit")).to_have_count(0)
     page.get_by_role("article").nth(0).get_by_role("button", name="Retry enhancement check").tap()
     generated = first.get_by_role("img", name="Full-body virtual try-on of this outfit")
@@ -190,11 +193,13 @@ def run_flow(browser, device, base):
     page.get_by_role("button", name="Preview outfit").tap()
     expect_heading(page, "Virtual try-on")
     expect(page.get_by_role("link", name="Buy on Shopee")).to_have_js_property("href", purchase_url)
+    expect(page.get_by_role("checkbox", name=re.compile("profile photo", re.I))).to_have_count(0)
+    expect(page.get_by_role("img", name="Generated try-on of the selected outfit")).to_have_attribute("src", generated_src)
     page.get_by_role("button", name="Back to review and save").tap()
     page.get_by_role("button", name="Save outfit").tap()
     expect_heading(page, OCCASION)
     expect(page.get_by_text("Walking flats", exact=True)).to_be_visible()
-    shopping = page.get_by_role("region", name="Shop this look")
+    shopping = page.get_by_role("region", name="Elevate your look")
     expect(shopping.get_by_role("link", name="Buy on Shopee")).to_have_js_property("href", purchase_url)
     expect(shopping.locator("img")).to_be_visible()
     expect(shopping.get_by_text(re.compile(r"THB"))).to_be_visible()
@@ -202,14 +207,14 @@ def run_flow(browser, device, base):
     expect(saved_photo).to_have_attribute("src", generated_src)
     shopping.get_by_role("button", name=re.compile("^Hide ")).tap()
     expect(page.locator(f'img[src="{generated_src}"]')).to_have_count(0)
-    expect(page.get_by_role("region", name="Shop this look")).to_have_count(0)
+    expect(page.get_by_role("region", name="Elevate your look")).to_have_count(0)
     saved_url = page.url
     context.close()
 
     context, page = mobile_session(browser, device, base, "returning-session")
     open_saved(page, base)
     assert page.url == saved_url
-    expect(page.get_by_role("region", name="Shop this look")).to_have_count(0)
+    expect(page.get_by_role("region", name="Elevate your look")).to_have_count(0)
     expect(page.get_by_text("No wears logged yet.")).to_be_visible()
     page.get_by_label("Date worn").fill(WEAR_DATE)
     page.get_by_role("button", name="Log wear").tap()
@@ -254,6 +259,56 @@ def run_flow(browser, device, base):
     context.close()
 
 
+def check_two_catalog_basics(browser, device, base, session):
+    context, page = mobile_session(browser, device, base, session)
+    product_photo = Path(__file__).resolve().parents[1] / "Shopee Database/clothes_image_database/b6326a099e743eebc194.jpg"
+    page.route("https://down-th.img.susercontent.com/file/**", lambda route: route.fulfill(path=product_photo))
+    page.goto(f"{base}/planner/")
+    page.get_by_role("button", name="Plan a new outfit").tap()
+    page.get_by_role("textbox", name="Occasion", exact=True).fill("Museum visit")
+    page.get_by_role("button", name="Continue").tap()
+    expect_heading(page, "Today’s style")
+    page.get_by_role("button", name="Continue").tap()
+    article = page.get_by_role("article").first
+    if session == "other-account":
+        expect(article.get_by_role("img", name="Private scarf")).to_be_visible()
+    links = article.get_by_role("link", name=re.compile("Buy on Shopee"))
+    expect(links).to_have_count(2)
+    by_gap = {gap: links.filter(has_text=gap).get_attribute("href") for gap in ("Suggested top", "Suggested pants")}
+    assert len(set(by_gap.values())) == 2
+    source = Path(__file__).resolve().parents[1] / "Shopee Database/new_clothes_sample_full.csv"
+    with source.open(encoding="utf-8-sig", newline="") as catalog:
+        by_url = {unquote(row["url"]): row for row in csv.DictReader(catalog)}
+    assert by_url[unquote(by_gap["Suggested top"])]["search_term"] == "women sweater"
+    assert by_url[unquote(by_gap["Suggested pants"])]["search_term"] == "women pants"
+    photo = article.get_by_role("img", name="Full-body virtual try-on of this outfit")
+    expect(photo).to_have_js_property("naturalWidth", 1)
+    initial = photo.get_attribute("src")
+    if session == "profile-only":
+        expect(article.get_by_role("group", name="Selected wardrobe photos")).to_have_count(0)
+        expect(article.get_by_role("button", name="Choose look 1")).to_have_count(0)
+        context.close()
+        return
+    article.get_by_role("button", name="Choose look 1").tap()
+    page.get_by_role("button", name="Save outfit").tap()
+    expect_heading(page, "Museum visit")
+    expect(page.get_by_role("img", name="Full-body AI try-on for Museum visit")).to_have_attribute("src", initial)
+    shopping = page.get_by_role("region", name="Elevate your look")
+    top = shopping.get_by_role("listitem").filter(has_text="Suggested top")
+    top.get_by_role("button", name=re.compile("^Hide ")).tap()
+    expect(page.locator(f'img[src="{initial}"]')).to_have_count(0)
+    expect(shopping.get_by_role("link")).to_have_count(1)
+    expect(shopping.get_by_role("link")).to_have_attribute("href", by_gap["Suggested pants"])
+    page.get_by_role("navigation", name="Main navigation").get_by_role("link", name="Saved", exact=True).tap()
+    expect_heading(page, "Saved looks")
+    expect(page.locator(f'img[src="{initial}"]')).to_have_count(0)
+    saved = page.get_by_role("article")
+    expect(saved.get_by_role("link", name=re.compile("Buy on Shopee"))).to_have_count(1)
+    expect(saved.get_by_role("link", name=re.compile("Buy on Shopee"))).to_have_attribute("href", by_gap["Suggested pants"])
+    expect(saved.get_by_role("img", name="Private scarf")).to_be_visible()
+    context.close()
+
+
 def main():
     root = Path(__file__).resolve().parent.parent
     output = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root / "out"
@@ -275,6 +330,8 @@ def main():
                     device = playwright.devices["iPhone 13"]
                     check_shared_navigation(browser, device, base)
                     run_flow(browser, device, base)
+                    check_two_catalog_basics(browser, device, base, "other-account")
+                    check_two_catalog_basics(browser, device, base, "profile-only")
                 finally:
                     browser.close()
         finally:

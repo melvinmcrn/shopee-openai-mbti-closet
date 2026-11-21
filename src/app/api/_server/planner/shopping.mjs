@@ -1,4 +1,4 @@
-import { catalogProduct, enhancementSelection, listingUrl, productColumns, searchableProduct } from "./catalog-product.mjs";
+import { basicTerms, missingBasics, catalogProduct, enhancementSelection, listingUrl, productColumns, searchableProduct } from "./catalog-product.mjs";
 import { requestDecision } from "./decision.mjs";
 import { getBrief } from "./brief.mjs";
 import { readOption } from "./options.mjs";
@@ -49,17 +49,20 @@ async function choose(env, context, name, choices, instructions, request) {
   }
 }
 
-async function findProduct(env, accountId, brief, slots, wardrobe, request) {
+async function findProduct(env, accountId, brief, slots, garments, request, gap) {
+  const gapTerms = basicTerms[gap] ?? [];
+  const gapFilter = gapTerms.length ? `AND product.search_term IN (${gapTerms.map(() => "?").join(",")})` : "";
   const { results: terms } = await env.DB.prepare(`
-    SELECT DISTINCT product.search_term ${eligibleListings} ORDER BY product.search_term
-  `).bind(accountId).all();
+    SELECT DISTINCT product.search_term ${eligibleListings} ${gapFilter} ORDER BY product.search_term
+  `).bind(accountId, ...gapTerms).all();
   if (!terms.length) return null;
 
   const details = ({ name, category, color }) => ({
     name: concise(name, 100), category: concise(category, 32), color: concise(color, 48),
   });
-  const owned = (await wardrobe()).map(details);
+  const owned = garments.map(details);
   const context = [{ type: "input_json", data: {
+    ...(gap ? { missingGarment: gap === "bottom" ? "pants" : gap } : {}),
     occasion: concise(brief.occasion, 240), timing: brief.timing, setting: brief.location,
     formality: brief.formality, comfort: brief.comfort, preferences: brief.preferences,
     outfit: Object.entries(slots).map(([slot, item]) => ({ slot, ...details(item) })),
@@ -88,8 +91,8 @@ async function findProduct(env, accountId, brief, slots, wardrobe, request) {
   return listings.find(({ item_id }) => `item_${item_id}` === selected?.value) ?? null;
 }
 
-export async function evaluateEnhancement(env, accountId, option, slots, wardrobe, request) {
-  const selection = enhancementSelection(slots);
+async function evaluateGap(env, accountId, option, slots, garments, request, gap) {
+  const selection = enhancementSelection(slots, gap);
   const db = env.DB;
   const read = db.prepare(`
     SELECT ${productColumns}
@@ -100,19 +103,27 @@ export async function evaluateEnhancement(env, accountId, option, slots, wardrob
   let row = await read.first();
   if (!row) {
     const brief = await getBrief(db, accountId, option.briefId);
-    const product = await findProduct(env, accountId, brief, slots, wardrobe, request);
+    const product = await findProduct(env, accountId, brief, slots, garments, request, gap);
     await db.prepare(`
       INSERT INTO outfit_enhancements (user_id, option_id, selection, item_id) VALUES (?, ?, ?, ?)
       ON CONFLICT (user_id, option_id, selection) DO NOTHING
     `).bind(accountId, option.id, selection, product?.item_id ?? null).run();
     row = await read.first();
   }
-  return catalogProduct(row);
+  const product = catalogProduct(row);
+  return product && gap ? { ...product, wardrobeGap: gap } : product;
+}
+
+export async function evaluateEnhancements(env, accountId, option, slots, garments, request) {
+  const gaps = missingBasics(slots, garments);
+  const products = await Promise.all((gaps.length ? gaps : [null]).map(gap =>
+    evaluateGap(env, accountId, option, slots, garments, request, gap)));
+  return products.filter(Boolean);
 }
 
 async function loadSuggestions(db, accountId, lookId) {
   const { results } = await db.prepare(`
-    SELECT suggestion.id, suggestion.is_sponsored, suggestion.hidden_at, ${productColumns}
+    SELECT suggestion.id, suggestion.is_sponsored, suggestion.hidden_at, suggestion.wardrobe_gap, ${productColumns}
     FROM shopping_suggestions AS suggestion
     LEFT JOIN clothes_image_database AS product ON product.item_id = suggestion.catalog_item_id
       AND ${searchableProduct}
@@ -124,14 +135,22 @@ async function loadSuggestions(db, accountId, lookId) {
   return results;
 }
 
-async function saveSuggestion(db, accountId, look, product) {
+async function saveSuggestions(db, accountId, look, products) {
+  const values = products.map(() => "(?, ?)").join(", ");
+  const parameters = products.flatMap(product => [product.id, product.wardrobeGap ?? null]);
   await db.prepare(`
-    INSERT INTO shopping_suggestions (saved_look_id, product_name, merchant, product_url, catalog_item_id)
-    SELECT look.id, product.name, 'Shopee', product.url, product.item_id
-    FROM saved_looks AS look JOIN clothes_image_database AS product ON product.item_id = ?
+    WITH desired(item_id, wardrobe_gap) AS (VALUES ${values})
+    INSERT INTO shopping_suggestions (saved_look_id, product_name, merchant, product_url, catalog_item_id, wardrobe_gap)
+    SELECT look.id, product.name, 'Shopee', product.url, product.item_id, desired.wardrobe_gap
+    FROM desired JOIN clothes_image_database AS product ON product.item_id = desired.item_id
+    CROSS JOIN saved_looks AS look
     WHERE look.id = ? AND look.user_id = ?
-    ON CONFLICT (saved_look_id) WHERE catalog_item_id IS NOT NULL DO NOTHING
-  `).bind(product.id, look.id, accountId).run();
+      AND NOT EXISTS (
+        SELECT 1 FROM shopping_suggestions previous
+        WHERE previous.saved_look_id = look.id AND previous.catalog_item_id = product.item_id
+      )
+    ON CONFLICT DO NOTHING
+  `).bind(...parameters, look.id, accountId).run();
 }
 
 function visibleSuggestions(rows) {
@@ -139,7 +158,7 @@ function visibleSuggestions(rows) {
   for (const row of rows) {
     if (row.hidden_at !== null) continue;
     const item = catalogProduct(row);
-    if (item) suggestions.push({ ...item, catalogItemId: item.id, id: String(row.id), sponsored: row.is_sponsored === 1 });
+    if (item) suggestions.push({ ...item, ...(row.wardrobe_gap ? { wardrobeGap: row.wardrobe_gap } : {}), catalogItemId: item.id, id: String(row.id), sponsored: row.is_sponsored === 1 });
   }
   return suggestions;
 }
@@ -147,15 +166,17 @@ function visibleSuggestions(rows) {
 export async function suggestionsForLook(env, accountId, look, wardrobe, request) {
   const db = env.DB;
   let rows = await loadSuggestions(db, accountId, look.id);
-  if (!rows.length) {
+  const garments = await wardrobe();
+  const gaps = missingBasics(look.slots, garments);
+  if (!rows.length || gaps.some(gap => !rows.some(row => row.wardrobe_gap === gap))) {
     const option = await readOption(db, accountId, look.optionId);
-    const product = await evaluateEnhancement(env, accountId, option, look.slots, wardrobe, request);
-    if (product) {
-      await saveSuggestion(db, accountId, look, product);
+    const products = await evaluateEnhancements(env, accountId, option, look.slots, garments, request);
+    if (products.length) {
+      await saveSuggestions(db, accountId, look, products);
       rows = await loadSuggestions(db, accountId, look.id);
     }
   }
-  return visibleSuggestions(rows);
+  return visibleSuggestions(rows.filter(row => !row.wardrobe_gap || gaps.includes(row.wardrobe_gap)));
 }
 
 export async function shoppingAction(env, accountId, action, input, request, wardrobe) {

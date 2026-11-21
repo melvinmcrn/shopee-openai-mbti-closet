@@ -5,6 +5,7 @@ import test from "node:test";
 import postgres from "postgres";
 import { createPostgresDatabase } from "../server/postgres.mjs";
 import { dispatchPlanner } from "../src/app/api/_server/planner/api.mjs";
+import { enhancementSelection } from "../src/app/api/_server/planner/catalog-product.mjs";
 import { readPrivateFile, writePrivateFile } from "../src/app/api/_server/private-files.mjs";
 import { userData } from "../src/app/api/_server/user-data.mjs";
 import { extract } from "../src/app/api/_server/wardrobe/extract.mjs";
@@ -132,6 +133,17 @@ test("Postgres supports owner-scoped profiles, wardrobe items, and the planner",
     assert.deepEqual((await dispatchPlanner(env, owner.id, "option", { id: option.id })).slots, garments);
     const look = await dispatchPlanner(env, owner.id, "save", { optionId: option.id, slots: garments });
     assert.equal(look.slots.shoes.id, garments.shoes);
+    const listing = await DB.prepare("SELECT item_id, url FROM clothes_catalog WHERE search_term = 'women necklace' ORDER BY item_id LIMIT 1").first();
+    await DB.prepare("INSERT INTO outfit_enhancements (user_id, option_id, selection, item_id) VALUES (?, ?, ?, ?)")
+      .bind(owner.id, option.id, enhancementSelection(look.slots), listing.item_id).run();
+    const [suggestion] = await dispatchPlanner(env, owner.id, "shopping", { lookId: look.id });
+    assert.equal(suggestion.catalogItemId, listing.item_id);
+    assert.equal(suggestion.url, new URL(listing.url).href);
+    const refreshed = await dispatchPlanner(env, owner.id, "detail", { id: look.id });
+    assert.deepEqual(refreshed.enhancements.map(item => item.id), [listing.item_id]);
+    await dispatchPlanner(env, owner.id, "hide", { lookId: look.id, id: suggestion.id });
+    const [hidden] = await dispatchPlanner(env, owner.id, "list");
+    assert.deepEqual(hidden.enhancements, []);
     assert.deepEqual(await dispatchPlanner(env, visitor.id, "list"), []);
     const wear = await dispatchPlanner(env, owner.id, "wearAdd", { lookId: look.id, date: "2026-11-21" });
     await dispatchPlanner(env, owner.id, "wearUpdate", { id: wear.id, rating: 5 });

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { encode } from "@auth/core/jwt";
+import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, resolve, sep } from "node:path";
@@ -14,7 +15,9 @@ const schema = new URL("../drizzle/", import.meta.url);
 database.exec(await readFile(new URL("0000_stylist.sql", schema), "utf8"));
 database.exec(`
   INSERT INTO users (id, auth_provider, auth_subject) VALUES
-    (1, 'google', 'fixture-returning-user'), (2, 'google', 'fixture-other-account');
+    (1, 'google', 'fixture-returning-user'), (2, 'google', 'fixture-other-account'),
+    (3, 'google', 'fixture-profile-only');
+  INSERT INTO profiles (user_id, face_photo_file_id) VALUES (1, 'fixture-face'), (3, 'fixture-face');
   INSERT INTO wardrobe_items (id, user_id, name, category, color, image_file_id, confirmed_at, archived_at) VALUES
     (11, 1, 'Silk blouse', 'top', 'Cream', 'blouse', 'confirmed', NULL),
     (12, 1, 'Wool trousers', 'bottom', 'Navy', 'trousers', 'confirmed', NULL),
@@ -66,23 +69,28 @@ const image = Buffer.from(
   "base64",
 );
 const tryOnJpeg = jpeg.encode({ width: 1, height: 1, data: Buffer.from([255, 255, 255, 255]) }).data.toString("base64");
-const listingJpeg = jpeg.encode({ width: 1, height: 1, data: Buffer.from([0, 0, 255, 255]) }).data;
+function listingJpeg(itemId) {
+  const color = createHash("sha256").update(itemId).digest().subarray(0, 3);
+  return jpeg.encode({ width: 1, height: 1, data: Buffer.from([...color, 255]) }).data;
+}
 const enhancedTryOn = jpeg.encode({ width: 1, height: 1, data: Buffer.from([255, 0, 0, 255]) }).data.toString("base64");
-const photos = new Map(["blouse", "trousers", "heels", "flats", "dress"].map(id => [
+const photos = new Map(["blouse", "trousers", "heels", "flats", "dress", "scarf"].map(id => [
   id, { body: image, httpMetadata: { contentType: "image/png" } },
 ]));
+const face = jpeg.encode({ data: Buffer.from([120, 140, 160, 255]), width: 1, height: 1 }).data;
+photos.set("fixture-face", { body: face, httpMetadata: { contentType: "image/jpeg" } });
 const env = {
   readSampleImage,
   DB: db,
   BUCKET: {
     get: async id => {
-      const photo = photos.get(id);
-      return photo && {
-        ...photo, size: photo.body.byteLength,
-        arrayBuffer: () => new Blob([photo.body]).arrayBuffer(),
+      const file = photos.get(id);
+      return file && {
+        ...file, size: file.body.byteLength,
+        arrayBuffer: () => new Blob([file.body]).arrayBuffer(),
       };
     },
-    put: async (id, body, { httpMetadata }) => { photos.set(id, { body: Buffer.from(body), httpMetadata }); },
+    put: async (id, body, options) => { photos.set(id, { body: Buffer.from(body), ...options }); },
     delete: async id => { photos.delete(id); },
   },
   AUTH_SECRET: crypto.randomUUID(),
@@ -93,12 +101,12 @@ const env = {
 const origin = "https://mbti-closet.stonyimpala.chatgpt.site";
 const cookieName = "__Secure-authjs.session-token";
 const sessions = new Map();
-for (const name of ["first-session", "returning-session", "rating-session", "other-account"]) {
+for (const name of ["first-session", "returning-session", "rating-session", "other-account", "profile-only"]) {
   sessions.set(name, await encode({
     secret: env.AUTH_SECRET,
     salt: cookieName,
     token: {
-      googleSubject: name === "other-account" ? "fixture-other-account" : "fixture-returning-user",
+      googleSubject: name === "profile-only" ? "fixture-profile-only" : name === "other-account" ? "fixture-other-account" : "fixture-returning-user",
     },
   }));
 }
@@ -110,16 +118,26 @@ async function decisionsFixture(url, options) {
     const product = database.prepare("SELECT item_id FROM clothes_image_database WHERE image_url = ?").get(String(url));
     assert.ok(product, "try-on must fetch the product image from the catalog");
     assert.equal(options.redirect, "error");
-    return new Response(listingJpeg, { headers: { "content-type": "image/jpeg" } });
+    return new Response(listingJpeg(product.item_id), { headers: { "content-type": "image/jpeg" } });
   }
   if (url === "https://api.openai.com/v1/images/edits") {
+    assert.equal(options.body.get("output_format"), "jpeg");
     const prompt = options.body.get("prompt");
-    const enhanced = prompt.includes('"source":"catalog"');
-    if (enhanced) {
-      const last = options.body.getAll("image[]").at(-1);
-      assert.deepEqual(Buffer.from(await last.arrayBuffer()), listingJpeg);
+    const references = options.body.getAll("image[]");
+    const expectedPerson = prompt.includes("Private scarf") ? await readSampleImage("studio-model") : face;
+    assert.deepEqual(Buffer.from(await references[0].arrayBuffer()), Buffer.from(expectedPerson));
+    const labels = [...prompt.matchAll(/^Image (\d+): (\{.*\})$/gmu)].map(([, index, json]) => ({
+      index: Number(index) - 1, ...JSON.parse(json),
+    }));
+    assert.equal(labels.length, references.length - 1);
+    const listings = labels.filter(piece => piece.source === "catalog");
+    for (const { index, selectedItem } of listings) {
+      const product = database.prepare("SELECT item_id FROM clothes_image_database WHERE name=?").get(selectedItem);
+      assert.ok(product);
+      assert.deepEqual(Buffer.from(await references[index].arrayBuffer()), listingJpeg(product.item_id));
     }
-    return Response.json({ data: [{ b64_json: enhanced ? enhancedTryOn : tryOnJpeg }] });
+    if (prompt.includes("Private scarf")) assert.equal(listings.length, 2);
+    return Response.json({ data: [{ b64_json: listings.length ? enhancedTryOn : tryOnJpeg }] });
   }
   if (url === "https://api.openai.com/v1/responses") {
     const { input } = JSON.parse(options.body);
@@ -129,8 +147,9 @@ async function decisionsFixture(url, options) {
       if (part.type !== "input_text" || !part.text.startsWith("{")) continue;
       const piece = JSON.parse(part.text);
       if (piece.source !== "catalog") continue;
-      assert.ok(database.prepare("SELECT item_id FROM clothes_image_database WHERE name=?").get(piece.name));
-      assert.equal(input[0].content[i + 1].image_url, "data:image/jpeg;base64," + listingJpeg.toString("base64"));
+      const product = database.prepare("SELECT item_id FROM clothes_image_database WHERE name=?").get(piece.name);
+      assert.ok(product);
+      assert.equal(input[0].content[i + 1].image_url, "data:image/jpeg;base64," + listingJpeg(product.item_id).toString("base64"));
     }
     const visible_items = pieces.map(piece => piece.reference);
     if (pieces.some(piece => piece.name === "Column dress")) visible_items.push("unlisted");
@@ -141,7 +160,9 @@ async function decisionsFixture(url, options) {
   const { input, questions } = JSON.parse(options.body);
   if (questions.length === 1 && questions[0].name === "catalog_search") {
     const question = questions[0];
-    const value = question.choices.find(choice => choice.description === "women necklace").value;
+    const missing = input[1].content[0].data.missingGarment;
+    const term = missing === "top" ? "women sweater" : missing === "pants" ? "women pants" : "women necklace";
+    const value = question.choices.find(choice => choice.description === term).value;
     return Response.json({ answers: [{ name: question.name, type: "choice", choice: value }] });
   }
   if (questions.length === 1 && questions[0].name === "shopee_product") {
