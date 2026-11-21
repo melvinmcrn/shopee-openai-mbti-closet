@@ -52,13 +52,13 @@ export async function readSavedProducts(db, accountId, selectionsByLook) {
     SELECT DISTINCT category FROM wardrobe_items WHERE user_id = ? AND confirmed_at IS NOT NULL
       AND archived_at IS NULL AND image_file_id IS NOT NULL AND category IN ('top','bottom')
   `).bind(accountId).all();
-  const { results } = await db.prepare(`
+  const loadPicks = gapColumn => db.prepare(`
     WITH targets AS (
       SELECT look.id, look.user_id, look.source_option_id, slot.value AS items
       FROM json_each(?) AS slot JOIN saved_looks look ON look.id = CAST(slot.key AS BIGINT)
       WHERE look.user_id = ?
     ), picks AS (
-      SELECT t.id AS look_id, s.catalog_item_id AS item_id, s.hidden_at, s.wardrobe_gap,
+      SELECT t.id AS look_id, s.catalog_item_id AS item_id, s.hidden_at, ${gapColumn} AS wardrobe_gap,
              CASE WHEN s.catalog_item_id IS NULL THEN 1 ELSE 2 END AS saved
       FROM targets t JOIN shopping_suggestions s ON s.saved_look_id = t.id
       WHERE s.catalog_item_id IS NOT NULL OR s.hidden_at IS NOT NULL
@@ -73,9 +73,17 @@ export async function readSavedProducts(db, accountId, selectionsByLook) {
     FROM picks LEFT JOIN clothes_image_database product ON product.item_id = picks.item_id AND ${searchableProduct}
     ORDER BY picks.saved DESC
   `).bind(JSON.stringify(selectionsByLook), accountId).all();
+  let picksResult;
+  try {
+    picksResult = await loadPicks("s.wardrobe_gap");
+  } catch (error) {
+    // Before migration 0110 each saved look could have one general suggestion.
+    if (!/no such column: s\.wardrobe_gap|column s\.wardrobe_gap does not exist/i.test(error.message)) throw error;
+    picksResult = await loadPicks("CAST(NULL AS TEXT)");
+  }
 
   const byLook = new Map();
-  for (const row of results) {
+  for (const row of picksResult.results) {
     const key = String(row.look_id);
     if (!byLook.has(key)) byLook.set(key, new Map());
     const picks = byLook.get(key);
