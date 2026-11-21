@@ -44,12 +44,90 @@ function provider(sketch, choose, priority = "polished") {
     const answers = body.questions.map(question => {
       assert.ok(question.choices.some(c => c.value === "none"));
       const group = groups.find(group => group.question === question.name);
-      return { name: question.name, type: "choice", choice: choose(group, source, groups) };
+      const selected = choose(group, source, groups);
+      return { name: question.name, type: "choice", ...(typeof selected === "string" ? { choice: selected } : selected) };
     });
     return Response.json({ answers: answers.reverse() });
   }
   return { calls, request };
 }
+
+function scored(group, none, scores, choice = "none") {
+  return { choice, probabilities: [
+    ...group.candidates.map(({ value, name }) => ({ value, probability: scores[name] ?? 0 })),
+    { value: "none", probability: none },
+  ] };
+}
+
+test("fills required pieces with the closest scored items and leaves weak optional pieces out", async () => {
+  const env = environment([
+    listing("11", "women sweater", "Gray sweater"), listing("12", "women pants", "Dark jeans"),
+    listing("13", "women watch", "Gold watch"),
+  ]);
+  const closet = [garment("31", "top", "White tee"), garment("32", "bottom", "Yellow shorts")];
+  const ai = provider(pieces, group => {
+    const scores = { "White tee": 0, "Gray sweater": 0, "Yellow shorts": 0, "Dark jeans": 0.000001, "Gold watch": 0.1 };
+    return scored(group, 1 - scores[group.candidates[0].name], scores);
+  }, "cool_weather");
+  const result = await generateOccasionLook(env, brief, closet, ai.request);
+  assert.deepEqual(result?.slots, { top: "31" });
+  assert.deepEqual(result.catalogSlots, { bottom: { id: "12", searchGroup: "women", searchTerm: "women pants" } });
+  assert.doesNotMatch(result.explanation, /warmth|cooler|coat|watch/i);
+});
+
+test("compares finalists against abstention across pages even when the later winner has a smaller raw probability", async () => {
+  const rows = Array.from({ length: 48 }, (_, i) => listing(String(100 + i), "women dress", `Dress ${i}`));
+  const ai = provider([{ category: "dress", description: "A navy column dress" }], group => {
+    const firstPage = group.candidates[0].name === "Dress 0";
+    const lead = firstPage ? "Dress 0" : "Dress 47";
+    const remainder = firstPage ? 0.2 : 0.6;
+    const scores = Object.fromEntries(group.candidates.map(({ name }) => [name, remainder / 23]));
+    scores[lead] = firstPage ? 0.3 : 0.18;
+    return scored(group, firstPage ? 0.5 : 0.22, scores);
+  });
+  const result = await generateOccasionLook(environment(rows), brief, [], ai.request);
+  assert.equal(result?.catalogSlots.dress.id, "147");
+});
+
+test("uses a distinct alternative when two core slots score the same catalog ID highest", async () => {
+  const env = environment([
+    listing("11", "women sweater", "First set"), listing("12", "women sweater", "Tee"),
+    listing("11", "women pants", "First set"),
+  ]);
+  const ai = provider(pieces, group => scored(group, group.category === "top" ? 0.8 : 0.85,
+    { "First set": 0.15, Tee: 0.05 }));
+  const result = await generateOccasionLook(env, brief, [], ai.request);
+  assert.equal(result?.catalogSlots.top.id, "12");
+  assert.equal(result.catalogSlots.bottom.id, "11");
+});
+
+test("a refusal or invalid probability cannot supply a fallback item", async () => {
+  const env = environment([listing("11", "women dress", "Blue dress")]);
+  for (const answer of [{ type: "refusal" },
+    { choice: "none", probabilities: [{ value: "invented", probability: 0.1 }, { value: "none", probability: 0.9 }] },
+    { choice: "none", probabilities: [{ value: "item_0", probability: -1 }, { value: "none", probability: 1 }] },
+  ]) {
+    const ai = provider([{ category: "dress", description: "A navy column dress" }], () => answer);
+    assert.equal(await generateOccasionLook(env, brief, [], ai.request), null);
+  }
+});
+
+test("retains a confirmed base when a later match batch fails without using that batch's partial choices", async () => {
+  const design = [{ category: "dress", description: "A navy column dress" }, pieces[2]];
+  const wardrobe = [garment("1", "dress", "Navy column dress"), ...Array.from({ length: 200 },
+    (_, i) => garment(String(i + 2), "accessory", `Watch ${i}`))];
+  for (const failure of ["transport", "invalid choice"]) {
+    const ai = provider(design, (group, _source, groups) => {
+      if (group.category === "dress") return group.candidates[0].value;
+      if (groups.some(({ category }) => category === "dress")) return "none";
+      if (failure === "transport") throw new TypeError("Request failed");
+      return group === groups[0] ? group.candidates[0].value : "unoffered";
+    });
+    const result = await generateOccasionLook(environment(), brief, wardrobe, ai.request);
+    assert.deepEqual(result?.slots, { dress: "1" }, failure);
+    assert.deepEqual(result.catalogSlots, {});
+  }
+});
 
 test("designs only from the brief, then resolves owned matches before querying exact listings", async () => {
   const env = environment([
@@ -182,4 +260,22 @@ test("an unavailable provider or a mixed-owner wardrobe yields no catalog purcha
     garment("1", "top", "Sweater"), garment("2", "bottom", "Trousers", { accountId: "other" }),
   ], ai.request), null);
   assert.equal(env.queries.length, 0);
+});
+
+test("can suggest catalog separates when the sketched dress has no inventory", async () => {
+  const env = environment([
+    listing("40", "women sweater", pieces[0].description),
+    listing("41", "women pants", pieces[1].description),
+  ]);
+  const dress = provider([{ category: "dress", description: "A navy evening dress" }]);
+  const separates = provider(pieces.slice(0, 2), group => group.candidates[0].value);
+  const request = (url, init) => dress.calls.length ? separates.request(url, init) : dress.request(url, init);
+  const look = await generateOccasionLook(env, brief, [], request);
+  assert.deepEqual(look?.catalogSlots, {
+    top: { id: "40", searchGroup: "women", searchTerm: "women sweater" },
+    bottom: { id: "41", searchGroup: "women", searchTerm: "women pants" },
+  });
+  assert.match(separates.calls[0].body.instructions, /top and (?:a )?bottom/i);
+  const categories = separates.calls[0].body.text.format.schema.properties.pieces.items.properties.category.enum;
+  assert.ok(!categories.includes("dress"));
 });

@@ -159,7 +159,6 @@ function rankLooks(answers, candidates, garments, priorKeys) {
   if (resultsByName.size !== candidates.length) return null;
 
   const ranked = [];
-  let evaluations = 0;
   for (const [index, slots] of candidates.entries()) {
     const answer = resultsByName.get(`look_${index}`);
     if (!answer || !validSlots(slots, garments)) return null;
@@ -170,9 +169,6 @@ function rankLooks(answers, candidates, garments, priorKeys) {
     }
     const unsuitable = answer.probabilities.find(({ value } = {}) => value === "unsuitable")?.probability;
     if (!Number.isFinite(unsuitable) || unsuitable < 0 || unsuitable > 1) return null;
-    evaluations += 1;
-    if (answer.choice === "unsuitable") continue;
-
     ranked.push({
       slots,
       reason: answer.choice,
@@ -181,7 +177,6 @@ function rankLooks(answers, candidates, garments, priorKeys) {
     });
   }
 
-  if (evaluations === 0) return null;
   return ranked.sort((a, b) => Number(a.repeat) - Number(b.repeat) || b.score - a.score);
 }
 
@@ -192,6 +187,7 @@ function explain({ slots, reason }, garments) {
     return (name || [color, category].filter(Boolean).join(" ")).replace(/[.!?]+$/, "");
   });
   const items = new Intl.ListFormat("en", { type: "conjunction" }).format(names);
+  if (reason === "unsuitable") return `This option uses ${items}.`;
   return `This option uses ${items} to ${reasons[reason]}.`;
 }
 
@@ -268,26 +264,18 @@ export async function generateLooks(env, brief, garments, priorLooks = [], reque
     return photoCandidates.length ? photoLooks() : failure;
   }
 
-  if (!ranked) return photoCandidates.length ? photoLooks() : failure;
-  if (ranked.length === 0) {
-    if (photoCandidates.length) return photoLooks();
-    return {
-      status: "insufficient",
-      message: "No look matched this brief. Try updating the brief or confirming more wardrobe pieces.",
-    };
-  }
+  if (!ranked?.length) return photoCandidates.length ? photoLooks() : failure;
 
   const [first, ...alternatives] = ranked;
+  // Break ties in favor of variety while keeping the highest-scoring alternatives.
+  const tied = alternatives.filter(look => look.repeat === alternatives[0].repeat && look.score === alternatives[0].score);
   const firstCore = combinationKey(first.slots, true);
   const wantsBothShapes = brief?.preferences?.includes("dress") &&
     (brief.preferences.includes("top") || brief.preferences.includes("bottom"));
   const oppositeShape = wantsBothShapes
-    ? alternatives.find(look => Boolean(look.slots.dress) !== Boolean(first.slots.dress))
+    ? tied.find(look => Boolean(look.slots.dress) !== Boolean(first.slots.dress))
     : undefined;
-  const second = oppositeShape ?? alternatives.find((look) => !look.repeat && combinationKey(look.slots, true) !== firstCore) ??
-    alternatives.find((look) => !look.repeat) ??
-    alternatives.find((look) => combinationKey(look.slots, true) !== firstCore) ??
-    alternatives[0];
+  const second = oppositeShape ?? tied.find(look => combinationKey(look.slots, true) !== firstCore) ?? alternatives[0];
   return {
     status: "ready",
     looks: (second ? [first, second] : [first]).map((look) => ({

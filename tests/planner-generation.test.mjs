@@ -87,10 +87,10 @@ test("evaluates dresses and separates together using only confirmed, active garm
   assert.equal(result.status, "ready");
   assert.deepEqual(result.looks.map(({ slots }) => slots), [
     { top: top.id, bottom: bottom.id, shoes: shoes.id },
-    { dress: dress.id, shoes: shoes.id },
+    { top: top.id, bottom: bottom.id, shoes: shoes.id, outerwear: outerwear.id },
   ]);
   assert.match(result.looks[0].explanation, /Silk shirt.*Wide-leg trousers.*Loafers.*dress code/u);
-  assert.match(result.looks[1].explanation, /Column dress.*Loafers.*dress code/u);
+  assert.match(result.looks[1].explanation, /Silk shirt.*Loafers.*Blazer.*dress code/u);
 });
 
 test("prefers two fresh alternatives to a previously shown, higher-scoring look", async () => {
@@ -108,7 +108,7 @@ test("prefers two fresh alternatives to a previously shown, higher-scoring look"
   ]);
 });
 
-test("returns one complete look when the other candidate is unsuitable", async () => {
+test("keeps a weak match as the second option and explains it without claiming a fit", async () => {
   const provider = mockDecisions((question, slots) => slots.dress
     ? responseAnswer(question, "comfort", 0.15)
     : responseAnswer(question, "unsuitable", 0.95),
@@ -117,20 +117,34 @@ test("returns one complete look when the other candidate is unsuitable", async (
   const result = await generateLooks(env, brief, [top, bottom, dress, shoes], [], provider.request);
 
   assert.equal(result.status, "ready");
-  assert.equal(result.looks.length, 1);
+  assert.equal(result.looks.length, 2);
   assert.deepEqual(result.looks[0].slots, { dress: dress.id, shoes: shoes.id });
   assert.match(result.looks[0].explanation, /comfort/u);
+  assert.deepEqual(result.looks[1].slots, { top: top.id, bottom: bottom.id, shoes: shoes.id });
+  assert.match(result.looks[1].explanation, /Silk shirt.*Wide-leg trousers.*Loafers/u);
+  assert.doesNotMatch(result.looks[1].explanation, /undefined|dress code|coordinated look/u);
 });
 
-test("reports zero viable looks when Decisions marks every candidate unsuitable", async () => {
-  const provider = mockDecisions((question) => responseAnswer(question, "unsuitable", 0.95));
-
-  const result = await generateLooks(env, brief, [dress, shoes], [], provider.request);
+test("returns the highest-scoring combinations when every candidate is unsuitable", async () => {
+  const provider = mockDecisions((question, slots) =>
+    responseAnswer(question, "unsuitable", slots.dress ? (slots.outerwear ? 0.91 : 0.95) : 1));
+  const result = await generateLooks(env, brief, wardrobe, [], provider.request);
 
   assert.equal(provider.calls.length, 1);
-  assert.equal(result.status, "insufficient");
-  assert.match(result.message, /No look matched/u);
-  assert.equal(result.looks, undefined);
+  assert.equal(result.status, "ready");
+  assert.deepEqual(result.looks.map(look => look.slots), [
+    { dress: dress.id, shoes: shoes.id, outerwear: outerwear.id },
+    { dress: dress.id, shoes: shoes.id },
+  ]);
+});
+
+test("returns the only scored look even at zero, while skipping a refused candidate", async () => {
+  const provider = mockDecisions((question, slots) => slots.dress
+    ? responseAnswer(question, "unsuitable", 1)
+    : { name: question.name, type: "refusal" });
+  const result = await generateLooks(env, brief, [top, bottom, dress], [], provider.request);
+  assert.equal(result.status, "ready");
+  assert.deepEqual(result.looks.map(look => look.slots), [{ dress: dress.id }]);
 });
 
 test("reports an insufficient wardrobe before contacting Decisions", async () => {

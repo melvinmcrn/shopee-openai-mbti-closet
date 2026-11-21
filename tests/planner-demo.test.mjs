@@ -118,23 +118,45 @@ test("generation adds one occasion option and keeps its sourced pieces through s
   });
 });
 
-test("a catalog-only occasion look works with an empty closet and a studio try-on", async () => {
+test("an empty closet gets the best weak catalog matches through generation, studio try-on and saving", async t => {
   await withDatabase(":memory:", async database => {
     migrate(database);
     database.exec("INSERT INTO users (id,auth_provider,auth_subject) VALUES (1,'google','owner')");
-    const listing = term => database.prepare("SELECT item_id FROM clothes_catalog WHERE search_term=? LIMIT 1").get(term).item_id;
-    const catalogSlots = { top: listing("women tank top"), bottom: listing("women pants") };
-    const env = { DB: d1Binding(database) };
-    const dependencies = {
-      generateOccasionLook: async () => ({ slots: {}, catalogSlots, explanation: "Styled for summer." }),
-      preview: { cachedImage: async () => "studio-photo" },
-    };
+    const listing = database.prepare("SELECT item_id FROM clothes_catalog WHERE search_term=? ORDER BY item_id DESC LIMIT 1");
+    const catalogSlots = { top: listing.get("women tank top").item_id, bottom: listing.get("women pants").item_id };
+    const rename = database.prepare("UPDATE clothes_image_database SET name=? WHERE item_id=?");
+    for (const [slot, id] of Object.entries(catalogSlots)) rename.run(`Closest available ${slot}`, id);
+    const pieces = [
+      { category: "top", description: "A breezy linen shirt" },
+      { category: "bottom", description: "Lightweight linen trousers" },
+    ];
+    t.mock.method(globalThis, "fetch", async (url, init) => {
+      if (url.endsWith("/responses")) return Response.json({
+        status: "completed", output: [{ role: "assistant", type: "message", status: "completed",
+          content: [{ type: "output_text", text: JSON.stringify({ pieces, priority: "understated" }) }] }],
+      });
+      assert.ok(url.endsWith("/decisions"));
+      const { groups } = JSON.parse(init.body).input[1].content[0].data;
+      return Response.json({ answers: groups.map(({ question, category, candidates }) => {
+        const probabilities = candidates.map(({ value, name }) => ({
+          value, probability: name === `Closest available ${category}` ? 0.01 : 0.0001,
+        }));
+        const total = probabilities.reduce((sum, entry) => sum + entry.probability, 0);
+        probabilities.push({ value: "none", probability: 1 - total });
+        return { name: question, type: "choice", choice: "none", probabilities };
+      }) });
+    });
+    const env = { DB: d1Binding(database), OPENAI_API_KEY: "test-key" };
+    const dependencies = { preview: { cachedImage: async () => "studio-photo" } };
     const dispatch = (action, input) => dispatchPlanner(env, 1, action, input, dependencies);
     const brief = await dispatch("saveBrief", { occasion: "Summer lunch" });
     const result = await dispatch("generate", { briefId: brief.id });
     assert.equal(result.status, "ready");
     assert.equal(result.looks.length, 1);
     const [look] = result.looks;
+    assert.equal(look.kind, "occasion");
+    const products = await dispatch("enhancements", { optionId: look.id, slots: look.slots });
+    assert.deepEqual(Object.fromEntries(products.map(product => [product.catalogSlot, product.id])), catalogSlots);
     const catalogItemIds = Object.values(catalogSlots);
     assert.deepEqual(await dispatch("preview", { optionId: look.id, catalogItemIds }), { imageRef: "studio-photo", useProfilePhoto: false });
     const saved = await dispatch("save", { optionId: look.id, slots: {} });
