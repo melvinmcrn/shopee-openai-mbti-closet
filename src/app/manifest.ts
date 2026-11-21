@@ -9,8 +9,8 @@ export default function manifest(): MetadataRoute.Manifest {
     description: "A personal style and outfit discovery app.",
     start_url: "/",
     display: "standalone",
-    background_color: "#ffffff",
-    theme_color: "#111827",
+    background_color: "#FCFAF6",
+    theme_color: "#FCFAF6",
     icons: [
       { src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
       { src: "/icon-maskable.svg", sizes: "any", type: "image/svg+xml", purpose: "maskable" },
