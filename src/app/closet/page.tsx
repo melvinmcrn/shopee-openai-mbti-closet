@@ -32,7 +32,14 @@ type Closet =
 
 type ItemAction = { id: number; type: "edit" | "archive" };
 type AffectedLook = { id: number; title: string };
-type DeletePrompt = { item: Item; looks: AffectedLook[] };
+type DeletePrompt = { item: Item; looks: AffectedLook[] | null };
+
+function deleteImpactMessage(looks: AffectedLook[] | null) {
+  if (looks === null) return "Checking saved looks…";
+  if (looks.length === 0) return "This will remove the item from your wardrobe. No saved looks use it.";
+  if (looks.length === 1) return "Deleting this item will also delete this saved look.";
+  return `Deleting this item will also delete these ${looks.length} saved looks.`;
+}
 
 async function listCloset(signal?: AbortSignal): Promise<Closet> {
   const response = await fetch(itemsEndpoint, { cache: "no-store", signal });
@@ -55,6 +62,7 @@ export default function ClosetPage() {
   const [category, setCategory] = useState<Category | "all">("all");
   const [action, setAction] = useState<ItemAction | null>(null);
   const [deletePrompt, setDeletePrompt] = useState<DeletePrompt | null>(null);
+  const impactRequest = useRef<AbortController | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
@@ -71,6 +79,8 @@ export default function ClosetPage() {
       });
     return () => controller.abort();
   }, [loadAttempt]);
+
+  useEffect(() => () => impactRequest.current?.abort(), []);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -159,26 +169,47 @@ export default function ClosetPage() {
   }
 
   function cancelDeletion() {
+    impactRequest.current?.abort();
     setDeletePrompt(null);
     setError("");
   }
 
-  async function deleteItem(item: Item, confirmedLooks?: AffectedLook[]) {
-    setBusy(true);
+  async function openDeletePrompt(item: Item) {
+    impactRequest.current?.abort();
+    const controller = new AbortController();
+    impactRequest.current = controller;
     beginAction(null);
+    setDeletePrompt({ item, looks: null });
+    try {
+      const response = await fetch(`${itemsEndpoint}/${item.id}/delete-impact`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error("Saved looks unavailable");
+      const { savedLooks } = await response.json();
+      if (!Array.isArray(savedLooks)) throw new Error("Invalid saved looks");
+      if (!controller.signal.aborted) setDeletePrompt({ item, looks: savedLooks });
+    } catch {
+      if (!controller.signal.aborted) setError("Couldn’t check which saved looks use this item.");
+    }
+  }
+
+  async function confirmDeletion() {
+    if (!deletePrompt?.looks || busy) return;
+    const { item, looks } = deletePrompt;
+    setBusy(true);
+    setError("");
     try {
       const response = await fetch(`${itemsEndpoint}/${item.id}`, {
         method: "DELETE",
-        ...(confirmedLooks && {
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ savedLookIds: confirmedLooks.map((look) => look.id) }),
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ savedLookIds: looks.map((look) => look.id) }),
       });
       if (response.status === 409) {
         const { code, savedLooks } = await response.json();
         if (code === "saved_looks_affected" && Array.isArray(savedLooks)) {
           setDeletePrompt({ item, looks: savedLooks });
-          if (confirmedLooks) setError("The saved looks using this item changed. Review the updated list.");
+          setError("The saved looks using this item changed. Review the updated list before confirming.");
           return;
         }
       }
@@ -187,7 +218,7 @@ export default function ClosetPage() {
         ? { ...current, items: current.items.filter((existing) => existing.id !== item.id) }
         : current);
       setDeletePrompt(null);
-      const count = confirmedLooks?.length ?? 0;
+      const count = looks.length;
       setNotice(count ? `Item and ${count} saved ${count === 1 ? "look" : "looks"} deleted.` : "Item deleted.");
     } catch {
       setError("Couldn’t delete this item. Try again.");
@@ -198,6 +229,8 @@ export default function ClosetPage() {
 
   const items = closet.status === "ready" ? closet.items : [];
   const visibleItems = category === "all" ? items : items.filter((item) => item.category === category);
+  const affectedCount = deletePrompt?.looks?.length ?? 0;
+  const deleteLabel = affectedCount === 0 ? "Delete item" : `Delete item and ${affectedCount === 1 ? "look" : "looks"}`;
 
   return (
     <main className="flex-1 bg-canvas text-text">
@@ -313,7 +346,7 @@ export default function ClosetPage() {
                         aria-label={`Delete ${item.name}`}
                         className="min-h-11 px-2 text-sm font-semibold text-danger hover:underline disabled:opacity-50"
                         disabled={busy}
-                        onClick={() => void deleteItem(item)}
+                        onClick={() => void openDeletePrompt(item)}
                         type="button"
                       >
                         Delete
@@ -382,7 +415,7 @@ export default function ClosetPage() {
       <dialog
         ref={dialogRef}
         aria-labelledby="delete-item-title"
-        aria-describedby="delete-item-impact"
+        aria-describedby={affectedCount > 0 ? "delete-item-impact delete-item-looks" : "delete-item-impact"}
         className="m-auto max-h-[85dvh] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-2xl border border-divider bg-surface p-6 text-text shadow-xl backdrop:bg-text/40"
         onCancel={(event) => {
           event.preventDefault();
@@ -392,30 +425,31 @@ export default function ClosetPage() {
         {deletePrompt && (
           <>
             <h2 id="delete-item-title" className="break-words font-heading text-2xl">Delete {deletePrompt.item.name}?</h2>
-            <p id="delete-item-impact" className="mt-3 text-sm text-supporting">
-              {deletePrompt.looks.length === 0 ? "This item is no longer used in any saved looks." : (
-                deletePrompt.looks.length === 1
-                  ? "Deleting this item will also delete this saved look."
-                  : `Deleting this item will also delete these ${deletePrompt.looks.length} saved looks.`
-              )}
+            <p id="delete-item-impact" aria-live="polite" className="mt-3 text-sm text-supporting">
+              {deletePrompt.looks === null && error ? error : deleteImpactMessage(deletePrompt.looks)}
             </p>
-            {deletePrompt.looks.length > 0 && (
-              <ul className="mt-3 list-disc space-y-1 pl-5 text-sm font-semibold">
-                {deletePrompt.looks.map((look) => <li className="break-words" key={look.id}>{look.title}</li>)}
+            {affectedCount > 0 && (
+              <ul id="delete-item-looks" className="mt-3 list-disc space-y-1 pl-5 text-sm font-semibold">
+                {deletePrompt.looks?.map((look) => <li className="break-words" key={look.id}>{look.title}</li>)}
               </ul>
             )}
-            {error && <p className="mt-3 text-sm text-danger" role="alert">{error}</p>}
+            {deletePrompt.looks !== null && error && <p className="mt-3 text-sm text-danger" role="alert">{error}</p>}
             <div className="mt-6 flex flex-wrap gap-2">
               <button type="button" className={secondaryButton} disabled={busy} onClick={cancelDeletion}>Cancel</button>
-              <button
-                type="button"
-                className="min-h-11 rounded-full bg-danger px-4 text-sm font-semibold text-on-primary disabled:opacity-50"
-                disabled={busy}
-                onClick={() => void deleteItem(deletePrompt.item, deletePrompt.looks)}
-              >
-                {busy ? "Deleting…" : deletePrompt.looks.length === 0 ? "Delete item" :
-                  deletePrompt.looks.length === 1 ? "Delete item and look" : "Delete item and looks"}
-              </button>
+              {deletePrompt.looks === null && error ? (
+                <button type="button" className={secondaryButton} onClick={() => void openDeletePrompt(deletePrompt.item)}>
+                  Try again
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="min-h-11 rounded-full bg-danger px-4 text-sm font-semibold text-on-primary disabled:opacity-50"
+                  disabled={busy || deletePrompt.looks === null}
+                  onClick={() => void confirmDeletion()}
+                >
+                  {busy ? "Deleting…" : deleteLabel}
+                </button>
+              )}
             </div>
           </>
         )}

@@ -8,8 +8,8 @@ export function wardrobeApi(request, env, userId) {
   const method = request.method;
   if (path === "/api/profile" || path === "/api/profile/photo") return profile(request, env, userId);
   if (path === "/api/wardrobe/upload" && method === "POST") return upload(request, env, userId);
-  const item = /^\/api\/wardrobe\/items(?:\/(\d+)(\/extract)?)?$/.exec(path);
-  if (item && !item[2]) return items(request, env, userId, item[1]);
+  const item = /^\/api\/wardrobe\/items(?:\/(\d+)(?:\/(extract|delete-impact))?)?$/.exec(path);
+  if (item && item[2] !== "extract") return items(request, env, userId, item[1], item[2]);
   if (item && method === "POST") return extract(request, env, userId, Number(item[1]));
   return Response.json({ error: "Unknown wardrobe route." }, { status: 404 });
 }
