@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api, imageUrl, type Garment, type Look } from "./shared";
 
@@ -144,6 +145,7 @@ function CompareBrief({ briefId, garments, onChoose, onEdit }: CompareProps) {
   const insufficient = result?.status === "insufficient";
   const failed = result?.status === "failed";
   const empty = result?.status === "ready" && !result.looks?.length;
+  const needsCloset = insufficient && !looks.length && !garments.length;
   const needsRetry = failed || empty || (insufficient && !looks.length);
   let message = "We couldn’t build any looks this time. Try again.";
   if (insufficient) {
@@ -196,7 +198,10 @@ function CompareBrief({ briefId, garments, onChoose, onEdit }: CompareProps) {
         )}
       </div>
 
-      {(needsRetry || (looks.length > 0 && !insufficient)) && (
+      {needsCloset && (
+        <Link href="/closet" className={`mt-5 inline-flex items-center ${secondaryButton}`}>Open closet</Link>
+      )}
+      {!needsCloset && (needsRetry || (looks.length > 0 && !insufficient)) && (
         <div className="mt-5 flex flex-wrap gap-3">
           <button
             type="button"

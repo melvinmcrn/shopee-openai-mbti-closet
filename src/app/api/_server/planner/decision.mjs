@@ -214,7 +214,7 @@ export async function generateLooks(env, brief, garments, priorLooks = [], reque
   if (!candidates.length) {
     return {
       status: "insufficient",
-      message: "Add at least one confirmed clothing item to generate a look.",
+      message: "Looks need a confirmed item with a clothing category. If your items are listed as Other, edit one in your closet and choose its category, such as Top or Dress.",
     };
   }
 
