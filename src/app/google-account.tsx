@@ -47,6 +47,7 @@ export function GoogleAccount() {
   return account ? (
     <div className="flex flex-col gap-2">
       <p>Signed in as {account.email ?? account.name}</p>
+      <a className="underline" href="/planner">Open outfit planner</a>
       <a className="underline" href="/api/auth/signout" target="_top">Sign out of MBTI Closet</a>
     </div>
   ) : (

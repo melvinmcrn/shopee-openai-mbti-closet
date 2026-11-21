@@ -5,6 +5,8 @@ const outfitCategories = [
   { category: "bottom", label: "Bottoms" },
   { category: "dress", label: "Dresses" },
   { category: "shoes", label: "Shoes" },
+  { category: "outerwear", label: "Outerwear" },
+  { category: "accessory", label: "Accessories" },
 ] as const;
 
 type PlannerHomeProps = {
