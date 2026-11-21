@@ -1,8 +1,10 @@
+import { SavedPhoto, type FindTryOn } from "./saved-photo";
 import Image from "next/image";
 import { useEffect, useState } from "react";
 import { api, imageUrl, type Garment, type SavedLook } from "./shared";
 
 type SavedListProps = {
+  findTryOn: FindTryOn;
   onOpen: (id: string) => void;
   onNew: () => void;
 };
@@ -24,8 +26,8 @@ function SavedGarment({ garment }: { garment: Garment }) {
   const [imageFailed, setImageFailed] = useState(false);
 
   return (
-    <li className="min-w-0">
-      <div className="relative flex aspect-[7/6] items-center justify-center overflow-hidden rounded-xl bg-selected">
+    <li className="flex items-center gap-2">
+      <div className="relative flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-selected">
         {garment.imageRef && !imageFailed ? (
           <Image
             src={imageUrl(garment.imageRef)}
@@ -41,12 +43,12 @@ function SavedGarment({ garment }: { garment: Garment }) {
           </span>
         )}
       </div>
-      <p className="mt-2 break-words text-sm font-medium">{garment.name}</p>
+      <p className="break-words text-xs">{garment.name}</p>
     </li>
   );
 }
 
-export function SavedList({ onOpen, onNew }: SavedListProps) {
+export function SavedList({ onOpen, onNew, findTryOn }: SavedListProps) {
   const [state, setState] = useState<SavedListState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
 
@@ -108,11 +110,12 @@ export function SavedList({ onOpen, onNew }: SavedListProps) {
           {state.looks.map((look) => (
             <li key={look.id} className="min-w-0">
               <article className="flex h-full flex-col rounded-2xl border border-divider bg-surface p-5 shadow-sm">
-                <h2 className="break-words font-heading text-2xl">{look.occasion}</h2>
+                <SavedPhoto look={look} findTryOn={findTryOn} />
+                <h2 className="mt-3 break-words font-heading text-2xl">{look.occasion}</h2>
                 <time dateTime={look.createdAt} className="mt-1 text-sm text-supporting">
                   {dateFormat.format(new Date(look.createdAt))}
                 </time>
-                <ul className="mt-4 grid grid-cols-2 gap-x-3 gap-y-4 sm:grid-cols-3">
+                <ul className="mt-4 grid grid-cols-2 gap-2">
                   {Object.entries(look.slots).map(([slot, garment]) => (
                     <SavedGarment key={`${slot}:${garment.id}:${garment.imageRef}`} garment={garment} />
                   ))}

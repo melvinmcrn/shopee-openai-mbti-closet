@@ -1,8 +1,13 @@
 import { readPrivateFile, writePrivateFile, deletePrivateFile } from "../private-files.mjs";
 
+export function previewSelection(slots, useProfilePhoto, version = "photo-v2") {
+  const entries = Object.entries(slots).filter(([, id]) => id != null).sort(([a], [b]) => a.localeCompare(b));
+  return JSON.stringify(version ? [version, useProfilePhoto, entries] : [useProfilePhoto, entries]);
+}
+
 export function previewFiles(env, accountId, optionId, slots, useProfilePhoto) {
   const account = { id: accountId };
-  const selection = JSON.stringify(["photo-v2", useProfilePhoto, Object.entries(slots).filter(([, id]) => id != null).sort(([a], [b]) => a.localeCompare(b))]);
+  const selection = previewSelection(slots, useProfilePhoto);
   return {
     async cachedImage() {
       const row = await env.DB.prepare("SELECT file_id FROM planner_previews WHERE user_id=? AND option_id=? AND selection=?")

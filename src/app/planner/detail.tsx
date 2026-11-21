@@ -1,11 +1,13 @@
 "use client";
 
+import { SavedPhoto, type FindTryOn } from "./saved-photo";
 import Image from "next/image";
 import { EnhancementProduct } from "./enhancement";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, imageUrl, type Garment, type SavedLook } from "./shared";
 
 type DetailProps = {
+  findTryOn: FindTryOn;
   id: string;
   onWear: (id: string) => void;
   onBack: () => void;
@@ -33,15 +35,15 @@ function SavedGarment({ slot, garment }: { slot: string; garment: Garment }) {
   const slotLabel = slot.replace(/[-_]/g, " ");
 
   return (
-    <li className="min-w-0 overflow-hidden rounded-2xl border border-divider bg-surface">
-      <div className="relative grid aspect-[7/6] place-items-center bg-selected">
+    <li className="flex min-w-0 items-center gap-2">
+      <div className="relative grid size-12 shrink-0 place-items-center overflow-hidden rounded-lg bg-selected">
         {garment.imageRef && !imageFailed ? (
           <Image
             src={imageUrl(garment.imageRef)}
             alt=""
             fill
             unoptimized
-            sizes="(min-width: 640px) 25vw, 50vw"
+            sizes="48px"
             className="object-contain"
             onError={() => setImageFailed(true)}
           />
@@ -51,7 +53,7 @@ function SavedGarment({ slot, garment }: { slot: string; garment: Garment }) {
           </span>
         )}
       </div>
-      <div className="p-3">
+      <div className="min-w-0">
         <p className="text-xs font-medium capitalize text-supporting">{slotLabel}</p>
         <p className="mt-1 wrap-break-word text-sm font-semibold">{garment.name}</p>
         {garment.color && <p className="mt-1 text-xs capitalize text-supporting">{garment.color}</p>}
@@ -308,7 +310,7 @@ function ShoppingSuggestions({ lookId }: { lookId: string }) {
   );
 }
 
-function SavedDetail({ id, onWear, onBack }: DetailProps) {
+function SavedDetail({ id, onWear, onBack, findTryOn }: DetailProps) {
   const [result, setResult] = useState<DetailResult>();
   const [attempt, setAttempt] = useState(0);
 
@@ -364,6 +366,7 @@ function SavedDetail({ id, onWear, onBack }: DetailProps) {
 
       {look && (
         <>
+          <div className="mx-auto w-full max-w-sm"><SavedPhoto look={look} findTryOn={findTryOn} /></div>
           <section aria-labelledby="saved-pieces-title">
             <h2 id="saved-pieces-title" className="mb-3 text-lg font-semibold">Outfit pieces</h2>
             <ul className="grid grid-cols-2 gap-3 sm:grid-cols-4">

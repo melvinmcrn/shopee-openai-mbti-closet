@@ -7,6 +7,7 @@ import { api, imageUrl, type Garment, type Look } from "./shared";
 
 type RefineProps = {
   look: Look;
+  useProfilePhoto: boolean;
   garments: Garment[];
   onSaved: (id: string) => void;
   onPreview: () => void;
@@ -36,7 +37,7 @@ function GarmentPhoto({ garment }: { garment?: Garment }) {
   );
 }
 
-export function Refine({ look, garments, onSaved, onPreview, onBack }: RefineProps) {
+export function Refine({ look, useProfilePhoto, garments, onSaved, onPreview, onBack }: RefineProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const savePending = useRef(false);
@@ -50,7 +51,7 @@ export function Refine({ look, garments, onSaved, onPreview, onBack }: RefinePro
     setError("");
 
     try {
-      const saved = await api<{ id: string }>("save", { optionId: look.id, slots: look.slots });
+      const saved = await api<{ id: string }>("save", { optionId: look.id, slots: look.slots, useProfilePhoto });
       onSaved(saved.id);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save this outfit. Try again.");

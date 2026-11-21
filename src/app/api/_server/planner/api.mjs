@@ -68,7 +68,16 @@ export async function dispatchPlanner(env, accountId, action, input = {}, depend
       const brief = await getBrief(db, accountId, source.briefId);
       return generatePreview(env, accountId, Object.values(final), input.useProfilePhoto, files, brief);
     }
-    case "save": return saveLook(db, accountId, await option(db, accountId, input.optionId), input.slots, await wardrobe());
+    case "savedPreview": {
+      const look = found(await getLook(db, accountId, input.id));
+      if (look.previewRef) return { imageRef: look.previewRef };
+      const ids = Object.fromEntries(Object.entries(look.slots).map(([slot, garment]) => [slot, garment.id]));
+      const files = dependencies.preview ?? previewFiles(env, accountId, look.optionId, ids, look.useProfilePhoto);
+      const source = await option(db, accountId, look.optionId);
+      const brief = await getBrief(db, accountId, source.briefId);
+      return generatePreview(env, accountId, Object.values(look.slots), look.useProfilePhoto, files, brief);
+    }
+    case "save": return saveLook(db, accountId, await option(db, accountId, input.optionId), input.slots, await wardrobe(), input.useProfilePhoto === true);
     case "list": return listLooks(db, accountId);
     case "detail": return found(await getLook(db, accountId, input.id));
     default: throw new PlannerError(400, "Unknown planner action.");

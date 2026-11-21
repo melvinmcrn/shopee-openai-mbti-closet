@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { LookEnhancement } from "./enhancement";
 import type { LoadTryOn } from "./try-on";
+import { ProfilePhotoChoice } from "./profile-photo-choice";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api, imageUrl, type Garment, type Look } from "./shared";
@@ -179,12 +180,12 @@ function CompareBrief({ briefId, garments, onChoose, onEdit, loadTryOn, useProfi
         </button>
       </header>
 
+      {(busy || looks.length > 0) && (
+        <div className="mb-5">
+          <ProfilePhotoChoice checked={useProfilePhoto} onChange={setUseProfilePhoto} />
+        </div>
+      )}
       {looks.length > 0 && (
-        <>
-        <label className="mb-5 flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={useProfilePhoto} onChange={event => setUseProfilePhoto(event.target.checked)} />
-          Use my profile photo for all looks and send it to OpenAI for styling
-        </label>
         <div className="grid grid-cols-2 gap-2 sm:gap-4">
           {looks.map((look, index) => (
             <LookCard
@@ -198,7 +199,6 @@ function CompareBrief({ briefId, garments, onChoose, onEdit, loadTryOn, useProfi
             />
           ))}
         </div>
-        </>
       )}
 
       <div aria-live="polite" className={looks.length ? "mt-5" : ""}>

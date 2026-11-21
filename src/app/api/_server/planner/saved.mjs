@@ -1,3 +1,5 @@
+import { previewSelection } from "./preview-files.mjs";
+
 const slotNames = new Set(["top", "bottom", "dress", "shoes", "outerwear", "accessory", "other"]);
 
 function numericId(value) {
@@ -57,7 +59,9 @@ function selectSlots(table, lookKey, lookId) {
 
 async function readLooks(db, accountId, id) {
   const { results } = await db.prepare(`
-    SELECT look.id, look.source_option_id, look.name AS occasion, option.explanation,
+    SELECT look.id, look.source_option_id, look.use_profile_photo,
+      (SELECT json_group_object(preview.selection, preview.file_id) FROM planner_previews AS preview
+       WHERE preview.user_id = look.user_id AND preview.option_id = look.source_option_id) AS previews, option.preview_file_id, look.name AS occasion, option.explanation,
       strftime('%Y-%m-%dT%H:%M:%fZ', look.saved_at) AS created_at,
       ${selectSlots("saved_look_items", "saved_look_id", "look.id")} AS slots,
       ${selectSlots("outfit_option_items", "option_id", "look.source_option_id")} AS original_slots
@@ -69,18 +73,33 @@ async function readLooks(db, accountId, id) {
     ORDER BY created_at DESC, look.id DESC
   `).bind(...(id === undefined ? [accountId] : [accountId, id])).all();
 
-  return results.map((row) => ({
-    id: String(row.id),
-    optionId: String(row.source_option_id),
-    occasion: row.occasion,
-    slots: JSON.parse(row.slots),
-    originalSlots: JSON.parse(row.original_slots),
-    explanation: row.explanation ?? "",
-    createdAt: row.created_at,
-  }));
+  return results.map(row => {
+    const slots = JSON.parse(row.slots);
+    const originalSlots = JSON.parse(row.original_slots);
+    const ids = Object.fromEntries(Object.entries(slots).map(([slot, garment]) => [slot, garment.id]));
+    const previews = JSON.parse(row.previews);
+    const modes = row.use_profile_photo == null ? [false, true] : [row.use_profile_photo === 1];
+    const versions = row.use_profile_photo == null ? ["photo-v2", "photo-v1", null] : ["photo-v2", "photo-v1"];
+    const selections = versions.flatMap(version =>
+      modes.map(mode => previewSelection(ids, mode, version)));
+    const sameAsOriginal = Object.keys(ids).length === Object.keys(originalSlots).length
+      && Object.entries(ids).every(([slot, id]) => originalSlots[slot]?.id === id);
+    const originalPreview = row.use_profile_photo == null && sameAsOriginal ? row.preview_file_id : null;
+    return {
+      id: String(row.id),
+      optionId: String(row.source_option_id),
+      useProfilePhoto: row.use_profile_photo === 1,
+      previewRef: selections.map(selection => previews[selection]).find(Boolean) ?? originalPreview,
+      occasion: row.occasion,
+      slots,
+      originalSlots,
+      explanation: row.explanation ?? "",
+      createdAt: row.created_at,
+    };
+  });
 }
 
-export async function saveLook(db, accountId, sourceOption, slots, garments) {
+export async function saveLook(db, accountId, sourceOption, slots, garments, useProfilePhoto = false) {
   const optionId = numericId(sourceOption?.id);
   if (optionId === null) {
     throw new TypeError("A saved look must have a generated option");
@@ -89,10 +108,10 @@ export async function saveLook(db, accountId, sourceOption, slots, garments) {
   const snapshot = snapshotSlots(slots, garments);
   const [insert] = await db.batch([
     db.prepare(`
-      INSERT INTO saved_looks (user_id, source_option_id, name, saved_at)
-      VALUES (?1, ?2, (SELECT title FROM outfit_options WHERE user_id = ?1 AND id = ?2), ?3)
+      INSERT INTO saved_looks (user_id, source_option_id, name, saved_at, use_profile_photo)
+      VALUES (?1, ?2, (SELECT title FROM outfit_options WHERE user_id = ?1 AND id = ?2), ?3, ?4)
       RETURNING id
-    `).bind(accountId, optionId, new Date().toISOString()),
+    `).bind(accountId, optionId, new Date().toISOString(), useProfilePhoto ? 1 : 0),
     db.prepare(`
       WITH new_look AS MATERIALIZED (SELECT last_insert_rowid() AS id)
       INSERT INTO saved_look_items

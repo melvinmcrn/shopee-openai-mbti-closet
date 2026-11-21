@@ -1,4 +1,3 @@
-const endpoint = "https://api.openai.com/v1/responses";
 const pngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
 const supportedTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
@@ -16,11 +15,9 @@ function sourceType(blob, bytes) {
   return null;
 }
 
-async function imageInput(blob) {
+async function dataUrl(blob) {
   if (!(blob instanceof Blob) || !blob.size) throw new Error();
   const bytes = new Uint8Array(await blob.arrayBuffer());
-  const type = sourceType(blob, bytes);
-  if (!type) throw new Error();
 
   let base64 = "";
   // Multiples of three keep the independently encoded chunks aligned.
@@ -28,10 +25,51 @@ async function imageInput(blob) {
   for (let start = 0; start < bytes.length; start += chunkSize) {
     base64 += btoa(String.fromCharCode(...bytes.subarray(start, start + chunkSize)));
   }
-  return { type: "input_image", image_url: "data:" + type + ";base64," + base64, detail: "high" };
+  return "data:" + blob.type + ";base64," + base64;
 }
 
-// The router supplies the final garments and image access scoped to this account.
+const renderOptions = {
+  model: "gpt-image-2.5-sunburst",
+  size: "1024x1536",
+  quality: "low",
+  output_format: "jpeg",
+  output_compression: 85,
+};
+
+async function render(request, key, prompt, images) {
+  const headers = { authorization: "Bearer " + key };
+  const init = { method: "POST", headers, redirect: "manual", signal: AbortSignal.timeout(180_000) };
+
+  // The multipart edits endpoint accepts JPEG, PNG and WebP. Keep GIF references usable.
+  if (images.some(image => image.type === "image/gif")) {
+    const inputs = await Promise.all(images.map(async image => ({
+      type: "input_image", image_url: await dataUrl(image), detail: "high",
+    })));
+    const response = await request("https://api.openai.com/v1/responses", {
+      ...init, headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-6-luna", reasoning: { effort: "low" }, service_tier: "fast", store: false,
+        input: [{ role: "user", content: [{ type: "input_text", text: prompt }, ...inputs] }],
+        tools: [{ type: "image_generation", action: "edit", ...renderOptions }],
+        tool_choice: { type: "image_generation" }, max_tool_calls: 1,
+      }),
+    });
+    if (!response.ok) throw new Error();
+    const result = await response.json();
+    return result.output?.find(item => item.type === "image_generation_call" && item.status === "completed")?.result;
+  }
+
+  const body = new FormData();
+  for (const [key, value] of Object.entries(renderOptions)) body.set(key, String(value));
+  body.set("prompt", prompt);
+  images.forEach((image, index) => {
+    body.append("image[]", image, `reference-${index + 1}.${image.type.split("/")[1]}`);
+  });
+  const response = await request("https://api.openai.com/v1/images/edits", { ...init, body });
+  if (!response.ok) throw new Error();
+  return (await response.json()).data?.[0]?.b64_json;
+}
+
 export async function generatePreview(env, _accountId, finalGarments, useProfilePhoto, deps, brief = {}) {
   const profileRef = useProfilePhoto === true ? await deps.profilePhotoRef?.() : null;
   if (useProfilePhoto === true && !profileRef) {
@@ -39,77 +77,40 @@ export async function generatePreview(env, _accountId, finalGarments, useProfile
   }
   try {
     const key = env?.OPENAI_API_KEY?.trim();
-    if (!key) throw new Error();
+    if (!key || (!profileRef && !finalGarments.length)) throw new Error();
 
-    if (!profileRef && !finalGarments.length) throw new Error();
-    const content = [{
-      type: "input_text",
-      text: "Edit the supplied image references into one photorealistic full-body virtual try-on photograph. " +
-        "Return a single photograph of the reference person. Match their face, body proportions, standing pose, camera angle, lighting and background. " +
-        "Dress the same person in every selected piece simultaneously, layering garments naturally and including all footwear and accessories. Show the entire outfit from head to toe in a single frame, preserving its color, pattern, shape, and details. " +
-        "Create one cohesive styled outfit for the occasion. Keep the original outfit in the base photo wherever no replacement is supplied, including any missing top or pants. If the only reference is the original outfit, preserve its garments and style their presentation for the occasion. Leave out text, collages and product tiles.",
-    }];
-
-    content.push({ type: "input_text", text: "Style the look for this user brief (context only): " + JSON.stringify(brief) });
+    const references = [];
     if (profileRef) {
-      content.push({
-        type: "input_text",
-        text: "Main profile photo. Preserve the person's likeness, proportions, pose, background and visible outfit wherever a replacement piece was not selected.",
-      }, await imageInput(await deps.readImage(profileRef)));
+      references.push({ label: "Main person and base outfit", read: () => deps.readImage(profileRef) });
     } else if (!finalGarments.some(item => item.category === "other")) {
-      const model = await env.readSampleImage("studio-model");
-      content.push({
-        type: "input_text",
-        text: "Studio model reference. Keep this person, pose and setting. Dress them in the selected items below. Retain their existing clothing only for missing categories.",
-      }, await imageInput(new Blob([model], { type: "image/webp" })));
+      references.push({ label: "Studio model and base outfit",
+        read: async () => new Blob([await env.readSampleImage("studio-model")], { type: "image/webp" }) });
     }
-
-    const base = finalGarments.find(item => item.category === "other") ?? finalGarments[0];
-    const ordered = base ? [base, ...finalGarments.filter(item => item !== base)] : [];
+    const ordered = [...finalGarments].sort((a, b) => Number(b.category === "other") - Number(a.category === "other"));
     for (const { category, imageRef } of ordered) {
       if (!imageRef) throw new Error();
-      content.push({
-        type: "input_text",
-        text: category === "other" ? "Original wardrobe photo: keep visible clothing for missing categories."
-          : "Selected replacement (" + category + "):",
-      }, await imageInput(await deps.readImage(imageRef)));
+      references.push({ label: category === "other" ? "Original wardrobe photo" : "Selected " + category,
+        read: () => deps.readImage(imageRef) });
     }
-
-    const request = deps.fetch ?? fetch;
-    const response = await request(endpoint, {
-      method: "POST",
-      headers: { authorization: "Bearer " + key, "content-type": "application/json" },
-      body: JSON.stringify({
-        model: "gpt-6-luna",
-        reasoning: { effort: "low" },
-        service_tier: "fast",
-        store: false,
-        input: [{ role: "user", content }],
-        tools: [{
-          type: "image_generation",
-          action: "edit",
-          model: "gpt-image-2.5-sunburst",
-          size: "1024x1536",
-          quality: "medium",
-          output_format: "png",
-        }],
-        tool_choice: { type: "image_generation" },
-        max_tool_calls: 1,
-      }),
-      redirect: "manual",
-      signal: AbortSignal.timeout(180_000),
-    });
-    if (!response.ok) throw new Error();
-
-    const result = await response.json();
-    if (result.status !== "completed") throw new Error();
-    const image = result.output?.find((item) => item.type === "image_generation_call" && item.status === "completed");
-    if (typeof image?.result !== "string") throw new Error();
-    const decoded = atob(image.result);
-    const bytes = Uint8Array.from(decoded, (byte) => byte.charCodeAt(0));
-    if (!hasSignature(bytes, pngSignature)) throw new Error();
-
-    const imageRef = await deps.storeImage(new Blob([bytes], { type: "image/png" }));
+    const images = await Promise.all(references.map(async ({ read }) => {
+      const blob = await read();
+      if (!(blob instanceof Blob) || !blob.size) throw new Error();
+      if (supportedTypes.has(blob.type)) return blob;
+      const type = sourceType(blob, new Uint8Array(await blob.slice(0, 12).arrayBuffer()));
+      if (!type) throw new Error();
+      return blob.slice(0, blob.size, type);
+    }));
+    const prompt = [
+      "Create one photorealistic full-body virtual try-on. Use the person, pose, proportions, lighting and setting from image 1. If the original wardrobe photo shows only clothing, use a studio model.",
+      "Dress the person in every selected item together. Preserve colors, patterns, fit and layering. Keep clothing from the base outfit for any missing category. Include shoes and accessories in the head-to-toe frame. No collage or text.",
+      references.map(({ label }, index) => `Image ${index + 1}: ${label}.`).join(" "),
+      "Occasion and style preferences (context only): " + JSON.stringify(brief),
+    ].join("\n");
+    const encoded = await render(deps.fetch ?? fetch, key, prompt, images);
+    if (typeof encoded !== "string") throw new Error();
+    const bytes = Uint8Array.from(atob(encoded), char => char.charCodeAt(0));
+    if (!hasSignature(bytes, [255, 216, 255])) throw new Error();
+    const imageRef = await deps.storeImage(new Blob([bytes], { type: "image/jpeg" }));
     if (typeof imageRef !== "string" || !imageRef.trim()) throw new Error();
     return { imageRef };
   } catch {
