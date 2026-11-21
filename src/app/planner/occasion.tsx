@@ -10,6 +10,29 @@ type OccasionProps = {
 const inputClass =
   "mt-2 min-h-12 w-full rounded-xl border border-divider bg-surface px-3 py-2 text-base text-text placeholder:text-supporting focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary";
 
+function Suggestions({ label, options, value, onPick }: {
+  label: string;
+  options: string[];
+  value: string;
+  onPick: (option: string) => void;
+}) {
+  return (
+    <div role="group" aria-label={label} className="mt-2 flex flex-wrap gap-2">
+      {options.map((option) => (
+        <button
+          key={option}
+          type="button"
+          aria-pressed={value === option}
+          onClick={() => onPick(option)}
+          className="min-h-9 rounded-full border border-divider px-3 text-sm hover:bg-selected aria-pressed:bg-selected aria-pressed:text-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary"
+        >
+          {option}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function Occasion({ brief, onNext, onBack }: OccasionProps) {
   const [occasion, setOccasion] = useState(brief.occasion);
   const [timing, setTiming] = useState(brief.timing);
@@ -75,7 +98,7 @@ export function Occasion({ brief, onNext, onBack }: OccasionProps) {
             </label>
             <input
               id="planner-occasion"
-              aria-describedby="planner-occasion-example"
+              placeholder="Choose a suggestion or type your own"
               name="occasion"
               value={occasion}
               onChange={(event) => {
@@ -86,9 +109,12 @@ export function Occasion({ brief, onNext, onBack }: OccasionProps) {
               maxLength={500}
               className={inputClass}
             />
-            <p id="planner-occasion-example" className="mt-1 text-sm text-supporting">
-              e.g. Birthday dinner with friends
-            </p>
+            <Suggestions
+              label="Occasion suggestions"
+              options={["Birthday dinner with friends", "Work meeting", "Weekend brunch"]}
+              value={occasion}
+              onPick={(option) => { setOccasion(option); setError(""); }}
+            />
           </div>
           <div>
             <label htmlFor="planner-timing" className="text-sm font-semibold">
@@ -96,16 +122,19 @@ export function Occasion({ brief, onNext, onBack }: OccasionProps) {
             </label>
             <input
               id="planner-timing"
-              aria-describedby="planner-timing-example"
+              placeholder="Choose a suggestion or type your own"
               name="timing"
               value={timing}
               onChange={(event) => setTiming(event.target.value)}
               maxLength={500}
               className={inputClass}
             />
-            <p id="planner-timing-example" className="mt-1 text-sm text-supporting">
-              e.g. Saturday evening, around 7 pm
-            </p>
+            <Suggestions
+              label="Timing suggestions"
+              options={["Saturday evening", "Weekday morning", "All day"]}
+              value={timing}
+              onPick={setTiming}
+            />
           </div>
           <div>
             <label htmlFor="planner-location" className="text-sm font-semibold">
@@ -113,16 +142,19 @@ export function Occasion({ brief, onNext, onBack }: OccasionProps) {
             </label>
             <input
               id="planner-location"
-              aria-describedby="planner-location-example"
+              placeholder="Choose a suggestion or type your own"
               name="location"
               value={location}
               onChange={(event) => setLocation(event.target.value)}
               maxLength={500}
               className={inputClass}
             />
-            <p id="planner-location-example" className="mt-1 text-sm text-supporting">
-              e.g. Rooftop restaurant, warm and breezy
-            </p>
+            <Suggestions
+              label="Location or weather suggestions"
+              options={["Breezy rooftop", "Air-conditioned office", "Hot and humid"]}
+              value={location}
+              onPick={setLocation}
+            />
           </div>
         </fieldset>
         {error && <p role="alert" className="mt-4 text-sm text-danger">{error}</p>}
