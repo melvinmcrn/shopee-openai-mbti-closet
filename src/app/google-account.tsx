@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 export function GoogleAccount() {
@@ -41,21 +42,34 @@ export function GoogleAccount() {
     return () => controller.abort();
   }, []);
 
-  if (status === "loading") return <p role="status">Checking sign-in…</p>;
-  if (status === "unavailable") return <p role="status">Sign-in is unavailable right now.</p>;
+  if (status === "loading") {
+    return <p className="pt-4 text-center text-sm text-supporting" role="status">Checking sign-in…</p>;
+  }
+  if (status === "unavailable") {
+    return (
+      <p className="rounded-xl bg-selected px-4 py-3 text-sm text-text" role="status">
+        Sign-in is unavailable right now. Please try again in a moment.
+      </p>
+    );
+  }
 
   return account ? (
-    <div className="flex flex-col gap-2">
-      <p>Signed in as {account.email ?? account.name}</p>
-      <a className="underline" href="/planner">Open outfit planner</a>
-      <a className="underline" href="/api/auth/signout" target="_top">Sign out of MBTI Closet</a>
+    <div className="flex flex-col gap-2 rounded-2xl bg-selected p-4">
+      <p className="text-sm text-text">Signed in as {account.email ?? account.name}</p>
+      <Link className="w-fit text-sm font-semibold text-secondary underline underline-offset-4" href="/planner">
+        Open outfit planner
+      </Link>
+      <a className="w-fit text-sm font-semibold text-secondary underline underline-offset-4" href="/api/auth/signout" target="_top">
+        Sign out of MBTI Closet
+      </a>
     </div>
   ) : (
-    <form action="/api/auth/signin/google" method="post" target="_top">
+    <form className="w-full" action="/api/auth/signin/google" method="post" target="_top">
       <input type="hidden" name="csrfToken" value={csrfToken} />
-      <button className="rounded-lg border border-current px-5 py-3" type="submit">
-        Sign in with Google
+      <button className="min-h-[54px] w-full rounded-[9px] bg-primary px-5 py-3 text-xl font-bold text-white shadow-sm transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-secondary focus-visible:ring-offset-2 focus-visible:ring-offset-canvas active:scale-[0.99]" type="submit">
+        Add clothes
       </button>
+      <p className="mt-3 text-center text-sm text-supporting">Sign in with Google to save your wardrobe.</p>
     </form>
   );
 }
