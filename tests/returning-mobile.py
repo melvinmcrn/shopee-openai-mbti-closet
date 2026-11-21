@@ -205,7 +205,7 @@ def run_flow(browser, device, base):
     expect(page.get_by_text("Garment preferences", exact=True)).to_have_count(0)
     expect(page.locator("input[name=preferences]")).to_have_count(0)
     expect(page.get_by_role("checkbox", name=re.compile("profile photo", re.I))).to_have_count(0)
-    page.get_by_role("button", name="Continue").tap()
+    page.get_by_role("button", name="Create looks with my profile photo").tap()
 
     expect_heading(page, "Compare looks")
     expect(page.get_by_role("checkbox", name=re.compile("profile photo", re.I))).to_have_count(0)
@@ -373,7 +373,7 @@ def check_two_catalog_basics(browser, device, base, session):
     page.get_by_role("textbox", name="Occasion", exact=True).fill("Museum visit")
     page.get_by_role("button", name="Continue").tap()
     expect_heading(page, "Today’s style")
-    page.get_by_role("button", name="Continue").tap()
+    page.get_by_role("button", name="Create looks with my profile photo").tap()
     expect_heading(page, "Compare looks")
     expect_photo_overview(page)
     initial = choose_photo(page, "Choose look 1")
@@ -382,9 +382,7 @@ def check_two_catalog_basics(browser, device, base, session):
     else:
         expect(page.get_by_role("group", name="Selected wardrobe photos")).to_have_count(0)
     links = page.get_by_role("link", name=re.compile("Buy on Shopee"))
-    gaps = ["Suggested top", "Suggested pants"]
-    if session == "profile-only":
-        gaps.append("Suggested shoes")
+    gaps = ["Suggested top", "Suggested pants", "Suggested shoes"]
     expect(links).to_have_count(len(gaps))
     by_gap = {gap: links.filter(has_text=gap).get_attribute("href") for gap in gaps}
     assert len(set(by_gap.values())) == len(gaps)
@@ -393,8 +391,7 @@ def check_two_catalog_basics(browser, device, base, session):
         by_url = {unquote(row["url"]): row for row in csv.DictReader(catalog)}
     assert by_url[unquote(by_gap["Suggested top"])]["search_term"] == "women sweater"
     assert by_url[unquote(by_gap["Suggested pants"])]["search_term"] == "women pants"
-    if session == "profile-only":
-        assert by_url[unquote(by_gap["Suggested shoes"])]["search_term"] == "women shoes"
+    assert by_url[unquote(by_gap["Suggested shoes"])]["search_term"] == "women shoes"
     save_chosen_photo(page, initial, by_gap.values())
     expect_heading(page, "Museum visit")
     expect(page.get_by_role("img", name="Full-body AI try-on for Museum visit")).to_have_js_property("src", initial)
@@ -562,7 +559,7 @@ def check_occasion_look(browser, device, base, session):
     page.get_by_role("textbox", name="Occasion", exact=True).fill("Charity gala")
     page.get_by_role("button", name="Continue").tap()
     expect_heading(page, "Today’s style")
-    page.get_by_role("button", name="Continue").tap()
+    page.get_by_role("button", name="Create looks with my profile photo").tap()
     expect_heading(page, "Compare looks")
     heading = "Styled for your occasion"
     occasion_choice = "Choose occasion look"
@@ -582,7 +579,7 @@ def check_occasion_look(browser, device, base, session):
     image_url = style_photo.evaluate("img => img.src")
 
     if session == "empty-closet":
-        expect(page.get_by_text("Studio model", exact=True)).to_be_visible()
+        expect(page.get_by_text("Studio model", exact=True)).to_have_count(0)
 
     if session == "returning-session":
         # This fixture also produces a wardrobe-led photo, plus a dress rejected by its audit.
@@ -611,7 +608,8 @@ def check_occasion_look(browser, device, base, session):
         page.get_by_role("button", name="Back to compare looks", exact=True).tap()
         expect_heading(page, "Compare looks")
     else:
-        expect(page.get_by_role("button", name=re.compile("^Choose "))).to_have_count(1)
+        expect(page.get_by_role("button", name="Choose look 1")).to_be_visible()
+        expect(page.get_by_role("button", name=re.compile("^Choose "))).to_have_count(2)
         expect(page.get_by_role("button", name="Show more looks")).to_have_count(0)
 
     expect_photo_overview(page)
@@ -632,7 +630,7 @@ def check_occasion_look(browser, device, base, session):
         expect(page.get_by_role("img", name="Silk blouse")).to_be_visible()
         expect(page.get_by_role("img", name="Wool trousers", exact=True)).to_have_count(0)
     else:
-        expect(page.get_by_text("Studio model", exact=True)).to_be_visible()
+        expect(page.get_by_text("Studio model", exact=True)).to_have_count(0)
         expect(page.get_by_role("group", name="Selected wardrobe photos")).to_have_count(0)
     links = page.get_by_role("list", name="Suggested items").get_by_role("link", name=re.compile("Buy on Shopee"))
     expected_listing_count = 1 if session == "returning-session" else 2

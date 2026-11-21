@@ -38,7 +38,9 @@ export function createTryOnLoader() {
     const selection = key(look);
     const existing = requests.get(selection);
     if (existing) return existing;
-    const request = completeLook(look);
+    const request = completeLook(look).finally(() => {
+      if (requests.get(selection) === request) requests.delete(selection);
+    });
     requests.set(selection, request);
     return request;
   }

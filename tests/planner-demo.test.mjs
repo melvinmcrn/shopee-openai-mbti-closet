@@ -118,7 +118,7 @@ test("generation adds one occasion option and keeps its sourced pieces through s
   });
 });
 
-test("a catalog-only occasion look works with an empty closet and a studio try-on", async () => {
+test("a catalog-only occasion look works with an empty closet and requires a portrait only for the try-on", async () => {
   await withDatabase(":memory:", async database => {
     migrate(database);
     database.exec("INSERT INTO users (id,auth_provider,auth_subject) VALUES (1,'google','owner')");
@@ -136,7 +136,7 @@ test("a catalog-only occasion look works with an empty closet and a studio try-o
     assert.equal(result.looks.length, 1);
     const [look] = result.looks;
     const catalogItemIds = Object.values(catalogSlots);
-    assert.deepEqual(await dispatch("preview", { optionId: look.id, catalogItemIds }), { imageRef: "studio-photo", useProfilePhoto: false });
+    await assert.rejects(dispatch("preview", { optionId: look.id, catalogItemIds }), { code: "profile_photo_required" });
     const saved = await dispatch("save", { optionId: look.id, slots: {} });
     assert.deepEqual(saved.slots, {});
     assert.deepEqual(saved.enhancements.map(item => item.id).sort(), [...catalogItemIds].sort());
