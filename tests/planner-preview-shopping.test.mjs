@@ -48,7 +48,8 @@ function d1Binding(database) {
   };
 }
 
-async function startPlanner(t, preview, optionSlots = original, shoppingFetch, searchTerm = "evening layer") {
+async function startPlanner(t, preview, optionSlots = original, shoppingFetch, config = {}) {
+  const searchTerm = typeof config === "string" ? config : config.searchTerm ?? "men jacket";
   const database = new DatabaseSync(":memory:");
   t.after(() => database.close());
   const migrations = new URL("../drizzle/", import.meta.url);
@@ -71,30 +72,33 @@ async function startPlanner(t, preview, optionSlots = original, shoppingFetch, s
   if (shoppingFetch) {
     database.exec(`
       INSERT INTO clothes_image_database (item_id, shop_id, search_group, search_term, name, url, image_url, price, currency)
-      VALUES ('123', '1', 'unisex', 'evening layer', 'Linen jacket', 'https://shopee.co.th/product/1/123',
+      VALUES ('123', '1', 'men', 'men jacket', 'Linen jacket', 'https://shopee.co.th/product/1/123',
         'https://down-th.img.susercontent.com/file/jacket', 350, 'THB');
       INSERT INTO clothes_listing_details (item_id, search_group, search_term, image_url, ocr_image, is_mall)
-      VALUES ('123', 'unisex', 'evening layer', 'https://down-th.img.susercontent.com/file/jacket', 'jacket.jpg', 0)
+      VALUES ('123', 'men', 'men jacket', 'https://down-th.img.susercontent.com/file/jacket', 'jacket.jpg', 0)
     `);
   }
   const makeSession = (user = accountId, key = "mock-provider-key") => {
-    const env = { readSampleImage, DB: d1Binding(database), OPENAI_API_KEY: key };
+    const env = { readSampleImage, DB: d1Binding(database), OPENAI_API_KEY: key, ...config.env };
     const dependencies = {
       generateLooks: async () => ({
         status: "ready",
         looks: [{ slots: optionSlots, explanation: "The dress works for dinner." }],
       }),
       preview,
+      readBaseCoverage: async () => null,
+      ...(!shoppingFetch && { evaluateEnhancements: async () => [] }),
       shoppingFetch: (url, request) => {
         const { questions: [question], input } = JSON.parse(request.body);
         if (question.name === "catalog_search") {
           const gap = input[1].content[0].data.missingGarment;
           const term = gap ? question.choices.find(({ value }) => value !== "none")
-            : question.choices.find(({ description }) => description === searchTerm);
+            : question.choices.find(({ description }) => description.endsWith(" / " + searchTerm));
           return decision(shoppingFetch && term ? term.value : "none", { name: question.name });
         }
         return shoppingFetch(url, request);
       },
+      ...config.dependencies,
     };
     return (action, input) => dispatchPlanner(env, user, action, input, dependencies);
   };
@@ -373,7 +377,7 @@ test("Decisions selects a Shopee catalog product from the final outfit and the o
   assert.ok(payload.questions[0].choices.some(({ value }) => value === "item_123"));
   const [suggestion] = initial;
   assert.deepEqual(initial, [{
-    id: suggestion.id, catalogItemId: "123", category: "evening layer",
+    id: suggestion.id, catalogItemId: "123", category: "men jacket", searchGroup: "men", searchTerm: "men jacket", ocrImage: "jacket.jpg",
     title: "Linen jacket",
     url: "https://shopee.co.th/product/1/123",
     imageUrl: "https://down-th.img.susercontent.com/file/jacket",
@@ -502,6 +506,27 @@ test("catalog search shows all matches for the desired term and cannot substitut
   assert.deepEqual(new Set(choices.map(({ value }) => value)), new Set([...expectedIds, "none"]));
 });
 
+test("a product listed under multiple searches keeps the selected row's photo in Elevate and Saved", async t => {
+  const { dispatch, optionId, database } = await startPlanner(t, undefined, original, async () => decision("item_123"), "women sweater");
+  database.exec(`
+    INSERT INTO clothes_listing_details (item_id, search_group, search_term, image_url, ocr_image, is_mall)
+    VALUES ('123', 'women', 'women sweater', 'https://down-th.img.susercontent.com/file/alternate', 'alternate.jpg', 0),
+           ('123', 'men', 'women sweater', 'https://down-th.img.susercontent.com/file/incorrect', 'incorrect.jpg', 0);
+  `);
+  const product = await dispatch("enhancement", { optionId, slots: refined });
+  assert.equal(product.searchGroup, "women");
+  assert.equal(product.searchTerm, "women sweater");
+  assert.equal(product.ocrImage, "alternate.jpg");
+  const saved = await dispatch("save", { optionId, slots: refined });
+  assert.deepEqual((await dispatch("detail", { id: saved.id })).enhancements, [product]);
+  const [suggestion] = await dispatch("shopping", { lookId: saved.id });
+  assert.equal(suggestion.imageUrl, "https://down-th.img.susercontent.com/file/alternate");
+  assert.equal(suggestion.ocrImage, product.ocrImage);
+  database.exec("DELETE FROM clothes_listing_details WHERE item_id='123' AND search_group='women'");
+  assert.equal(await dispatch("enhancement", { optionId, slots: refined }), null);
+  assert.deepEqual(await dispatch("shopping", { lookId: saved.id }), []);
+});
+
 test("a stale or mismatched catalog purchase URL cannot be shown on a plan or saved look", async (t) => {
   const { dispatch, optionId, database } = await startPlanner(t, undefined, original, async () => decision("item_123"));
   assert.equal((await dispatch("enhancement", { optionId, slots: refined })).title, "Linen jacket");
@@ -542,9 +567,9 @@ test("enhanced preview keys track the product image and hide immediately switche
     database.prepare("INSERT INTO planner_previews VALUES (1,?,?,?)").run(optionId, previewSelection(slots, false, products), ref);
   }
   assert.equal((await dispatch("savedPreview", { id, catalogItemIds: [product.id] })).imageRef, "with-jacket");
-  database.exec("UPDATE clothes_image_database SET image_url = 'https://down-th.img.susercontent.com/file/replacement' WHERE item_id = '123'");
+  database.exec("UPDATE clothes_listing_details SET image_url = 'https://down-th.img.susercontent.com/file/replacement' WHERE item_id = '123'");
   assert.equal((await dispatch("detail", { id })).previewRef, null);
-  database.exec("UPDATE clothes_image_database SET image_url = 'https://down-th.img.susercontent.com/file/jacket' WHERE item_id = '123'");
+  database.exec("UPDATE clothes_listing_details SET image_url = 'https://down-th.img.susercontent.com/file/jacket' WHERE item_id = '123'");
   const [suggestion] = await dispatch("shopping", { lookId: id });
   assert.equal(suggestion.catalogItemId, product.id);
   await dispatch("hide", { lookId: id, id: suggestion.id });
@@ -612,6 +637,23 @@ test("an unselected owned top covers its category when suggesting pants", async 
   }
 });
 
+test("replacing a visible dress with a separate needs the other half from the catalog", async t => {
+  const covered = { top: false, bottom: false, dress: true, shoes: true, outerwear: false };
+  const fetch = t.mock.fn(chooseFirstListing);
+  const { database, dispatch, optionId } = await startPlanner(t, undefined, original, fetch, {
+    dependencies: { readBaseCoverage: async () => covered },
+  });
+  // Use the same wardrobe item first as the selected top, then as the selected bottoms.
+  for (const [selected, missing] of [["top", "bottom"], ["bottom", "top"]]) {
+    database.prepare("UPDATE wardrobe_items SET category=? WHERE id=12").run(selected);
+    const [product] = await dispatch("enhancements", { optionId, slots: { [selected]: necklace.id } });
+    assert.equal(product.wardrobeGap, missing);
+    const evidence = JSON.parse(fetch.mock.calls.at(-1).arguments[1].body).input[1].content[0].data;
+    assert.equal(evidence.visibleInPhoto.dress, false);
+    assert.equal(evidence.missingGarment, missing);
+  }
+});
+
 test("a profile-only option can offer both missing categories from an empty closet", async t => {
   const { database, dispatch } = await startPlanner(t, undefined, original, chooseFirstListing);
   database.exec("UPDATE wardrobe_items SET archived_at=CURRENT_TIMESTAMP");
@@ -626,29 +668,56 @@ test("a profile-only option can offer both missing categories from an empty clos
   assert.equal(new Set(products.map(product => product.id)).size, 2);
 });
 
-test("the account photo can model approved catalog basics with an empty wardrobe", async t => {
+test("a headshot is completed with the exact stored catalog images chosen by Elevate your look", async t => {
   const preview = {
-    readImage: t.mock.fn(async ref => new Blob([ref], { type: "image/jpeg" })),
+    readImage: async ref => new Blob([ref], { type: "image/jpeg" }),
     fetch: t.mock.fn(previewReply),
     storeImage: async () => "profile-look.jpg",
   };
-  const { dispatch, database } = await startPlanner(t, preview, original, chooseFirstListing);
+  const catalogGet = t.mock.fn(async key => new Blob([Uint8Array.of(255, 216, 255), key]));
+  const headshot = { top: false, bottom: false, dress: false, shoes: false, outerwear: false };
+  const { dispatch, database } = await startPlanner(t, preview, original, chooseFirstListing, {
+    env: { BUCKET: { get: catalogGet } }, dependencies: { readBaseCoverage: async () => headshot },
+  });
   database.exec("UPDATE wardrobe_items SET archived_at=CURRENT_TIMESTAMP");
   const brief = await dispatch("saveBrief", { occasion: "Lunch", preferences: [] });
   const { looks: [look] } = await dispatch("generate", { briefId: brief.id });
   assert.deepEqual(look.slots, {});
+  const products = await dispatch("enhancements", { optionId: look.id, slots: {} });
+  assert.deepEqual(products.map(p => p.wardrobeGap).sort(), ["bottom", "shoes", "top"]);
   assert.deepEqual(await dispatch("preview", { optionId: look.id, slots: {}, catalogItemIds: [] }), { imageRef: null });
   assert.equal(preview.fetch.mock.callCount(), 0);
-  const products = await dispatch("enhancements", { optionId: look.id, slots: {} });
   const catalogItemIds = products.map(product => product.id);
-  assert.equal(catalogItemIds.length, 2);
   assert.deepEqual(await dispatch("preview", { optionId: look.id, slots: {}, catalogItemIds }), { imageRef: "profile-look.jpg" });
-  const fetchedUrls = preview.fetch.mock.calls.map(call => call.arguments[0]);
-  for (const product of products) assert.ok(fetchedUrls.includes(product.imageUrl));
+  const keys = products.map(p => p.ocrImage.startsWith("clothes_image_database/") ? p.ocrImage : "clothes_image_database/" + p.ocrImage);
+  assert.deepEqual(catalogGet.mock.calls.map(call => call.arguments[0]), keys);
   const edit = preview.fetch.mock.calls.find(call => call.arguments[0].endsWith("/images/edits"));
   const [person, ...items] = edit.arguments[1].body.getAll("image[]");
   assert.equal(await person.text(), "profile.png");
-  assert.equal(items.length, 2);
+  for (const [index, item] of items.entries()) {
+    assert.equal(await item.slice(3).text(), keys[index]);
+  }
+});
+
+test("a headshot uses an available wardrobe top before adding matching catalog bottoms and shoes", async t => {
+  const preview = {
+    readImage: async ref => new Blob([ref], { type: "image/jpeg" }),
+    fetch: t.mock.fn(previewReply), storeImage: async () => "mixed.jpg",
+  };
+  const headshot = { top: false, bottom: false, dress: false, shoes: false, outerwear: false };
+  const slots = { accessory: necklace.id };
+  const { dispatch, database, optionId } = await startPlanner(t, preview, slots, chooseFirstListing, {
+    env: { BUCKET: { get: async key => new Blob([Uint8Array.of(255, 216, 255), key]) } },
+    dependencies: { readBaseCoverage: async () => headshot },
+  });
+  database.exec("UPDATE wardrobe_items SET category='top' WHERE id=9");
+  database.exec("UPDATE wardrobe_items SET archived_at=CURRENT_TIMESTAMP WHERE category='shoes'");
+  const products = await dispatch("enhancements", { optionId, slots });
+  assert.deepEqual(products.map(p => p.wardrobeGap).sort(), ["bottom", "shoes"]);
+  assert.deepEqual(await dispatch("preview", { optionId, slots, catalogItemIds: products.map(p => p.id) }), { imageRef: "mixed.jpg" });
+  const images = preview.fetch.mock.calls[0].arguments[1].body.getAll("image[]");
+  assert.deepEqual(await Promise.all(images.slice(0, 3).map(image => image.text())), ["profile.png", necklace.imageRef, dress.imageRef]);
+  assert.deepEqual(await Promise.all(images.slice(3).map(image => image.slice(3).text())), products.map(p => p.ocrImage));
 });
 
 test("automatic saves retain the resolved mode; legacy regeneration uses the account photo", async t => {

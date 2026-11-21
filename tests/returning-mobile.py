@@ -298,14 +298,19 @@ def check_two_catalog_basics(browser, device, base, session):
     if session == "other-account":
         expect(article.get_by_role("img", name="Private scarf")).to_be_visible()
     links = article.get_by_role("link", name=re.compile("Buy on Shopee"))
-    expect(links).to_have_count(2)
-    by_gap = {gap: links.filter(has_text=gap).get_attribute("href") for gap in ("Suggested top", "Suggested pants")}
-    assert len(set(by_gap.values())) == 2
+    gaps = ["Suggested top", "Suggested pants"]
+    if session == "profile-only":
+        gaps.append("Suggested shoes")
+    expect(links).to_have_count(len(gaps))
+    by_gap = {gap: links.filter(has_text=gap).get_attribute("href") for gap in gaps}
+    assert len(set(by_gap.values())) == len(gaps)
     source = Path(__file__).resolve().parents[1] / "Shopee Database/new_clothes_sample_full.csv"
     with source.open(encoding="utf-8-sig", newline="") as catalog:
         by_url = {unquote(row["url"]): row for row in csv.DictReader(catalog)}
     assert by_url[unquote(by_gap["Suggested top"])]["search_term"] == "women sweater"
     assert by_url[unquote(by_gap["Suggested pants"])]["search_term"] == "women pants"
+    if session == "profile-only":
+        assert by_url[unquote(by_gap["Suggested shoes"])]["search_term"] == "women shoes"
     photo = article.get_by_role("img", name="Full-body virtual try-on of this outfit")
     expect(photo).to_have_js_property("naturalWidth", 1)
     initial = photo.get_attribute("src")

@@ -28,7 +28,7 @@ function selectionKey(look: Look) {
 
 export function listingKey(products: CatalogProduct[]) {
   return JSON.stringify([...products].sort((a, b) => a.id.localeCompare(b.id)).map(product => [
-    product.id, product.imageUrl, product.title, product.wardrobeGap,
+    product.id, product.searchGroup, product.searchTerm, product.ocrImage, product.imageUrl, product.title, product.wardrobeGap,
   ]));
 }
 

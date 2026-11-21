@@ -85,6 +85,12 @@ const env = {
   DB: db,
   BUCKET: {
     get: async id => {
+      if (id.startsWith("clothes_image_database/")) {
+        const row = database.prepare("SELECT item_id FROM clothes_listing_details WHERE ocr_image=?").get(id);
+        if (!row) return null;
+        const photo = new Blob([listingJpeg(row.item_id)], { type: "image/jpeg" });
+        return { size: photo.size, httpMetadata: { contentType: photo.type }, arrayBuffer: () => photo.arrayBuffer() };
+      }
       const file = photos.get(id);
       return file && {
         ...file, size: file.body.byteLength,
@@ -139,12 +145,6 @@ function outfitExtractionFixture() {
 }
 
 async function decisionsFixture(url, options) {
-  if (String(url).startsWith("https://down-th.img.susercontent.com/file/")) {
-    const product = database.prepare("SELECT item_id FROM clothes_image_database WHERE image_url = ?").get(String(url));
-    assert.ok(product, "try-on must fetch the product image from the catalog");
-    assert.equal(options.redirect, "error");
-    return new Response(listingJpeg(product.item_id), { headers: { "content-type": "image/jpeg" } });
-  }
   if (url === "https://api.openai.com/v1/images/edits") {
     assert.equal(options.body.get("output_format"), "jpeg");
     const prompt = options.body.get("prompt");
@@ -167,6 +167,12 @@ async function decisionsFixture(url, options) {
   if (url === "https://api.openai.com/v1/responses") {
     const { input, text } = JSON.parse(options.body);
     if (text?.format?.name === "wardrobe_extraction") return outfitExtractionFixture();
+    if (text?.format?.name === "visible_clothing") {
+      assert.equal(input[0].content[0].image_url, "data:image/jpeg;base64," + Buffer.from(face).toString("base64"));
+      const coverage = { top: false, bottom: false, dress: false, outerwear: false, shoes: false };
+      return Response.json({ status: "completed", output: [{ type: "message", role: "assistant", status: "completed",
+        content: [{ type: "output_text", text: JSON.stringify(coverage) }] }] });
+    }
     const pieces = input[0].content.filter(part => part.type === "input_text" && part.text.startsWith("{"))
       .map(part => JSON.parse(part.text));
     for (const [i, part] of input[0].content.entries()) {
@@ -187,8 +193,8 @@ async function decisionsFixture(url, options) {
   if (questions.length === 1 && questions[0].name === "catalog_search") {
     const question = questions[0];
     const missing = input[1].content[0].data.missingGarment;
-    const term = missing === "top" ? "women sweater" : missing === "pants" ? "women pants" : "women necklace";
-    const value = question.choices.find(choice => choice.description === term).value;
+    const term = ({ top: "women sweater", pants: "women pants", bottom: "women pants", shoes: "women shoes", outerwear: "men jacket" })[missing] ?? "women necklace";
+    const value = question.choices.find(choice => choice.description.endsWith(" / " + term)).value;
     return Response.json({ answers: [{ name: question.name, type: "choice", choice: value }] });
   }
   if (questions.length === 1 && questions[0].name === "shopee_product") {

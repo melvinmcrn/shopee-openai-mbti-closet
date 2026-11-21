@@ -1,4 +1,6 @@
 import { enhancementSelection, readSavedProducts } from "./catalog-product.mjs";
+import { getGarments } from "./garments.mjs";
+import { combineBaseCoverage, effectiveWardrobeSlots } from "./wardrobe-completion.mjs";
 import { previewSelection } from "./preview-files.mjs";
 
 const slotNames = new Set(["top", "bottom", "dress", "shoes", "outerwear", "accessory", "other"]);
@@ -78,16 +80,42 @@ async function readLooks(db, accountId, id) {
 
   if (!results.length) return [];
   const selections = results.map(row => JSON.parse(row.slots));
-  const products = await readSavedProducts(db, accountId, Object.fromEntries(
-    results.map((row, i) => [row.id, enhancementSelection(selections[i])])
-  ));
+  const usesProfile = row => row.use_profile_photo == null ? Boolean(row.profile_ref) : row.use_profile_photo === 1;
+  const photoRefs = new Set();
+  for (const [index, row] of results.entries()) {
+    if (usesProfile(row) && row.profile_ref) photoRefs.add(row.profile_ref);
+    if (selections[index].other?.imageRef) photoRefs.add(selections[index].other.imageRef);
+  }
+  // Reading file.* keeps old databases with no base_coverage column readable.
+  const coverageByRef = new Map();
+  if (photoRefs.size) {
+    const { results: files } = await db.prepare(`
+      SELECT file.* FROM private_files AS file
+      WHERE file.user_id = ? AND file.state = 'ready'
+        AND file.file_id IN (SELECT value FROM json_each(?))
+    `).bind(accountId, JSON.stringify([...photoRefs])).all();
+    for (const file of files) {
+      if (file.base_coverage) coverageByRef.set(file.file_id, JSON.parse(file.base_coverage));
+    }
+  }
+  const coverageByLook = Object.fromEntries(results.map((row, i) => [row.id, combineBaseCoverage(
+    usesProfile(row) ? coverageByRef.get(row.profile_ref) : null,
+    coverageByRef.get(selections[i].other?.imageRef)
+  )]));
+  const [products, wardrobe] = await Promise.all([
+    readSavedProducts(db, accountId, Object.fromEntries(
+      results.map((row, i) => [row.id, enhancementSelection(selections[i])])
+    ), coverageByLook),
+    coverageByRef.size ? getGarments({ DB: db }, accountId) : [],
+  ]);
   return results.map((row, i) => {
     const slots = selections[i];
     const enhancements = products.get(String(row.id)) ?? [];
-    const personal = row.use_profile_photo == null ? Boolean(row.profile_ref) : row.use_profile_photo === 1;
+    const personal = usesProfile(row);
     const originalSlots = JSON.parse(row.original_slots);
     const previews = JSON.parse(row.previews);
-    const selection = previewSelection(slots, personal, enhancements, row.profile_ref);
+    const effective = effectiveWardrobeSlots(slots, wardrobe, coverageByLook[row.id]);
+    const selection = previewSelection(slots, personal, enhancements, row.profile_ref, effective);
     return {
       id: String(row.id),
       optionId: String(row.source_option_id),

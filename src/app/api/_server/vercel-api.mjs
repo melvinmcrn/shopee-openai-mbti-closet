@@ -1,5 +1,6 @@
 import { handleApi } from "./handle-api.mjs";
 import { readSampleImage } from "./read-sample-image.mjs";
+import { readLocalCatalogPhoto } from "../../../../server/local-catalog-photo.mjs";
 import { normalizeWardrobePhoto } from "../../../../server/normalize-wardrobe-photo.mjs";
 
 function privateResponse(body, status) {
@@ -46,6 +47,7 @@ export function createVercelHandler(config, getStorage) {
         OPENAI_API_KEY: config.OPENAI_API_KEY,
         WARDROBE_EXTRACTION_FIXTURES: config.WARDROBE_EXTRACTION_FIXTURES,
         readSampleImage,
+        readCatalogFallback: new URL(origin).hostname === "localhost" ? readLocalCatalogPhoto : undefined,
         normalizeWardrobePhoto,
         DB,
         BUCKET,

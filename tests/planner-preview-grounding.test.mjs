@@ -8,23 +8,26 @@ const env = { OPENAI_API_KEY: "test", readSampleImage: async () => new Uint8Arra
 
 const product = {
   id: "84", title: "Silver pendant necklace", category: "women necklace",
-  imageUrl: "https://down-th.img.susercontent.com/file/pendant",
+  imageUrl: "https://down-th.img.susercontent.com/file/pendant", ocrImage: "pendant.jpg",
 };
 const listingBytes = Uint8Array.of(255, 216, 255, 225, 42);
 const top = { ...product, id: "85", title: "Linen tank", category: "women tank top",
-  imageUrl: "https://down-th.img.susercontent.com/file/tank" };
+  ocrImage: "tank.jpg", imageUrl: "https://down-th.img.susercontent.com/file/tank" };
 const pants = { ...product, id: "86", title: "Linen trousers", category: "business women pants",
-  imageUrl: "https://down-th.img.susercontent.com/file/trousers" };
+  ocrImage: "trousers.jpg", imageUrl: "https://down-th.img.susercontent.com/file/trousers" };
 const topBytes = Uint8Array.of(255, 216, 255, 225, 43);
 const pantsBytes = Uint8Array.of(255, 216, 255, 225, 44);
+
+const catalogImages = new Map([[product.ocrImage, listingBytes], [top.ocrImage, topBytes], [pants.ocrImage, pantsBytes]]);
+env.BUCKET = { get: async key => {
+  const bytes = catalogImages.get(key.replace(/^clothes_image_database\//, ""));
+  return bytes ? new Blob([bytes]) : null;
+} };
 
 function setup(t, observed) {
   return {
     readImage: async () => jpeg,
     fetch: t.mock.fn(async url => {
-      if (url === product.imageUrl) return new Response(listingBytes);
-      if (url === top.imageUrl) return new Response(topBytes);
-      if (url === pants.imageUrl) return new Response(pantsBytes);
       if (url.endsWith("/images/edits")) return Response.json({ data: [{ b64_json: "/9j/4A==" }] });
       return Response.json({
         status: "completed", output: [{ type: "message", role: "assistant", status: "completed",
@@ -54,10 +57,8 @@ test("the selected catalog listing is rendered and verified against its own imag
   const deps = setup(t, ["item_2", "item_1"]);
   const result = await generatePreview(env, 1, [dress], false, deps, [product]);
   assert.deepEqual(result, { imageRef: "verified-photo" });
-  const [cdn, edit, audit] = deps.fetch.mock.calls.map(call => call.arguments);
-  assert.equal(cdn[0], product.imageUrl);
-  assert.equal(cdn[1].redirect, "error");
-  assert.equal(new Headers(cdn[1].headers).has("authorization"), false);
+  const [edit, audit] = deps.fetch.mock.calls.map(call => call.arguments);
+  assert.ok(edit[0].endsWith("/images/edits"));
   const images = edit[1].body.getAll("image[]");
   assert.equal(images.length, 3);
   assert.deepEqual(new Uint8Array(await images[2].arrayBuffer()), listingBytes);
@@ -102,14 +103,32 @@ test("a multi-product look is withheld when any one of its real pieces is absent
   const deps = setup(t, ["item_1", "item_3"]);
   const result = await generatePreview(env, 1, [{ ...dress, category: "shoes" }], false, deps, [top, pants]);
   assert.deepEqual(result, { imageRef: null });
-  assert.equal(deps.fetch.mock.callCount(), 4);
+  assert.equal(deps.fetch.mock.callCount(), 2);
   assert.equal(deps.storeImage.mock.callCount(), 0);
 });
 
 test("an unavailable or untrusted catalog image cannot be replaced by an invented reference", async t => {
   const deps = setup(t, ["item_1", "item_2"]);
   await assert.rejects(generatePreview(env, 1, [dress], false, deps,
-    [{ ...product, imageUrl: "https://example.invalid/listing" }]));
+    [{ ...product, ocrImage: "../another-account.jpg" }]));
   assert.equal(deps.fetch.mock.callCount(), 0);
   assert.equal(deps.storeImage.mock.callCount(), 0);
+});
+
+
+test("a Shopee jacket layers over the shirt and jeans visible in the profile photo", async t => {
+  const deps = setup(t, ["item_1", "base_top", "base_bottom", "base_shoes"]);
+  deps.profilePhotoRef = async () => "full-body";
+  const visible = { top: true, bottom: true, shoes: true, dress: false, outerwear: false };
+  const jacket = { ...product, title: "Denim jacket", category: "men jacket" };
+  const result = await generatePreview(env, 1, [], true, deps, [jacket], { profile: visible, coverage: visible });
+  assert.equal(result.imageRef, "verified-photo");
+  const [edit, audit] = deps.fetch.mock.calls.map(call => call.arguments[1].body);
+  assert.match(edit.get("prompt"), /layer the selected Shopee jacket/);
+  assert.match(edit.get("prompt"), /Keep the worn top, bottom, shoes/);
+  const [person, catalog] = edit.getAll("image[]");
+  assert.deepEqual(await person.arrayBuffer(), await jpeg.arrayBuffer());
+  assert.deepEqual(new Uint8Array(await catalog.arrayBuffer()), listingBytes);
+  const content = JSON.parse(audit).input[0].content;
+  assert.match(content.find(part => part.text?.startsWith("Source outfit")).text, /base_bottom/);
 });

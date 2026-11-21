@@ -1,12 +1,16 @@
 import { readPrivateFile, writePrivateFile, deletePrivateFile } from "../private-files.mjs";
 
-export function previewSelection(slots, personal, products = [], profileRef = null) {
-  const entries = Object.entries(slots).sort(([a], [b]) => a.localeCompare(b))
+function garmentReferences(slots) {
+  return Object.entries(slots).sort(([a], [b]) => a.localeCompare(b))
     .map(([slot, item]) => [slot, String(item.id), item.imageRef, item.name]);
+}
+
+export function previewSelection(slots, personal, products = [], profileRef = null, effectiveSlots = slots) {
   const listings = (Array.isArray(products) ? products : products ? [products] : [])
-    .map(p => [p.id, p.imageUrl, p.title, p.category])
+    .map(p => [String(p.id), p.imageUrl, p.title, p.category, p.searchGroup, p.searchTerm, p.ocrImage])
     .sort(([a], [b]) => a.localeCompare(b));
-  return JSON.stringify(["inventory-v3", personal, personal ? profileRef : null, entries, listings]);
+  return JSON.stringify(["photo-v4", personal, personal ? profileRef : null,
+    garmentReferences(slots), garmentReferences(effectiveSlots), listings]);
 }
 
 export async function profilePhotoRef(db, accountId) {
@@ -14,9 +18,9 @@ export async function profilePhotoRef(db, accountId) {
   return row?.ref ?? null;
 }
 
-export function previewFiles(env, accountId, optionId, slots, personal, products, profileRef) {
+export function previewFiles(env, accountId, optionId, slots, personal, products, profileRef, effectiveSlots = slots) {
   const account = { id: accountId };
-  const selection = previewSelection(slots, personal, products, profileRef);
+  const selection = previewSelection(slots, personal, products, profileRef, effectiveSlots);
   return {
     async cachedImage() {
       const row = await env.DB.prepare("SELECT file_id FROM planner_previews WHERE user_id=? AND option_id=? AND selection=?")

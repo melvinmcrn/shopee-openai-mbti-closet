@@ -2,6 +2,11 @@
   "name": "mbti-closet-local",
   "main": "dist/server/index.js",
   "compatibility_date": "2026-11-21",
+  "assets": {
+    "directory": "./Shopee Database/clothes_image_database",
+    "binding": "CATALOG_ASSETS",
+    "run_worker_first": true
+  },
   "dev": { "ip": "localhost", "port": 3000 },
   "vars": { "LOCAL_DEV": "1" },
   "d1_databases": [
