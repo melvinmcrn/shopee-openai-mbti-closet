@@ -29,46 +29,63 @@ const instructions = [
 ].join(" ");
 
 export class LunaExtractionError extends Error {
-  constructor(message, code, status) {
+  constructor(message, code, status, stage) {
     super(message);
     this.code = code;
     this.status = status;
+    this.stage = stage;
   }
 }
 
-function invalidExtraction() {
-  return new LunaExtractionError("The garment cutout or details could not be read. Try again or review the photo manually.", "invalid_extraction", 502);
+function invalidExtraction(stage) {
+  return new LunaExtractionError("The garment cutout or details could not be read. Try again or review the photo manually.", "invalid_extraction", 502, stage);
 }
 
 function readText(value, maxLength) {
-  if (typeof value !== "string") throw invalidExtraction();
+  if (typeof value !== "string") throw invalidExtraction("metadata_schema");
   const result = value.trim();
-  if (result.length === 0 || result.length > maxLength) throw invalidExtraction();
+  if (result.length === 0 || result.length > maxLength) throw invalidExtraction("metadata_schema");
   return result;
 }
 
-async function readResult(response) {
-  if (response?.status !== "completed" || !Array.isArray(response.output)) throw invalidExtraction();
-  const messages = response.output.filter((entry) => entry?.type === "message");
-  if (messages.length !== 1 || messages[0].role !== "assistant" || messages[0].status !== "completed" ||
-      !Array.isArray(messages[0].content) || messages[0].content.length !== 1) throw invalidExtraction();
-  const [text] = messages[0].content;
-  if (text?.type !== "output_text" || typeof text.text !== "string" || text.text.length > 4096) throw invalidExtraction();
+function readMetadata(output) {
+  const messages = output.filter((entry) => entry?.type === "message" && entry.role === "assistant");
+  // With tools, Responses can include commentary and several text chunks.
+  const message = messages.findLast((entry) => entry.phase === "final_answer")
+    ?? messages.findLast((entry) => entry.phase == null);
+  if (message?.status !== "completed" || !Array.isArray(message.content)) {
+    throw invalidExtraction("final_message_missing");
+  }
 
+  let text = "";
+  for (const entry of message.content) {
+    if (entry?.type === "refusal") throw invalidExtraction("final_message_refused");
+    if (entry?.type !== "output_text" || typeof entry.text !== "string") {
+      throw invalidExtraction("metadata_text");
+    }
+    if (text.length + entry.text.length > 4096) throw invalidExtraction("metadata_text");
+    text += entry.text;
+  }
   let parsed;
   try {
-    parsed = JSON.parse(text.text);
+    parsed = JSON.parse(text);
   } catch {
-    throw invalidExtraction();
+    throw invalidExtraction("metadata_json");
   }
-  if (!parsed || Object.keys(parsed).length !== 5) throw invalidExtraction();
+  if (!parsed || Object.keys(parsed).length !== 5) throw invalidExtraction("metadata_schema");
+  return parsed;
+}
+
+async function readResult(response) {
+  if (response?.status !== "completed" || !Array.isArray(response.output)) {
+    throw invalidExtraction("response_incomplete");
+  }
+  const { garment_found, name, category, garment_type, color } = readMetadata(response.output);
   const images = response.output.filter((entry) => entry?.type === "image_generation_call");
-  const { garment_found, name, category, garment_type, color } = parsed;
   if (garment_found === false && !images.length && [name, category, garment_type, color].every((v) => v === null)) {
     throw new LunaExtractionError("No garment could be isolated. Try a clearer photo or review it manually.", "garment_not_found", 422);
   }
-  if (garment_found !== true || !categories.includes(category) || images.length !== 1 ||
-      images[0].status !== "completed") throw invalidExtraction();
+  if (garment_found !== true || !categories.includes(category)) throw invalidExtraction("metadata_schema");
 
   const metadata = {
     name: readText(name, 120),
@@ -76,18 +93,37 @@ async function readResult(response) {
     garment_type: readText(garment_type, 80),
     color: readText(color, 64),
   };
+  if (images.length !== 1) throw invalidExtraction("image_count");
+  if (images[0].status !== "completed") throw invalidExtraction("image_incomplete");
   const base64Png = images[0].result;
   if (typeof base64Png !== "string" || !base64Png.length || base64Png.length > maxBase64Chars ||
-      /[^a-z0-9+/=]/i.test(base64Png)) throw invalidExtraction();
+      /[^a-z0-9+/=]/i.test(base64Png)) throw invalidExtraction("image_encoding");
+  let binary;
   try {
-    const binary = atob(base64Png);
-    const png = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) png[i] = binary.charCodeAt(i);
-    await validateCutoutPng(png);
-    return { ...metadata, png };
+    binary = atob(base64Png);
   } catch {
-    throw invalidExtraction();
+    throw invalidExtraction("image_encoding");
   }
+  const png = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) png[i] = binary.charCodeAt(i);
+  let usableAlpha;
+  try {
+    usableAlpha = await validateCutoutPng(png);
+  } catch {
+    throw invalidExtraction("image_png");
+  }
+  if (!usableAlpha) throw invalidExtraction("image_alpha");
+  return { ...metadata, png };
+}
+
+function logFailure(stage, response) {
+  const status = response?.status ?? null;
+  const requestId = response?.headers.get("x-request-id");
+  console.warn("Wardrobe extraction upstream", {
+    stage,
+    status,
+    ...(/^req_[a-z0-9_-]{8,80}$/i.test(requestId ?? "") ? { requestId } : {}),
+  });
 }
 
 function base64(bytes) {
@@ -102,7 +138,7 @@ function base64(bytes) {
 
 async function readBoundedJson(response) {
   const reader = response.body?.getReader();
-  if (!reader) throw invalidExtraction();
+  if (!reader) throw invalidExtraction("body_missing");
   const text = [];
   const decoder = new TextDecoder("utf-8", { fatal: true });
   let total = 0;
@@ -111,14 +147,14 @@ async function readBoundedJson(response) {
       const { done, value } = await reader.read();
       if (done) break;
       total += value.byteLength;
-      if (total > maxResponseBytes) throw invalidExtraction();
+      if (total > maxResponseBytes) throw invalidExtraction("body_size");
       text.push(decoder.decode(value, { stream: true }));
     }
     text.push(decoder.decode());
     return JSON.parse(text.join(""));
-  } catch {
+  } catch (error) {
     try { await reader.cancel(); } catch { /* The body may have already failed. */ }
-    throw invalidExtraction();
+    throw error instanceof LunaExtractionError ? error : invalidExtraction("body_unreadable");
   } finally {
     reader.releaseLock();
   }
@@ -161,13 +197,21 @@ export async function lunaExtraction(photo, apiKey) {
       }),
     });
   } catch {
+    logFailure("provider_transport");
     throw new LunaExtractionError("Extraction could not reach Luna High Fast. Try again or review the photo manually.", "extraction_failed", 502);
   }
   if ([401, 403, 404, 429].includes(response.status)) {
+    logFailure("provider_unavailable", response);
     throw new LunaExtractionError("Luna High Fast extraction is currently unavailable. You can review the photo manually.", "extraction_unavailable", 503);
   }
   if (!response.ok) {
+    logFailure("provider_http", response);
     throw new LunaExtractionError("Luna High Fast could not complete extraction. You can review the photo manually.", "extraction_failed", 502);
   }
-  return readResult(await readBoundedJson(response));
+  try {
+    return await readResult(await readBoundedJson(response));
+  } catch (error) {
+    if (error instanceof LunaExtractionError && error.stage) logFailure(error.stage, response);
+    throw error;
+  }
 }

@@ -15,7 +15,7 @@ const extractionMessages = new Map([
   ["extraction_unavailable", "Automatic garment extraction is unavailable right now."],
   ["unsupported_photo", "This photo format could not be processed. Try a clearer JPEG or PNG."],
   ["garment_not_found", "No garment could be isolated. Try a clearer photo of one item."],
-  ["invalid_extraction", "The garment outline could not be used. Try a clearer photo."],
+  ["invalid_extraction", "The cutout or garment details could not be read. Try a clearer photo."],
 ]);
 const sampleError = "The sample wardrobe could not be loaded. Try again.";
 
