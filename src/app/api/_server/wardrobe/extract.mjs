@@ -8,16 +8,16 @@ const columns = "id, name, category, garment_type, color, image_file_id, confirm
 const maxPhotoBytes = 8 * 1024 * 1024;
 const unavailable = "Luna High Fast extraction is currently unavailable. You can review the photo manually.";
 
-function response(body, status = 200) {
-  return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
+function outcome(body, status = 200) {
+  return { body, status };
 }
 
 function failure(error, code, status) {
-  return response({ error, code }, status);
+  return outcome({ error, code }, status);
 }
 
 function result(row) {
-  return response({
+  return outcome({
     source: row.extraction_source,
     item: {
       id: row.id,
@@ -55,7 +55,12 @@ async function fixtureFor(bytes) {
 export async function extract(request, env, userId, id) {
   if (request.method !== "POST") return new Response(null, { status: 405, headers: { Allow: "POST" } });
   const itemId = /^[1-9]\d*$/.test(id) ? Number(id) : NaN;
-  if (!Number.isSafeInteger(itemId)) return failure("Wardrobe item not found.", "item_not_found", 404);
+  const { body, status } = await extractDraft(env, userId, itemId);
+  return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
+}
+
+export async function extractDraft(env, userId, itemId) {
+  if (!Number.isSafeInteger(itemId) || itemId < 1) return failure("Wardrobe item not found.", "item_not_found", 404);
   const draft = await loadItem(env, userId, itemId);
   if (!draft) return failure("Wardrobe item not found.", "item_not_found", 404);
 

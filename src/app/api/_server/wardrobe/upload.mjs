@@ -1,12 +1,32 @@
 import { deletePrivateFile, writePrivateFile } from "../private-files.mjs";
+import { extractDraft } from "./extract.mjs";
 
 export const maxImageBytes = 8 * 1024 * 1024;
 const maxFormBytes = maxImageBytes + 64 * 1024;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const findDraft = "SELECT id, image_file_id FROM wardrobe_items WHERE user_id = ? AND draft_key = ?";
 
+function json(body, status = 200) {
+  return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
+}
+
 function error(message, status) {
-  return Response.json({ error: message }, { status });
+  return json({ error: message }, status);
+}
+
+async function finishDraft(env, userId, id) {
+  let extraction;
+  try {
+    extraction = await extractDraft(env, userId, id);
+  } catch (err) {
+    console.warn("Wardrobe extraction could not finish after upload", err instanceof Error ? err.name : "UnknownError");
+    return json({ id, extraction: { status: "manual", code: "extraction_unavailable" } });
+  }
+  const { status, body } = extraction;
+  if (status === 200) return json({ id, extraction: { status: "ready", ...body } });
+  if (status === 404 || status === 409) return json(body, status);
+  // The upload completed even if automatic extraction did not. Keep its private draft reviewable.
+  return json({ id, extraction: { status: "manual", code: body.code } });
 }
 
 export function imageType(image) {
@@ -64,9 +84,16 @@ export async function upload(request, env, userId) {
     return error("The upload is missing a valid draft key.", 400);
   }
 
-  const image = form.get("image");
-  if (!(image instanceof Blob) || image.size === 0 || form.getAll("image").length !== 1 ||
-      [...form.values()].filter(value => value instanceof Blob).length !== 1) {
+  const key = draftKey.toLowerCase();
+  const images = form.getAll("image");
+  const files = [...form.values()].filter((value) => value instanceof Blob);
+  if (images.length === 0 && files.length === 0) {
+    const existing = await env.DB.prepare(findDraft).bind(userId, key).first();
+    return existing ? finishDraft(env, userId, existing.id) : error("Wardrobe draft not found.", 404);
+  }
+
+  const [image] = images;
+  if (!(image instanceof Blob) || image.size === 0 || images.length !== 1 || files.length !== 1) {
     return error("Choose one photo to upload.", 400);
   }
   if (image.size > maxImageBytes) return error("Choose a photo that is 8 MB or smaller.", 413);
@@ -75,13 +102,13 @@ export async function upload(request, env, userId) {
   const type = imageType(bytes);
   if (!type) return error("Choose a JPEG, PNG, or WebP photo.", 415);
 
-  const key = draftKey.toLowerCase();
   const existing = await env.DB.prepare(findDraft).bind(userId, key).first();
-  if (existing) return Response.json({ id: existing.id });
+  if (existing) return finishDraft(env, userId, existing.id);
 
   const account = { id: userId };
   const fileId = await writePrivateFile(env, account, bytes, type);
   let attached = false;
+  let id;
   try {
     const [, draftResult] = await env.DB.batch([
       env.DB.prepare(
@@ -94,7 +121,7 @@ export async function upload(request, env, userId) {
     const draft = draftResult.results[0];
     if (!draft) throw new Error("Wardrobe draft could not be saved");
     attached = draft.image_file_id === fileId;
-    return Response.json({ id: draft.id });
+    id = draft.id;
   } finally {
     if (!attached) {
       try {
@@ -105,4 +132,5 @@ export async function upload(request, env, userId) {
       }
     }
   }
+  return finishDraft(env, userId, id);
 }
