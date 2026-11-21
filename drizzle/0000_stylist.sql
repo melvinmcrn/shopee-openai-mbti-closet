@@ -6,6 +6,7 @@ CREATE TABLE users (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (auth_provider, auth_subject)
 );
+--> statement-breakpoint
 
 CREATE TABLE profiles (
     user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -14,12 +15,14 @@ CREATE TABLE profiles (
     face_photo_file_id TEXT,
     setup_completed_at TEXT
 );
+--> statement-breakpoint
 
 CREATE TABLE style_preferences (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     style TEXT NOT NULL,
     PRIMARY KEY (user_id, style)
 );
+--> statement-breakpoint
 
 CREATE TABLE wardrobe_items (
     id INTEGER PRIMARY KEY,
@@ -34,9 +37,11 @@ CREATE TABLE wardrobe_items (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (user_id, id)
 );
+--> statement-breakpoint
 
 CREATE INDEX wardrobe_by_category ON wardrobe_items(user_id, category)
     WHERE confirmed_at IS NOT NULL AND archived_at IS NULL;
+--> statement-breakpoint
 
 CREATE TABLE outfit_requests (
     id INTEGER PRIMARY KEY,
@@ -48,12 +53,14 @@ CREATE TABLE outfit_requests (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (user_id, id)
 );
+--> statement-breakpoint
 
 CREATE TABLE request_comfort_choices (
     request_id INTEGER NOT NULL REFERENCES outfit_requests(id) ON DELETE CASCADE,
     choice TEXT NOT NULL,
     PRIMARY KEY (request_id, choice)
 );
+--> statement-breakpoint
 
 CREATE TABLE request_clothing_choices (
     request_id INTEGER NOT NULL REFERENCES outfit_requests(id) ON DELETE CASCADE,
@@ -61,6 +68,7 @@ CREATE TABLE request_clothing_choices (
     garment_type TEXT NOT NULL,
     PRIMARY KEY (request_id, category, garment_type)
 );
+--> statement-breakpoint
 
 CREATE TABLE generation_runs (
     id INTEGER PRIMARY KEY,
@@ -74,6 +82,7 @@ CREATE TABLE generation_runs (
     UNIQUE (user_id, id),
     FOREIGN KEY (user_id, request_id) REFERENCES outfit_requests(user_id, id) ON DELETE CASCADE
 );
+--> statement-breakpoint
 
 CREATE TABLE outfit_options (
     id INTEGER PRIMARY KEY,
@@ -87,6 +96,7 @@ CREATE TABLE outfit_options (
     UNIQUE (user_id, id),
     FOREIGN KEY (user_id, run_id) REFERENCES generation_runs(user_id, id) ON DELETE CASCADE
 );
+--> statement-breakpoint
 
 CREATE TABLE outfit_option_items (
     user_id INTEGER NOT NULL,
@@ -98,6 +108,7 @@ CREATE TABLE outfit_option_items (
     FOREIGN KEY (user_id, option_id) REFERENCES outfit_options(user_id, id) ON DELETE CASCADE,
     FOREIGN KEY (user_id, item_id) REFERENCES wardrobe_items(user_id, id)
 );
+--> statement-breakpoint
 
 CREATE TABLE saved_looks (
     id INTEGER PRIMARY KEY,
@@ -108,6 +119,7 @@ CREATE TABLE saved_looks (
     UNIQUE (user_id, id),
     FOREIGN KEY (user_id, source_option_id) REFERENCES outfit_options(user_id, id) ON DELETE CASCADE
 );
+--> statement-breakpoint
 
 CREATE TABLE saved_look_items (
     user_id INTEGER NOT NULL,
@@ -119,6 +131,7 @@ CREATE TABLE saved_look_items (
     FOREIGN KEY (user_id, saved_look_id) REFERENCES saved_looks(user_id, id) ON DELETE CASCADE,
     FOREIGN KEY (user_id, item_id) REFERENCES wardrobe_items(user_id, id)
 );
+--> statement-breakpoint
 
 CREATE TABLE wear_feedback (
     id INTEGER PRIMARY KEY,
@@ -127,6 +140,7 @@ CREATE TABLE wear_feedback (
     rating INTEGER CHECK (rating IN (1,2,3,4,5)),
     note TEXT
 );
+--> statement-breakpoint
 
 CREATE TABLE shopping_suggestions (
     id INTEGER PRIMARY KEY,
@@ -138,7 +152,8 @@ CREATE TABLE shopping_suggestions (
     disclosure_text TEXT,
     hidden_at TEXT
 );
+--> statement-breakpoint
 
 CREATE INDEX saved_looks_by_user ON saved_looks(user_id, saved_at DESC);
+--> statement-breakpoint
 CREATE INDEX wears_by_look ON wear_feedback(saved_look_id, worn_at DESC);
-
