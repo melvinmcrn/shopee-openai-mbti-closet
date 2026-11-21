@@ -1,4 +1,3 @@
-import { readSampleImage } from "../src/app/api/_server/read-sample-image.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -9,7 +8,7 @@ import { readPrivateFile, writePrivateFile } from "../src/app/api/_server/privat
 import { userData } from "../src/app/api/_server/user-data.mjs";
 import { extract } from "../src/app/api/_server/wardrobe/extract.mjs";
 import { profile } from "../src/app/api/_server/wardrobe/profile.mjs";
-import { sample } from "../src/app/api/_server/wardrobe/sample.mjs";
+import { wardrobeApi } from "../src/app/api/_server/wardrobe-api.mjs";
 
 const url = process.env.MBTI_POSTGRES_TEST_URL;
 
@@ -60,13 +59,12 @@ test("Postgres preserves Worker query results and transaction boundaries", { ski
   }
 });
 
-test("Postgres supports owner-scoped profiles, wardrobe items, and the planner", { skip: !url }, async (t) => {
+test("Postgres supports owner-scoped profiles, wardrobe items, and the planner", { skip: !url }, async () => {
   const sql = postgres(url, { prepare: false });
   const DB = createPostgresDatabase(sql);
   const accounts = [];
   const objects = new Map();
   const env = {
-    readSampleImage,
     DB,
     WARDROBE_EXTRACTION_FIXTURES: "1",
     BUCKET: {
@@ -137,13 +135,11 @@ test("Postgres supports owner-scoped profiles, wardrobe items, and the planner",
     await dispatchPlanner(env, owner.id, "wearUpdate", { id: wear.id, rating: 5 });
     assert.equal((await dispatchPlanner(env, owner.id, "wearGet", { id: wear.id })).rating, 5);
 
-    const sampleRequest = () => new Request("https://example.test/api/wardrobe/sample", { method: "POST" });
-    const [initialSamples, repeatedSamples] = await Promise.all(
-      [sampleRequest(), sampleRequest()].map(async (request) => (await sample(request, env, owner.id)).json()),
+    const retiredSampleRoute = await wardrobeApi(
+      new Request("https://example.test/api/wardrobe/sample", { method: "POST" }), env, owner.id,
     );
-    assert.equal(initialSamples.items.length, 7);
-    assert.deepEqual(repeatedSamples, initialSamples);
-    assert.equal(objects.size, 10);
+    assert.equal(retiredSampleRoute.status, 404);
+    assert.equal(objects.size, 3);
     assert.deepEqual(await other.listWardrobeItems(), []);
 
     const original = await readFile(new URL("../src/app/api/_server/wardrobe/extraction-fixtures/shirt.png", import.meta.url));

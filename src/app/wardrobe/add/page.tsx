@@ -2,7 +2,6 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { normalizeUpload, photoAccept, photoRequirements } from "./normalize-upload.mjs";
 import { maxBatchSize, prepareWardrobeBatch } from "./prepare-batch.mjs";
@@ -16,7 +15,6 @@ const extractionMessages = new Map([
   ["garment_not_found", "No garment could be isolated. Try a clearer photo of one item."],
   ["invalid_extraction", "The cutout or garment details could not be read. Try a clearer photo."],
 ]);
-const sampleError = "The sample wardrobe could not be loaded. Try again.";
 
 const photoStatuses = {
   queued: "Ready to upload",
@@ -50,13 +48,10 @@ const fileButton = "relative inline-flex cursor-pointer items-center rounded-ful
 const actionButton = "rounded-full bg-primary px-5 py-2.5 font-semibold text-on-primary hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:cursor-not-allowed disabled:opacity-60";
 
 export default function AddWardrobePhotoPage() {
-  const router = useRouter();
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [preparingSelection, setPreparingSelection] = useState(false);
   const [progress, setProgress] = useState<Progress | null>(null);
-  const [addingSample, setAddingSample] = useState(false);
   const [selectionError, setSelectionError] = useState("");
-  const [sampleMessage, setSampleMessage] = useState("");
   const [batchError, setBatchError] = useState("");
   const previews = useRef(new Set<string>());
   const activeTask = useRef<AbortController | null>(null);
@@ -81,7 +76,7 @@ export default function AddWardrobePhotoPage() {
     return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
   }, [hasActiveUpload]);
 
-  const busy = preparingSelection || hasActiveUpload || addingSample;
+  const busy = preparingSelection || hasActiveUpload;
   const percent = progress?.phase === "uploading" ? progress.percent : undefined;
   const progressLabel = progress?.phase === "preparing"
     ? "Preparing photos…"
@@ -223,28 +218,6 @@ export default function AddWardrobePhotoPage() {
     void processPhotos(photos.filter((photo) => photo.status === "queued" || photo.status.endsWith("-failed")));
   }
 
-  async function addSampleWardrobe() {
-    if (activeTask.current) return;
-    const controller = new AbortController();
-    activeTask.current = controller;
-    setAddingSample(true);
-    setSampleMessage("");
-    try {
-      const response = await fetch("/api/wardrobe/sample", { method: "POST", signal: controller.signal });
-      if (controller.signal.aborted) return;
-      if (response.ok) {
-        router.push("/wardrobe/confirm");
-        return;
-      }
-      setSampleMessage(response.status === 401 ? "Sign in to add a sample wardrobe." : sampleError);
-    } catch {
-      if (!controller.signal.aborted) setSampleMessage(sampleError);
-    } finally {
-      activeTask.current = null;
-      if (!controller.signal.aborted) setAddingSample(false);
-    }
-  }
-
   return (
     <main className="wardrobe-page mx-auto w-full max-w-xl flex-1 px-5 py-10 sm:px-8 sm:py-14">
       <header className="mb-7 space-y-3">
@@ -368,19 +341,6 @@ export default function AddWardrobePhotoPage() {
           </>
         )}
       </form>
-
-      <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-divider pt-6">
-        <p>Want to try a ready-made wardrobe?</p>
-        <button
-          className="font-medium underline underline-offset-4 disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={busy}
-          onClick={addSampleWardrobe}
-          type="button"
-        >
-          {addingSample ? "Loading sample wardrobe…" : "Use sample wardrobe"}
-        </button>
-      </div>
-      {sampleMessage && <p className="mt-3 text-danger" role="alert">{sampleMessage}</p>}
     </main>
   );
 }
