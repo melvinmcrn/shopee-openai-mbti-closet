@@ -6,10 +6,13 @@
     "dev": "next dev",
     "build": "next build --webpack && node scripts/build-sites.mjs",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:storage": "node --test tests/storage-isolation.test.mjs"
   },
   "dependencies": {
     "@auth/core": "^0.41.3",
+    "fast-png": "^8.0.0",
+    "jpeg-js": "^0.4.4",
     "next": "16.4.6",
     "react": "19.3.0",
     "react-dom": "19.3.0"
@@ -23,6 +26,7 @@
     "esbuild": "^0.28.2",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
+    "miniflare": "^4.20260730.0",
     "tailwindcss": "4.3.3",
     "typescript": "^5"
   }

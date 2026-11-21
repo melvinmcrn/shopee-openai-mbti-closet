@@ -26,12 +26,33 @@
     {
       "idx": 3,
       "version": "6",
+      "when": 1795239600000,
+      "tag": "0100_wardrobe_draft_key",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1795239600001,
+      "tag": "0101_wardrobe_sample",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1795239600002,
+      "tag": "0103_wardrobe_extraction",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
       "when": 1795240000000,
       "tag": "0004_planner_snapshots",
       "breakpoints": true
     },
     {
-      "idx": 4,
+      "idx": 7,
       "version": "6",
       "when": 1795240000001,
       "tag": "0005_planner_image_references",

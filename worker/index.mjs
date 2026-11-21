@@ -1,3 +1,4 @@
+import { wardrobeApi } from "./wardrobe-api.mjs";
 import { Auth } from "@auth/core";
 import Google from "@auth/core/providers/google";
 import { retryPrivateFileCleanup, servePrivateFile } from "./private-files.mjs";
@@ -106,7 +107,8 @@ function serveAsset(request, pathname) {
   if (request.method !== "GET" && request.method !== "HEAD") {
     return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
   }
-  const file = pathname === "/" ? "/index.html" : pathname;
+  const route = pathname.replace(/\/$/, "");
+  const file = !route ? "/index.html" : Object.hasOwn(SITE_ASSETS, route + ".html") ? route + ".html" : pathname;
   const asset = Object.hasOwn(SITE_ASSETS, file) ? SITE_ASSETS[file] : undefined;
   const [type, data] = asset ?? SITE_ASSETS["/404.html"];
   return new Response(request.method === "HEAD" ? null : Uint8Array.from(atob(data), (byte) => byte.charCodeAt(0)), {
@@ -121,22 +123,23 @@ function serveAsset(request, pathname) {
   });
 }
 
-export default {
+const worker = {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const { pathname } = url;
     const authRoute = pathname === authPath || pathname.startsWith(authPath + "/");
     const fileRoute = pathname === filesPath || pathname.startsWith(filesPath + "/");
-    if (!authRoute && !fileRoute && pathname !== accountPath) {
+    const wardrobeRoute = pathname.startsWith("/api/wardrobe/") || pathname === "/api/profile" || pathname === "/api/profile/photo";
+    if (!authRoute && !fileRoute && !wardrobeRoute && pathname !== accountPath) {
       return serveAsset(request, pathname);
     }
     if (url.origin !== origin) {
       return privateResponse(new Response("Unexpected host", { status: 400 }));
     }
-    if (request.method === "POST" && request.headers.get("Origin") !== origin) {
+    if (!["GET", "HEAD"].includes(request.method) && request.headers.get("Origin") !== origin) {
       return privateResponse(new Response("Forbidden", { status: 403 }));
     }
-    const allowedMethods = fileRoute ? ["GET", "HEAD"] : authRoute ? ["GET", "POST"] : ["POST"];
+    const allowedMethods = wardrobeRoute ? ["GET", "POST", "DELETE", "PUT", "PATCH"] : fileRoute ? ["GET", "HEAD"] : authRoute ? ["GET", "POST"] : ["POST"];
     if (!allowedMethods.includes(request.method)) {
       return privateResponse(new Response(null, { status: 405, headers: { Allow: allowedMethods.join(", ") } }));
     }
@@ -156,9 +159,10 @@ export default {
     }
     if (authRoute) return privateResponse(await auth(request, env));
     try {
-      if (!fileRoute) return privateResponse(await serveAccount(request, env, ctx));
+      if (pathname === accountPath) return privateResponse(await serveAccount(request, env, ctx));
       const account = await resolveAccount(request, env);
       if (!account) return privateResponse(new Response(null, { status: 401 }));
+      if (wardrobeRoute) return privateResponse(await wardrobeApi(request, env, account.id));
       const fileId = pathname.slice(filesPath.length + 1);
       if (!fileId || fileId.includes("/")) return privateResponse(new Response(null, { status: 404 }));
       return privateResponse(await servePrivateFile(request, env, account, fileId));
@@ -168,3 +172,5 @@ export default {
     }
   },
 };
+
+export default worker;
