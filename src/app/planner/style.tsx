@@ -10,15 +10,6 @@ type StyleProps = {
   onBack: () => void;
 };
 
-const garmentCategories = [
-  { value: "top", label: "Tops" },
-  { value: "bottom", label: "Bottoms" },
-  { value: "dress", label: "Dresses" },
-  { value: "shoes", label: "Shoes" },
-  { value: "outerwear", label: "Outerwear" },
-  { value: "accessory", label: "Accessories" },
-];
-
 const inputClass =
   "mt-2 min-h-12 w-full rounded-xl border border-divider bg-surface px-3 py-2 text-base text-text placeholder:text-supporting focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary";
 
@@ -28,16 +19,9 @@ const actionClass =
 export function Style({ brief, onNext, onBack, useProfilePhoto, setUseProfilePhoto }: StyleProps) {
   const [formality, setFormality] = useState(brief.formality);
   const [comfort, setComfort] = useState(brief.comfort);
-  const [preferences, setPreferences] = useState(brief.preferences);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const savePending = useRef(false);
-
-  function updatePreference(category: string, checked: boolean) {
-    setPreferences((current) =>
-      checked ? [...current, category] : current.filter((preference) => preference !== category),
-    );
-  }
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -52,7 +36,7 @@ export function Style({ brief, onNext, onBack, useProfilePhoto, setUseProfilePho
         ...brief,
         formality: formality.trim(),
         comfort: comfort.trim(),
-        preferences,
+        preferences: [],
       });
       onNext(saved);
     } catch (cause) {
@@ -129,39 +113,6 @@ export function Style({ brief, onNext, onBack, useProfilePhoto, setUseProfilePho
               ))}
             </div>
           </div>
-        </fieldset>
-
-        <fieldset disabled={saving} aria-describedby="garment-preference-hint" className="mt-6">
-          <legend className="text-sm font-semibold">Garment preferences</legend>
-          <p id="garment-preference-hint" className="mt-1 text-sm text-supporting">
-            Choose any categories you’d like to prioritize.
-          </p>
-          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-            {garmentCategories.map(({ value, label }) => (
-              <label
-                key={value}
-                className="flex min-h-12 items-center gap-2 rounded-xl border border-divider px-3 py-2 text-sm font-medium has-checked:border-secondary has-checked:bg-selected has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-secondary"
-              >
-                <input
-                  type="checkbox"
-                  name="preferences"
-                  value={value}
-                  checked={preferences.includes(value)}
-                  onChange={(event) => updatePreference(value, event.target.checked)}
-                  className="size-4 shrink-0 accent-primary"
-                />
-                {label}
-              </label>
-            ))}
-          </div>
-          <button
-            type="button"
-            disabled={preferences.length === 0}
-            onClick={() => setPreferences([])}
-            className={`${actionClass} -ml-3 mt-1`}
-          >
-            Clear preferences
-          </button>
         </fieldset>
 
         <ProfilePhotoChoice checked={useProfilePhoto} onChange={setUseProfilePhoto} disabled={saving} />
