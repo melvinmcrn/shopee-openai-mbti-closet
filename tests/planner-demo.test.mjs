@@ -98,11 +98,14 @@ test("style defaults belong to one outfit and remain separate from legacy garmen
     assert.deepEqual(captured, [["Vintage"], ["Vintage"]]);
     const cleared = await save({ ...edited, styles: [] });
     assert.deepEqual(cleared.styles, []);
+    assert.deepEqual(cleared.profileStyles, ["Coastal", "Minimalist"]);
     assert.deepEqual((await save({ occasion: "Tomorrow" })).styles, ["Coastal", "Minimalist"]);
-    const legacy = await save({ id: "1", occasion: "Old occasion", preferences: ["top"] });
+    const legacy = await save({ id: "1", occasion: "Old occasion", styles: [] });
+    assert.deepEqual(legacy.preferences, ["top"]);
     assert.deepEqual(legacy.styles, []);
     await save({ ...legacy, styles: ["Classic"] });
     assert.equal(database.prepare("SELECT garment_type FROM request_clothing_choices WHERE request_id = 1").get().garment_type, "blouse");
+    assert.deepEqual((await save({ ...legacy, preferences: [] })).preferences, []);
     await assert.rejects(save({ ...edited, styles: "Classic" }), /styles/i);
     await assert.rejects(dispatchPlanner({ DB }, 2, "saveBrief", { ...edited, styles: ["Sporty"] }), { status: 404 });
   });
@@ -243,7 +246,9 @@ test("a shoe swap survives a reopened planner session and stays private to its a
 
     const brief = await dispatch("saveBrief", briefInput);
     assert.equal(typeof brief.id, "string");
-    assert.deepEqual(brief, { id: brief.id, styles: [], ...briefInput });
+    const { profileStyles, ...outfitBrief } = brief;
+    assert.deepEqual(profileStyles, []);
+    assert.deepEqual(outfitBrief, { id: brief.id, styles: [], ...briefInput });
 
     const generated = await dispatch("generate", { briefId: brief.id });
     assert.equal(generated.status, "ready");
@@ -254,7 +259,7 @@ test("a shoe swap survives a reopened planner session and stays private to its a
     assert.deepEqual(option.slots, originalSlots);
     const optionId = option.id;
     assert.equal(dependencies.generateLooks.mock.callCount(), 1);
-    assert.deepEqual(dependencies.generateLooks.mock.calls[0].arguments[1], brief);
+    assert.deepEqual(dependencies.generateLooks.mock.calls[0].arguments[1], outfitBrief);
 
     const saved = await dispatch("save", { optionId, slots: refinedSlots });
     assert.equal(typeof saved.id, "string");

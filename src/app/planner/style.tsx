@@ -20,7 +20,7 @@ const actionClass =
 
 export function Style({ brief, onNext, onBack }: StyleProps) {
   const [styles, setStyles] = useState(brief.styles ?? []);
-  const options = [...new Set([...styleOptions, ...(brief.styles ?? [])])];
+  const options = [...new Set([...styleOptions, ...(brief.profileStyles ?? []), ...(brief.styles ?? [])])];
   const [formality, setFormality] = useState(brief.formality);
   const [comfort, setComfort] = useState(brief.comfort);
   const [saving, setSaving] = useState(false);
@@ -188,7 +188,8 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
           </div>
         ) : (
           <p id="look-photo-use" className="mt-4 text-sm text-supporting">
-            OpenAI uses your profile photo to show these outfits on you. You can add a photo in the next step.
+            When you create looks, we send your saved profile photo to OpenAI to show the outfits on you.
+            If you haven’t saved a photo, we’ll ask for one first.
           </p>
         )}
         {error && <p role="alert" className="mt-4 text-sm text-danger">{error}</p>}
