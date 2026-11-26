@@ -1,6 +1,6 @@
 import { privateFetch } from "../private-fetch.mjs";
-import { useRef, useState, type FormEvent } from "react";
-import { normalizeUpload, photoAccept, photoRequirements } from "../wardrobe/add/normalize-upload.mjs";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { normalizeProfilePhoto, profilePhotoAccept, profilePhotoRequirements } from "../wardrobe/add/normalize-upload.mjs";
 import { api, type Brief } from "./shared";
 
 type PreparedTryOn = { status: "ready"; brief: Brief } | { status: "photo_required" };
@@ -25,6 +25,18 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
   const [needsPhoto, setNeedsPhoto] = useState(false);
   const [photo, setPhoto] = useState<File | null>(null);
   const savePending = useRef(false);
+  const heading = useRef<HTMLHeadingElement>(null);
+
+  useEffect(() => {
+    heading.current?.focus({ preventScroll: true });
+    window.scrollTo(0, 0);
+  }, [needsPhoto]);
+
+  function deferPhoto() {
+    setNeedsPhoto(false);
+    setPhoto(null);
+    setError("");
+  }
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -36,11 +48,9 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
 
     try {
       if (photo) {
-        const file = await normalizeUpload(photo).catch(() => {
-          throw new Error(`Choose a photo in a supported format. ${photoRequirements}.`);
-        });
+        const file = await normalizeProfilePhoto(photo);
         const body = new FormData();
-        body.set("image", file);
+        body.set("image", file, "profile-photo.jpg");
         const response = await privateFetch("/api/profile/photo", { method: "PUT", body });
         if (!response.ok) {
           const problem = await response.json().catch(() => ({}));
@@ -70,18 +80,20 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
 
   return (
     <section aria-labelledby="style-heading" className="mx-auto max-w-2xl text-text">
-      <button type="button" onClick={onBack} disabled={saving} className={`${actionClass} -ml-3 mb-3`}>
+      {!needsPhoto && <button type="button" onClick={onBack} disabled={saving} className={`${actionClass} -ml-3 mb-3`}>
         <span aria-hidden="true">← </span>Back to occasion
-      </button>
+      </button>}
       <header>
-        <h1 id="style-heading" className="text-3xl font-semibold tracking-tight sm:text-4xl">
-          Today’s style
+        <h1 ref={heading} tabIndex={-1} id="style-heading" className="outline-none text-3xl font-semibold tracking-tight sm:text-4xl">
+          {needsPhoto ? "Add your try-on photo" : "Today’s style"}
         </h1>
-        <p className="mt-2 text-sm text-supporting">What would you like to wear for {brief.occasion}?</p>
+        <p className="mt-2 text-sm text-supporting">
+          {needsPhoto ? `See yourself in looks for ${brief.occasion}.` : `What would you like to wear for ${brief.occasion}?`}
+        </p>
       </header>
 
       <form onSubmit={save} className="mt-6 rounded-2xl border border-divider bg-surface p-5 sm:p-7">
-        <fieldset disabled={saving} className="grid gap-5 sm:grid-cols-2">
+        <fieldset disabled={saving} hidden={needsPhoto} className="grid gap-5 sm:grid-cols-2">
           <div>
             <label className="text-sm font-semibold">
               Formality <span className="font-normal text-supporting">(optional)</span>
@@ -136,19 +148,23 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
           </div>
         </fieldset>
 
-        <p id="look-photo-use" className="mt-4 text-sm text-supporting">
-          Your profile photo is required and is sent to OpenAI to create your try-on photos.
-        </p>
-        {needsPhoto && (
-          <div className="mt-4">
-            <label className="block text-sm font-semibold" htmlFor="try-on-photo">
-              Add or replace your profile photo to continue
-            </label>
-            <input id="try-on-photo" type="file" accept={photoAccept} required disabled={saving}
-              aria-describedby="look-photo-use try-on-formats" className="mt-2 max-w-full text-sm"
+        {needsPhoto ? (
+          <div>
+            <label className="block text-base font-semibold" htmlFor="try-on-photo">Choose a photo</label>
+            <p id="look-photo-use" className="mt-2 text-sm text-supporting">
+              Choose a clear photo of yourself. We save it privately to your profile. OpenAI uses it to show these outfits on you.
+              You can remove it in Profile.
+            </p>
+            <input id="try-on-photo" type="file" accept={profilePhotoAccept} required disabled={saving}
+              aria-describedby="look-photo-use try-on-formats"
+              className="mt-4 w-full min-w-0 text-sm file:mr-3 file:min-h-11 file:rounded-full file:border file:border-divider file:bg-surface file:px-4 file:font-semibold"
               onChange={event => { setPhoto(event.currentTarget.files?.[0] ?? null); setError(""); }} />
-            <p id="try-on-formats" className="mt-1 text-sm text-supporting">{photoRequirements}</p>
+            <p id="try-on-formats" className="mt-2 text-sm text-supporting">{profilePhotoRequirements}</p>
           </div>
+        ) : (
+          <p id="look-photo-use" className="mt-4 text-sm text-supporting">
+            OpenAI uses your profile photo to show these outfits on you. You can add a photo in the next step.
+          </p>
         )}
         {error && <p role="alert" className="mt-4 text-sm text-danger">{error}</p>}
         <button
@@ -159,6 +175,11 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
         >
           {saving ? "Saving…" : needsPhoto ? "Save photo and create looks" : "Create looks with my profile photo"}
         </button>
+        {needsPhoto && (
+          <button type="button" onClick={deferPhoto} disabled={saving} className={`${actionClass} mt-2 sm:ml-2`}>
+            Not now, back to style
+          </button>
+        )}
       </form>
     </section>
   );

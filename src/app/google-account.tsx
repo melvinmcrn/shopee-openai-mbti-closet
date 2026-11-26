@@ -32,7 +32,7 @@ export function GoogleAccount() {
           if (!profileResponse.ok) throw new Error("Profile endpoint unavailable");
           const profile = await profileResponse.json();
           if (!controller.signal.aborted) {
-            window.location.replace(profile.setupCompletedAt ? "/planner" : "/profile/details");
+            window.location.replace(profile.setupCompletedAt ? "/planner" : "/wardrobe/add?from=onboarding");
           }
           return;
         }

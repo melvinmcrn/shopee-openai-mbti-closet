@@ -120,7 +120,7 @@ async function jsonSuccess(response) {
   return response.json();
 }
 
-test("setup saves a private photo, three confirmed pieces, and optional styles across Google sessions", async (t) => {
+test("setup saves three pieces and styles without a photo, then persists a later photo across Google sessions", async (t) => {
   const { env, signIn } = setup(t);
   const firstCookie = await signIn("google-owner", "before@example.com");
   const owner = client(env, firstCookie);
@@ -184,16 +184,16 @@ test("setup saves a private photo, three confirmed pieces, and optional styles a
   assert.deepEqual(await jsonSuccess(await owner("/api/profile")), emptyProfile);
   assert.deepEqual(await jsonSuccess(await owner("/api/profile", setStyles)), { ...emptyProfile, styles });
   const completeSetup = { method: "PATCH", json: { complete: true } };
-  const blocked = await owner("/api/profile", completeSetup);
-  assert.equal(blocked.status, 409);
-  assert.equal((await blocked.json()).code, "profile_photo_required");
+  const withoutPhoto = await jsonSuccess(await owner("/api/profile", completeSetup));
+  assert.ok(Number.isFinite(Date.parse(withoutPhoto.setupCompletedAt)));
+  assert.deepEqual(withoutPhoto, { ...emptyProfile, styles, setupCompletedAt: withoutPhoto.setupCompletedAt });
 
   const photoForm = new FormData();
   photoForm.set("image", new Blob([png], { type: "image/png" }), "profile.png");
   const { facePhotoUrl } = await jsonSuccess(await owner("/api/profile/photo", { method: "PUT", form: photoForm }));
   assert.ok(facePhotoUrl.startsWith("/api/files/"));
   const completed = await jsonSuccess(await owner("/api/profile", completeSetup));
-  assert.ok(Number.isFinite(Date.parse(completed.setupCompletedAt)));
+  assert.equal(completed.setupCompletedAt, withoutPhoto.setupCompletedAt);
   assert.deepEqual(completed, { ...emptyProfile, styles, facePhotoUrl, setupCompletedAt: completed.setupCompletedAt });
 
   const records = userData(env.DB, originalSession.user.id);

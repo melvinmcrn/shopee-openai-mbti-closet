@@ -1,4 +1,4 @@
-import { deletePrivateFile, isOwnedPrivateFileId, readPrivateFile, retryPrivateFileCleanup, writePrivateFile } from "../private-files.mjs";
+import { deletePrivateFile, retryPrivateFileCleanup, writePrivateFile } from "../private-files.mjs";
 import { fileUrl } from "../wardrobe-files.mjs";
 import { maxProfilePhotoBytes, profilePhotoType } from "../profile-photo-image.mjs";
 import { readUploadForm } from "./upload.mjs";
@@ -10,8 +10,8 @@ const editableFields = new Set([
 
 const createProfile = "INSERT INTO profiles (user_id) VALUES (?) ON CONFLICT (user_id) DO NOTHING";
 
-function error(message, status, code) {
-  return Response.json({ error: message, ...(code ? { code } : {}) }, { status, headers: cacheHeaders });
+function error(message, status) {
+  return Response.json({ error: message }, { status, headers: cacheHeaders });
 }
 
 async function readProfile(db, userId) {
@@ -55,22 +55,10 @@ function validatePatch(patch) {
   if (Object.hasOwn(patch, "complete") && typeof patch.complete !== "boolean") {
     return "Complete must be a boolean.";
   }
-  if (patch.complete && patch.facePhotoUrl === null) {
-    return "Setup cannot be completed while removing the profile photo.";
-  }
   return null;
 }
 
-async function firstCompletionPhoto(env, account) {
-  const row = await env.DB.prepare("SELECT face_photo_file_id, setup_completed_at FROM profiles WHERE user_id = ?")
-    .bind(account.id).first();
-  if (row?.setup_completed_at || !isOwnedPrivateFileId(account, row?.face_photo_file_id)) return null;
-  const file = await readPrivateFile(env, account, row.face_photo_file_id);
-  if (!file || !file.size || file.size > maxProfilePhotoBytes) return null;
-  return await profilePhotoType(new Blob([await file.arrayBuffer()])) ? row.face_photo_file_id : null;
-}
-
-async function updateProfile(db, userId, patch, completionPhoto = null) {
+async function updateProfile(db, userId, patch) {
   const assignments = [];
   const values = [];
   for (const [field, column] of [["heightCm", "height_cm"], ["weightKg", "weight_kg"]]) {
@@ -89,34 +77,18 @@ async function updateProfile(db, userId, patch, completionPhoto = null) {
   const statements = [];
   if (assignments.length > 0) {
     statements.push(db.prepare(createProfile).bind(userId));
-    // Check the owned, saved photo in the same write that completes onboarding.
-    // Users who already completed setup can still manage or remove their photo.
-    const completionGuard = patch.complete ? `
-      AND (setup_completed_at IS NOT NULL OR (face_photo_file_id = ? AND EXISTS (
-        SELECT 1 FROM private_files
-        WHERE file_id = profiles.face_photo_file_id AND user_id = profiles.user_id AND state = 'ready'
-      )))
-      RETURNING setup_completed_at
-    ` : "";
-    statements.push(db.prepare(`UPDATE profiles SET ${assignments.join(", ")} WHERE user_id = ? ${completionGuard}`)
-      .bind(...values, userId, ...(patch.complete ? [completionPhoto] : [])));
+    statements.push(db.prepare(`UPDATE profiles SET ${assignments.join(", ")} WHERE user_id = ?`).bind(...values, userId));
   }
   if (Object.hasOwn(patch, "styles")) {
     const styles = [...new Set(patch.styles?.map((style) => style.trim()))];
-    const completed = "EXISTS (SELECT 1 FROM profiles WHERE user_id = ? AND setup_completed_at IS NOT NULL)";
-    const completeValues = patch.complete ? [userId] : [];
-    statements.push(db.prepare(`
-      DELETE FROM style_preferences WHERE user_id = ? ${patch.complete ? `AND ${completed}` : ""}
-    `).bind(userId, ...completeValues));
+    statements.push(db.prepare("DELETE FROM style_preferences WHERE user_id = ?").bind(userId));
     if (styles.length > 0) {
       statements.push(db.prepare(`
         INSERT INTO style_preferences (user_id, style) SELECT ?, value FROM json_each(?)
-        ${patch.complete ? `WHERE ${completed}` : ""}
-      `).bind(userId, JSON.stringify(styles), ...completeValues));
+      `).bind(userId, JSON.stringify(styles)));
     }
   }
-  const results = statements.length > 0 ? await db.batch(statements) : [];
-  return !patch.complete || Boolean(results[1]?.results?.[0]?.setup_completed_at);
+  if (statements.length > 0) await db.batch(statements);
 }
 
 async function retryPhotoCleanup(env, account) {
@@ -174,10 +146,7 @@ export async function profile(request, env, userId) {
         const patch = await request.json().catch(() => null);
         const validation = validatePatch(patch);
         if (validation) return error(validation, 400);
-        const completionPhoto = patch.complete ? await firstCompletionPhoto(env, account) : null;
-        if (!(await updateProfile(db, userId, patch, completionPhoto))) {
-          return error("Add a profile photo before completing setup.", 409, "profile_photo_required");
-        }
+        await updateProfile(db, userId, patch);
         if (!(await retryPhotoCleanup(env, account)) && patch.facePhotoUrl === null) {
           return error("The photo is hidden. Try again to finish removing it from storage.", 503);
         }
