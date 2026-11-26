@@ -1022,6 +1022,8 @@ def check_deferred_photo(browser, device, base):
     page.get_by_role("button", name="Continue").tap()
     page.get_by_role("button", name="Loose fit").tap()
     create = page.get_by_role("button", name="Create looks with my profile photo")
+    disclosure = re.compile(r"send your saved profile photo to OpenAI.*ask for one first")
+    expect(create).to_have_accessible_description(disclosure)
     create.tap()
     expect_heading(page, "Add your try-on photo")
     expect(page.get_by_text(re.compile("OpenAI uses"))).to_be_visible()
@@ -1041,6 +1043,12 @@ def check_deferred_photo(browser, device, base):
     assert context.request.get(base + "/api/profile").json()["facePhotoUrl"]
     page.goto(base)
     expect_heading(page, "Outfit planner")
+    page.get_by_role("button", name="Plan a new outfit").tap()
+    page.get_by_role("textbox", name="Occasion", exact=True).fill("Another lunch")
+    page.get_by_role("button", name="Continue").tap()
+    expect(create).to_have_accessible_description(disclosure)
+    create.tap()
+    expect_heading(page, "Compare looks")
     context.close()
 
 
