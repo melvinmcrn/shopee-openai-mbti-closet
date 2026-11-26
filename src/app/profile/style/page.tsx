@@ -1,5 +1,6 @@
 "use client";
 
+import { privateFetch } from "../../private-fetch.mjs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -24,7 +25,7 @@ export default function ConfirmStylePage() {
 
     async function loadStyles() {
       try {
-        const response = await fetch("/api/profile", { cache: "no-store", signal: controller.signal });
+        const response = await privateFetch("/api/profile", { cache: "no-store", signal: controller.signal });
         if (controller.signal.aborted) return;
         if (response.status === 401) {
           setStatus("signed-out");
@@ -68,7 +69,7 @@ export default function ConfirmStylePage() {
     setSaveError("");
 
     try {
-      const response = await fetch("/api/profile", {
+      const response = await privateFetch("/api/profile", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ styles: selectedStyles }),

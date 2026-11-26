@@ -45,11 +45,11 @@ function NavigationLink({ href, ...props }: ComponentPropsWithoutRef<"a"> & { hr
   return <Link href={href} {...props} />;
 }
 
-export function AppHeader() {
+export function AppHeader({ signedIn }: { signedIn: boolean }) {
   return (
     <header className="sticky top-0 z-20 shrink-0 border-b border-divider bg-canvas pt-[env(safe-area-inset-top,0px)]">
       <div className="mx-auto flex h-14 max-w-4xl items-center px-5 sm:px-8">
-        <NavigationLink href="#home" aria-label="Closet home" className="inline-flex min-h-11 items-center">
+        <NavigationLink href={signedIn ? "#home" : "/"} aria-label="Closet home" className="inline-flex min-h-11 items-center">
           <ClosetWordmark />
         </NavigationLink>
       </div>

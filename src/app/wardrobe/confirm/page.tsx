@@ -1,5 +1,6 @@
 "use client";
 
+import { privateFetch } from "../../private-fetch.mjs";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -44,18 +45,19 @@ export default function ConfirmWardrobeItemsPage() {
   const [manualItemIds, setManualItemIds] = useState<Set<string>>(() => new Set());
   const [reloads, setReloads] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [discardingId, setDiscardingId] = useState<number | null>(null);
   const [savedCount, setSavedCount] = useState(0);
   const [errors, setErrors] = useState<Record<number, string>>({});
-  const activeSave = useRef<AbortController | null>(null);
+  const activeMutation = useRef<AbortController | null>(null);
   const selectedItems = items.filter((item) => !excludedIds.has(item.id));
-  useEffect(() => () => activeSave.current?.abort(), []);
+  useEffect(() => () => activeMutation.current?.abort(), []);
 
   useEffect(() => {
     const controller = new AbortController();
 
     async function loadDrafts() {
       try {
-        const response = await fetch("/api/wardrobe/items?status=draft", {
+        const response = await privateFetch("/api/wardrobe/items?status=draft", {
           cache: "no-store",
           signal: controller.signal,
         });
@@ -113,10 +115,44 @@ export default function ConfirmWardrobeItemsPage() {
     });
   }
 
-  async function saveAndContinue() {
-    if (activeSave.current || !destination || !selectedItems.length) return;
+  async function discardItem(item: DraftItem) {
+    if (activeMutation.current) return;
     const controller = new AbortController();
-    activeSave.current = controller;
+    activeMutation.current = controller;
+    setSaving(true);
+    setDiscardingId(item.id);
+    setErrors((current) => ({ ...current, [item.id]: "" }));
+    try {
+      const response = await privateFetch(`/api/wardrobe/items/${item.id}`, {
+        method: "PATCH",
+        signal: controller.signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ discard: true }),
+      });
+      if (controller.signal.aborted) return;
+      if (response.status === 204) {
+        setItems((current) => current.filter(({ id }) => id !== item.id));
+      } else {
+        const message = response.status === 401 ? "Sign in again to discard this draft."
+          : response.status === 409 ? "This item has already been confirmed. Refresh to see your remaining drafts."
+          : "Couldn’t discard this draft. Try again.";
+        setErrors((current) => ({ ...current, [item.id]: message }));
+      }
+    } catch {
+      if (!controller.signal.aborted) {
+        setErrors((current) => ({ ...current, [item.id]: "Couldn’t confirm removal. Try discarding this draft again." }));
+      }
+    } finally {
+      activeMutation.current = null;
+      setSaving(false);
+      setDiscardingId(null);
+    }
+  }
+
+  async function saveAndContinue() {
+    if (activeMutation.current || !destination || !selectedItems.length) return;
+    const controller = new AbortController();
+    activeMutation.current = controller;
     setSaving(true);
     setErrors({});
 
@@ -132,7 +168,7 @@ export default function ConfirmWardrobeItemsPage() {
       }
 
       try {
-        const response = await fetch(`/api/wardrobe/items/${item.id}`, {
+        const response = await privateFetch(`/api/wardrobe/items/${item.id}`, {
           method: "PATCH",
           signal: controller.signal,
           headers: { "Content-Type": "application/json" },
@@ -164,7 +200,7 @@ export default function ConfirmWardrobeItemsPage() {
       router.push(destination.href);
       return;
     }
-    activeSave.current = null;
+    activeMutation.current = null;
     setSaving(false);
   }
 
@@ -292,8 +328,13 @@ export default function ConfirmWardrobeItemsPage() {
                           onChange={(event) => editItem(item.id, { color: event.target.value })}
                         />
                       </label>
-                      {errors[item.id] && <p className="text-sm text-danger" role="alert">{errors[item.id]}</p>}
                     </fieldset>
+                    <div className="space-y-3 px-4 pb-4">
+                      {errors[item.id] && <p className="text-sm text-danger" role="alert">{errors[item.id]}</p>}
+                      <button type="button" className={secondaryButton} disabled={saving} onClick={() => void discardItem(item)}>
+                        {discardingId === item.id ? "Discarding…" : "Discard item"}
+                      </button>
+                    </div>
                   </article>
                 ))}
               </div>
@@ -307,7 +348,7 @@ export default function ConfirmWardrobeItemsPage() {
                   onClick={() => void saveAndContinue()}
                   type="button"
                 >
-                  {saving ? "Saving…" : `Save ${selectedItems.length} selected ${selectedItems.length === 1 ? "item" : "items"} and continue`}
+                  {saving && discardingId === null ? "Saving…" : `Save ${selectedItems.length} selected ${selectedItems.length === 1 ? "item" : "items"} and continue`}
                 </button>
               ) : destination && !saving && (
                 <Link className={primaryButton} href={destination.href}>{destination.label}<span aria-hidden="true" className="ml-2">→</span></Link>

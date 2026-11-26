@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 import subprocess
 import sys
-from urllib.parse import unquote, urljoin, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -119,11 +119,48 @@ def check_shared_navigation(browser, device, base):
     assert initial_footer.evaluate("node => node.isConnected"), "Navigating replaced the footer"
     context.close()
 
+    # The static document paints before JavaScript can confirm an account.
+    context = browser.new_context(**device, java_script_enabled=False)
+    page = context.new_page()
+    page.goto(f"{base}/account")
+    expect(page.get_by_role("heading", name="Account", exact=True)).to_have_count(0)
+    expect(page.get_by_role("contentinfo")).to_have_count(0)
+    context.close()
+
     context = browser.new_context(**device)
     page = context.new_page()
     page.goto(base)
     expect(page.get_by_role("button", name="Sign in to get started")).to_be_visible()
-    expect_navigation(page)
+    expect(page.get_by_role("contentinfo")).to_have_count(0)
+    expect(page.get_by_role("link", name="Closet home")).to_have_attribute("href", "/")
+
+    for destination in (
+        "/account", "/closet", "/profile/details", "/profile/style", "/profile/ready",
+        "/profile/settings", "/wardrobe/add", "/wardrobe/confirm?batch=3%2C5", "/planner#saved",
+    ):
+        page.goto(base + destination)
+        expect(page.get_by_role("button", name="Sign in to get started")).to_be_visible()
+        login = urlparse(page.url)
+        assert login.path == "/" and parse_qs(login.query)["returnTo"] == [destination]
+        expect(page.locator('input[name="callbackUrl"]')).to_have_value(destination)
+        expect(page.get_by_role("contentinfo")).to_have_count(0)
+
+    context.add_cookies([{"name": "planner-fixture", "value": "returning-session", "url": base}])
+    page.reload()
+    expect_heading(page, "Saved looks")
+    expect_navigation(page, "Saved")
+
+    page.get_by_role("link", name="Profile", exact=True).tap()
+    height = page.get_by_label("Height (cm)")
+    height.fill("179.5")
+    context.clear_cookies()
+    page.get_by_role("button", name="Save preferences").tap()
+    expect(page.get_by_role("button", name="Sign in to get started")).to_be_visible()
+    assert parse_qs(urlparse(page.url).query)["returnTo"] == ["/account"]
+    expect(page.get_by_role("contentinfo")).to_have_count(0)
+    page.go_back()
+    expect(page.get_by_role("button", name="Sign in to get started")).to_be_visible()
+    expect(page.get_by_role("contentinfo")).to_have_count(0)
     context.close()
 
 
@@ -610,6 +647,72 @@ def check_automatic_cutout_retry(browser, device, base):
         context.close()
 
 
+def check_failed_photo_removal(browser, device, base):
+    context, page = mobile_session(browser, device, base, "other-account")
+    photo = Path(__file__).resolve().parents[1] / "public/sample-wardrobe/studio-model.webp"
+    def draft_ids():
+        response = context.request.get(f"{base}/api/wardrobe/items?status=draft")
+        assert response.ok
+        return {item["id"] for item in response.json()["items"]}
+
+    original_ids = draft_ids()
+    page.goto(f"{base}/wardrobe/add/?from=closet")
+    page.get_by_label("Choose photos").set_input_files(photo)
+    page.get_by_role("button", name="Upload photos").tap()
+    review = page.get_by_role("link", name="Review 3 items")
+    expect(review).to_be_visible()
+    retained_ids = draft_ids()
+    assert len(retained_ids - original_ids) == 3
+
+    def manual_upload(route):
+        draft = route.fetch().json()["items"][0]
+        draft["extraction"] = {"status": "manual", "code": "extraction_failed", "nextAction": "manual_review"}
+        route.fulfill(json={"items": [draft]})
+
+    page.route("**/api/wardrobe/upload", manual_upload, times=1)
+    page.get_by_label("Choose more photos").set_input_files(photo)
+    page.get_by_role("button", name="Upload photos").tap()
+    remove = page.get_by_role("button", name=f"Remove {photo.name}")
+    expect(page.get_by_text("Ready for manual review", exact=True)).to_be_visible()
+    failed_names = ["first.webp", "second.webp"]
+    page.get_by_label("Choose more photos").set_input_files([
+        {"name": name, "mimeType": "image/webp", "buffer": photo.read_bytes()} for name in failed_names
+    ])
+    page.route("**/api/wardrobe/upload", lambda route: route.fulfill(status=413), times=1)
+    page.get_by_role("button", name="Upload photos").tap()
+    batch_error = page.get_by_role("alert").filter(has_text="The batch is too large to send")
+    expect(batch_error).to_be_visible()
+    page.route("**/api/wardrobe/upload?draftKey=*", lambda route: route.fulfill(status=503), times=1)
+    remove.tap()
+    expect(page.get_by_role("alert").filter(has_text="Couldn’t confirm removal")).to_be_visible()
+    remove.tap()
+    expect(remove).to_have_count(0)
+    expect(batch_error).to_be_visible()
+    page.get_by_role("button", name="Remove first.webp").tap()
+    expect(batch_error).to_be_visible()
+    page.get_by_role("button", name="Remove second.webp").tap()
+    expect(batch_error).to_have_count(0)
+    expect(review).to_be_visible()
+    assert draft_ids() == retained_ids
+
+    review.tap()
+    expect(page.get_by_text("3 items to review")).to_be_visible()
+    first_card = page.get_by_role("article").first
+    first_card.get_by_role("checkbox").uncheck()
+    save_remaining = page.get_by_role("button", name="Save 2 selected items and continue")
+    expect(save_remaining).to_be_enabled()
+    first_card.get_by_role("button", name="Discard item").tap()
+    expect(save_remaining).to_be_enabled()
+    expect(page.get_by_text("2 items to review")).to_be_visible()
+    page.reload()
+    expect(page.get_by_text("2 items to review")).to_be_visible()
+    assert len(retained_ids - draft_ids()) == 1
+    save_remaining.tap()
+    expect_heading(page, "Closet")
+    assert draft_ids() == original_ids
+    context.close()
+
+
 def refresh_stale_choice(page, context, base, image_url, other_image, choice):
     evict_photo(context, base, image_url)
     requests = []
@@ -777,6 +880,47 @@ def check_occasion_look(browser, device, base, session):
     context.close()
 
 
+def check_deferred_photo(browser, device, base):
+    context, page = mobile_session(browser, device, base, "empty-closet")
+    assert context.request.delete(base + "/api/profile/photo", headers={"Origin": base}).ok
+    assert context.request.patch(base + "/api/profile", headers={"Origin": base},
+                                 data={"setupCompletedAt": None}).ok
+    page.goto(base)
+    expect_heading(page, "Add wardrobe photos")
+    assert urlparse(page.url).query == "from=onboarding"
+    page.goto(base + "/profile/details/")
+    expect_heading(page, "Add wardrobe photos")
+    page.goto(base + "/profile/ready/")
+    page.get_by_role("button", name="Open planner").tap()
+    expect_heading(page, "Outfit planner")
+    assert context.request.get(base + "/api/profile").json()["facePhotoUrl"] is None
+    page.get_by_role("button", name="Plan a new outfit").tap()
+    page.get_by_role("textbox", name="Occasion", exact=True).fill("Sunday lunch")
+    page.get_by_role("button", name="Continue").tap()
+    page.get_by_role("button", name="Loose fit").tap()
+    create = page.get_by_role("button", name="Create looks with my profile photo")
+    create.tap()
+    expect_heading(page, "Add your try-on photo")
+    expect(page.get_by_text(re.compile("OpenAI uses"))).to_be_visible()
+    page.get_by_role("button", name="Not now").tap()
+    expect_heading(page, "Today’s style")
+    expect(page.get_by_role("button", name="Loose fit")).to_have_attribute("aria-pressed", "true")
+    assert context.request.get(base + "/api/profile").json()["facePhotoUrl"] is None
+    create.tap()
+    picture = page.get_by_label("Choose a photo")
+    picture.set_input_files({"name": "broken.jpg", "mimeType": "image/jpeg", "buffer": b"invalid"})
+    page.get_by_role("button", name="Save photo and create looks").tap()
+    expect(page.get_by_role("main").get_by_role("alert")).to_contain_text("could not be read")
+    assert context.request.get(base + "/api/profile").json()["facePhotoUrl"] is None
+    picture.set_input_files(Path(__file__).resolve().parents[1] / "public/google-sign-in.png")
+    page.get_by_role("button", name="Save photo and create looks").tap()
+    expect_heading(page, "Compare looks")
+    assert context.request.get(base + "/api/profile").json()["facePhotoUrl"]
+    page.goto(base)
+    expect_heading(page, "Outfit planner")
+    context.close()
+
+
 def main():
     root = Path(__file__).resolve().parent.parent
     output = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root / "out"
@@ -803,8 +947,10 @@ def main():
                     check_wardrobe_deletion(browser, device, base)
                     check_outfit_upload(browser, device, base)
                     check_automatic_cutout_retry(browser, device, base)
+                    check_failed_photo_removal(browser, device, base)
                     check_occasion_look(browser, device, base, "returning-session")
                     check_occasion_look(browser, device, base, "empty-closet")
+                    check_deferred_photo(browser, device, base)
                     check_wardrobe_return(browser, device, base)
                 finally:
                     browser.close()

@@ -1,5 +1,6 @@
 "use client";
 
+import { privateFetch } from "../private-fetch.mjs";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
@@ -68,7 +69,7 @@ export default function AccountPage() {
 
     async function loadProfile() {
       try {
-        const response = await fetch("/api/profile", { cache: "no-store", signal: controller.signal });
+        const response = await privateFetch("/api/profile", { cache: "no-store", signal: controller.signal });
         if (response.status === 401) {
           setLoadError(true);
           return;
@@ -122,7 +123,7 @@ export default function AccountPage() {
     setBusy("profile");
     setProfileNotice(null);
     try {
-      const response = await fetch("/api/profile", {
+      const response = await privateFetch("/api/profile", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(changes),
@@ -177,7 +178,7 @@ export default function AccountPage() {
     setBusy("photo");
     setPhotoNotice(null);
     try {
-      const response = await fetch("/api/profile/photo", { method, body });
+      const response = await privateFetch("/api/profile/photo", { method, body });
       const updated = await readProfile(response);
       setProfile((current) => current && {
         ...current,

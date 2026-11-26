@@ -1,5 +1,6 @@
 "use client";
 
+import { privateFetch } from "../../private-fetch.mjs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -52,7 +53,7 @@ function SetupSummary({ profile, items }: Setup) {
       </section>
 
       <section className={cardClass} aria-labelledby="details-heading">
-        <h2 id="details-heading" className="text-lg font-semibold">Personal details</h2>
+        <h2 id="details-heading" className="text-lg font-semibold">Optional profile details</h2>
         <dl className="mt-3 grid grid-cols-[1fr_auto] gap-x-4 gap-y-2 text-sm">
           <dt className="text-supporting">Height</dt>
           <dd>{profile.heightCm == null ? "Not added" : `${profile.heightCm} cm`}</dd>
@@ -94,11 +95,6 @@ export default function ProfileReadyPage() {
   const [attempt, setAttempt] = useState(0);
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState(false);
-  const [photoMissing, setPhotoMissing] = useState(false);
-  const photoRequired = setup.status === "loaded" && (
-    photoMissing || (!setup.data.profile.setupCompletedAt && !setup.data.profile.facePhotoUrl)
-  );
-
   useEffect(() => {
     const controller = new AbortController();
 
@@ -106,8 +102,8 @@ export default function ProfileReadyPage() {
       try {
         const options = { signal: controller.signal, cache: "no-store" as const };
         const [profileResponse, wardrobeResponse] = await Promise.all([
-          fetch("/api/profile", options),
-          fetch("/api/wardrobe/items", options),
+          privateFetch("/api/profile", options),
+          privateFetch("/api/wardrobe/items", options),
         ]);
         if (!profileResponse.ok || !wardrobeResponse.ok) {
           throw new Error("Unable to load setup");
@@ -129,23 +125,15 @@ export default function ProfileReadyPage() {
   }, [attempt]);
 
   async function openPlanner() {
-    if (finishing || photoRequired) return;
+    if (finishing) return;
     setFinishing(true);
     setFinishError(false);
     try {
-      const response = await fetch("/api/profile", {
+      const response = await privateFetch("/api/profile", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ complete: true }),
       });
-      if (response.status === 409) {
-        const problem = await response.json();
-        if (problem.code === "profile_photo_required") {
-          setPhotoMissing(true);
-          setFinishing(false);
-          return;
-        }
-      }
       if (!response.ok) throw new Error("Unable to complete setup");
       const profile: Profile = await response.json();
       if (!profile.setupCompletedAt) throw new Error("Setup completion was not saved");
@@ -180,16 +168,10 @@ export default function ProfileReadyPage() {
         <>
           <SetupSummary {...setup.data} />
           <div className="flex flex-col items-start gap-2">
-            {photoRequired && (
-              <p className="text-sm" role="status">
-                Add a profile photo to finish setup.{" "}
-                <Link href="/profile/details" className={linkClass}>Upload or take a photo</Link>
-              </p>
-            )}
             <button
               type="button"
               onClick={openPlanner}
-              disabled={finishing || photoRequired}
+              disabled={finishing}
               className="min-h-11 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-on-primary hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-secondary disabled:opacity-60"
             >
               {finishing ? "Opening planner…" : "Open planner"}
