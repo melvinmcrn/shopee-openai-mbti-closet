@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { sessionEnded } from "./private-fetch.mjs";
 
 export function SignOutButton({ className, disabled, label }: {
   className: string;
@@ -26,6 +27,11 @@ export function SignOutButton({ className, disabled, label }: {
       const { url } = await response.json();
       // Auth.js also returns a redirect URL for errors such as an expired CSRF token.
       if (new URL(url, window.location.origin).pathname !== "/") throw new Error("Sign-out failed");
+      try {
+        localStorage.setItem(sessionEnded, String(Date.now()));
+      } catch {
+        // Other tabs also check when they return to the foreground.
+      }
       window.location.replace("/");
     } catch {
       setStatus("error");

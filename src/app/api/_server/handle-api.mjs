@@ -7,6 +7,7 @@ import { wardrobeApi } from "./wardrobe-api.mjs";
 import { Auth } from "@auth/core";
 import Google from "@auth/core/providers/google";
 import { retryPrivateFileCleanup, servePrivateFile } from "./private-files.mjs";
+import { returnDestination } from "../../return-destination.mjs";
 
 const productionOrigin = "https://mbti-closet.stonyimpala.chatgpt.site";
 const localOrigin = "http://localhost:3000";
@@ -39,7 +40,7 @@ function auth(request, env, readSubject = () => {}) {
       }),
     ],
     callbacks: {
-      redirect: ({ baseUrl }) => baseUrl,
+      redirect: ({ url, baseUrl }) => baseUrl + (returnDestination(url, baseUrl) ?? "/"),
       async jwt({ token, account, profile }) {
         if (account) {
           const subject = profile?.sub;

@@ -1,3 +1,4 @@
+import { privateFetch } from "../private-fetch.mjs";
 import type { CatalogProduct } from "./enhancement";
 
 export type Garment = { id: string; name: string; color: string; category: string; imageRef: string };
@@ -19,7 +20,7 @@ export class PlannerApiError extends Error {
 }
 
 export async function api<T>(action: string, input: object = {}, signal?: AbortSignal): Promise<T> {
-  const response = await fetch("/api/planner", {
+  const response = await privateFetch("/api/planner", {
     method: "POST",
     cache: "no-store",
     signal,

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, imageUrl, occasionLookLabel, type CompletedLook, type Garment, type Look } from "./shared";
 import type { LoadTryOn } from "./try-on";
+import { wardrobeHref } from "../wardrobe/flow.mjs";
 
 type CompareProps = {
   loadTryOn: LoadTryOn;
@@ -169,7 +170,7 @@ function CompareBrief({ briefId, comparison, notice, onComparison, garments, onC
         {!pending && failedPhotos.length > 0 && (
           <button type="button" onClick={retryPhotos} className={secondaryButton}>Retry photos</button>
         )}
-        {needsCloset && <Link href="/closet" className={secondaryButton}>Open closet</Link>}
+        {needsCloset && <Link href={wardrobeHref("/wardrobe/add", { from: "planner", brief: briefId })} className={secondaryButton}>Add wardrobe items</Link>}
         {canGenerate && comparison && (
           <button type="button" disabled={generating}
             onClick={() => onComparison({ ...comparison, request: generate(briefId, looks) })} className={secondaryButton}>
