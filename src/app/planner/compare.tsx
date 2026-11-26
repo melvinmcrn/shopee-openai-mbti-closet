@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, imageUrl, occasionLookLabel, type CompletedLook, type Garment, type Look } from "./shared";
+import { sourceLabel } from "./look-sources.mjs";
 import { WardrobePhotos } from "./wardrobe-photos";
 import type { LoadTryOn, OutfitPieces } from "./try-on";
 import { wardrobeHref } from "../wardrobe/flow.mjs";
@@ -29,15 +30,6 @@ export type Comparison = { looks: Look[]; result?: Generation; request?: Promise
 type PhotoState = { attempt: number; status?: "ready" | "failed"; message?: string };
 const secondaryButton =
   "inline-flex min-h-11 items-center justify-center rounded-full border border-divider px-5 py-2 text-sm font-semibold text-secondary transition hover:bg-selected focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:cursor-wait disabled:opacity-60";
-
-function sourceLabel(owned: number, fromProfile: boolean, shopee: number) {
-  if (owned && !fromProfile && !shopee) return "All from your closet";
-  return [
-    owned ? `${owned} owned piece${owned === 1 ? "" : "s"}` : "",
-    fromProfile ? "Clothes from your profile photo" : "",
-    shopee ? `${shopee} Shopee item${shopee === 1 ? "" : "s"}` : "",
-  ].filter(Boolean).join(" · ") || "Try-on basics";
-}
 
 function LookCard({ look, index, garments, loadTryOn, attempt, failed, onStatus, onChoose }: {
   look: Look;
@@ -70,7 +62,7 @@ function LookCard({ look, index, garments, loadTryOn, attempt, failed, onStatus,
   const clothes = completed?.photoClothes ?? pieces?.photoClothes;
   const ownedIds = new Set(Object.values(slots));
   const owned = garments.filter(garment => ownedIds.has(garment.id));
-  const count = Object.keys(slots).filter(slot => slot !== "other").length + (clothes?.original.length ?? 0);
+  const sources = sourceLabel(slots, clothes, pieces?.products.length);
   const products = pieces?.products ?? [];
   const prices = products.flatMap(product => Number.isFinite(product.price) && /^[A-Z]{3}$/.test(product.currency)
     ? [new Intl.NumberFormat("en", { style: "currency", currency: product.currency }).format(product.price)] : []);
@@ -78,12 +70,7 @@ function LookCard({ look, index, garments, loadTryOn, attempt, failed, onStatus,
     <article className="min-w-0 space-y-3 rounded-2xl border border-divider bg-surface p-4">
       <div className="space-y-1">
         <h2 className="font-heading text-2xl text-text">{occasion ? occasionLookLabel : `Look ${index + 1}`}</h2>
-        {pieces && <p className="text-sm font-semibold text-secondary">
-          {sourceLabel(count, Boolean(clothes?.profile.length), products.length)}
-        </p>}
-        {!pieces && count > 0 && <p className="text-sm font-semibold text-secondary">
-          {count} owned {count === 1 ? "piece" : "pieces"}
-        </p>}
+        {sources && <p className="text-sm font-semibold text-secondary">{sources}</p>}
         {prices.length > 0 && <p className="text-xs text-supporting">
           {products.length === 1 ? "Shopee price" : "Shopee prices"} · {prices.join(" + ")}
         </p>}

@@ -131,6 +131,13 @@ test("Postgres supports owner-scoped profiles, wardrobe items, and the planner",
     assert.deepEqual(extra.styles, ["casual", "formal"]);
     assert.deepEqual(extra.comfortChoices, ["Warm"]);
     assert.deepEqual(extra.clothingChoices, [{ category: "top", garmentType: "tee" }]);
+    const revised = await dispatchPlanner(env, owner.id, "saveBrief", {
+      id: String(extra.id), occasion: extra.occasion, styles: ["Vintage"],
+    });
+    assert.deepEqual(revised.profileStyles, ["casual", "formal"]);
+    assert.deepEqual(revised.preferences, ["top"]);
+    assert.deepEqual((await owned.getOutfitRequest(extra.id)).clothingChoices, extra.clothingChoices);
+    assert.deepEqual((await dispatchPlanner(env, owner.id, "saveBrief", { ...revised, preferences: [] })).preferences, []);
 
     const plannerDraft = await dispatchPlanner(env, owner.id, "resumePlanner");
     assert.equal(plannerDraft.stage, "style");

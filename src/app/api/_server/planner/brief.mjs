@@ -64,7 +64,7 @@ export function insertOutfitRequest(db, { id, accountId, occasion, timing, locat
 
 export function stylesForGeneration(styles) {
   if (!Array.isArray(styles)) return [];
-  return styles.filter(style => typeof style === "string").slice(0, 20).map(style => style.slice(0, 120));
+  return styles.filter(style => typeof style === "string");
 }
 
 function newBriefId() {
@@ -117,7 +117,7 @@ export async function saveBrief(db, accountId, input, stage) {
   const location = readText(input.location, "Location") || null;
   const formality = readText(input.formality, "Formality") || null;
   const comfort = readText(input.comfort, "Comfort");
-  const preferences = JSON.stringify(readPreferences(input.preferences));
+  const preferences = input.preferences === undefined ? undefined : readPreferences(input.preferences);
 
   const styles = input.styles === undefined ? null : JSON.stringify(readStyles(input.styles));
   const creating = input.id === undefined;
@@ -146,11 +146,6 @@ export async function saveBrief(db, accountId, input, stage) {
           WHERE request.user_id = ? AND request.id = ?${versionGuard} AND ${comfortForRequest} <> ?
         )
       `).bind(accountId, id, ...guardValues, comfort),
-      db.prepare(`
-        DELETE FROM request_clothing_choices
-        WHERE request_id IN (SELECT id FROM outfit_requests WHERE user_id = ? AND id = ?${versionGuard})
-          AND category NOT IN (SELECT value FROM json_each(?))
-      `).bind(accountId, id, ...guardValues, preferences),
     );
   }
   if (comfort) {
@@ -162,8 +157,16 @@ export async function saveBrief(db, accountId, input, stage) {
     `).bind(comfort, accountId, id, ...guardValues));
   }
   // The planner selects categories. Preserve garment types already stored for those categories.
-  statements.push(
-    db.prepare(`
+  if (preferences !== undefined) {
+    const categories = JSON.stringify(preferences);
+    if (!creating) {
+      statements.push(db.prepare(`
+        DELETE FROM request_clothing_choices
+        WHERE request_id IN (SELECT id FROM outfit_requests WHERE user_id = ? AND id = ?${versionGuard})
+          AND category NOT IN (SELECT value FROM json_each(?))
+      `).bind(accountId, id, ...guardValues, categories));
+    }
+    statements.push(db.prepare(`
       INSERT INTO request_clothing_choices (request_id, category, garment_type)
       SELECT request.id, selected.value, ''
       FROM outfit_requests AS request CROSS JOIN json_each(?) AS selected
@@ -172,14 +175,18 @@ export async function saveBrief(db, accountId, input, stage) {
           SELECT 1 FROM request_clothing_choices
           WHERE request_id = request.id AND category = selected.value
         )
-    `).bind(preferences, accountId, id, ...guardValues),
+    `).bind(categories, accountId, id, ...guardValues));
+  }
+  statements.push(
     selectBrief(db, accountId, id, nextVersion),
+    db.prepare("SELECT style FROM style_preferences WHERE user_id = ? ORDER BY style").bind(accountId),
   );
 
   const results = await db.batch(statements);
-  const saved = readBrief(results.at(-1).results[0]);
-  if (stage && !saved) throw Object.assign(new Error("This plan changed. Reopen the planner to continue."), { status: 409 });
-  return saved && nextVersion ? { ...saved, version: nextVersion } : saved;
+  const [saved, defaults] = results.slice(-2);
+  const brief = readBrief(saved.results[0]);
+  if (stage && !brief) throw Object.assign(new Error("This plan changed. Reopen the planner to continue."), { status: 409 });
+  return brief && { ...brief, ...(stage && { version: nextVersion }), profileStyles: defaults.results.map(row => row.style) };
 }
 
 export async function getBrief(db, accountId, id) {

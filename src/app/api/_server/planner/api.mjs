@@ -1,5 +1,5 @@
 import { catalogListingKey } from "../../../planner/catalog-listing.mjs";
-import { resumePlanner, setDraftStage } from "./resume.mjs";
+import { restoreReview, resumePlanner, setDraftStage } from "./resume.mjs";
 import { getGarments } from "./garments.mjs";
 import { saveBrief, getBrief } from "./brief.mjs";
 import { readOption, generateOptions } from "./options.mjs";
@@ -88,6 +88,7 @@ export async function dispatchPlanner(env, accountId, action, input = {}, depend
   }
   switch (action) {
     case "resumePlanner": return resumePlanner(db, accountId, input.briefId);
+    case "restoreReview": return restoreReview(db, accountId, input, await wardrobe());
     case "setDraftStage": return setDraftStage(db, accountId, input);
     case "wardrobe": return wardrobe();
     case "prepareTryOn": {
