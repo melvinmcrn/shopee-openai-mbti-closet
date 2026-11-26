@@ -24,12 +24,14 @@ const actionClass =
 
 export function Style({ brief, needsPhoto, onPhoto, onStyle, onChange, onNext, onBack }: StyleProps) {
   const { formality, comfort, styles = [] } = brief;
-  const options = [...new Set([...styleOptions, ...styles])];
+  const options = [...new Set([...styleOptions, ...(brief.profileStyles ?? []), ...styles])];
   const setFormality = (formality: string) => onChange({ ...brief, formality });
   const setComfort = (comfort: string) => onChange({ ...brief, comfort });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
+  const [uploaded, setUploaded] = useState(false);
+  const canReusePhoto = brief.hasSavedPhoto || uploaded;
   const savePending = useRef(false);
   const heading = useRef<HTMLHeadingElement>(null);
 
@@ -62,6 +64,7 @@ export function Style({ brief, needsPhoto, onPhoto, onStyle, onChange, onNext, o
           const problem = await response.json().catch(() => ({}));
           throw new Error(problem.error || "Your photo could not be saved. Try again.");
         }
+        setUploaded(true);
         setPhoto(null);
       }
       const result = await api<PreparedTryOn>("prepareTryOn", {
@@ -183,7 +186,7 @@ export function Style({ brief, needsPhoto, onPhoto, onStyle, onChange, onNext, o
               Choose a clear photo of yourself. We save it privately to your profile. OpenAI uses it to show these outfits on you.
               You can remove it in Profile.
             </p>
-            <input id="try-on-photo" type="file" accept={profilePhotoAccept} required disabled={saving}
+            <input id="try-on-photo" type="file" accept={profilePhotoAccept} required={!canReusePhoto} disabled={saving}
               aria-describedby="look-photo-use try-on-formats"
               className="mt-4 w-full min-w-0 text-sm file:mr-3 file:min-h-11 file:rounded-full file:border file:border-divider file:bg-surface file:px-4 file:font-semibold"
               onChange={event => { setPhoto(event.currentTarget.files?.[0] ?? null); setError(""); }} />
@@ -191,7 +194,8 @@ export function Style({ brief, needsPhoto, onPhoto, onStyle, onChange, onNext, o
           </div>
         ) : (
           <p id="look-photo-use" className="mt-4 text-sm text-supporting">
-            OpenAI uses your profile photo to show these outfits on you. You can add a photo in the next step.
+            When you create looks, we send your saved profile photo to OpenAI to show the outfits on you.
+            If you haven’t saved a photo, we’ll ask for one first.
           </p>
         )}
         {error && <p role="alert" className="mt-4 text-sm text-danger">{error}</p>}
@@ -201,7 +205,7 @@ export function Style({ brief, needsPhoto, onPhoto, onStyle, onChange, onNext, o
           disabled={saving}
           className="mt-4 min-h-12 rounded-full bg-primary px-6 text-sm font-semibold text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:opacity-60"
         >
-          {saving ? "Saving…" : needsPhoto ? "Save photo and create looks" : "Create looks with my profile photo"}
+          {saving ? "Saving…" : needsPhoto ? canReusePhoto && !photo ? "Use saved profile photo and create looks" : "Save photo and create looks" : "Create looks with my profile photo"}
         </button>
         {needsPhoto && (
           <button type="button" onClick={deferPhoto} disabled={saving} className={`${actionClass} mt-2 sm:ml-2`}>

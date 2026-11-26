@@ -31,7 +31,7 @@ function d1Binding(database) {
             : params;
           return {
             async first() { return statement.get(...bindings) ?? null; },
-            async all() { return { results: statement.all(...bindings) }; },
+            all() { return { results: statement.all(...bindings) }; },
             async run() { return statement.run(...bindings); },
           };
         },
@@ -41,7 +41,7 @@ function d1Binding(database) {
       database.exec("BEGIN");
       try {
         const results = [];
-        for (const statement of statements) results.push(await statement.all());
+        for (const statement of statements) results.push(statement.all());
         database.exec("COMMIT");
         return results;
       } catch (error) {
@@ -1079,4 +1079,46 @@ test("editing a brief starts a new comparison without resurrecting options from 
   }), error => error.status === 409);
   await assert.rejects(dispatch("saveBrief", { ...first, comfort: "Stale", trackDraft: true }), error => error.status === 409);
   assert.equal((await dispatch("resumePlanner")).brief.comfort, "Loose fit");
+});
+
+async function selectedDraft(t) {
+  const { previewSelection } = await import("../src/app/api/_server/planner/preview-files.mjs");
+  const { dispatch, makeSession, database } = await startPlanner(t);
+  const brief = await dispatch("saveBrief", { occasion: "Wedding", trackDraft: true });
+  const { looks: [look] } = await dispatch("generate", { briefId: brief.id });
+  const previewRef = "private/1/30000000-0000-4000-8000-000000000004";
+  const selection = previewSelection({ dress, shoes: heels }, true, [], profileRef);
+  database.prepare("INSERT INTO private_files(file_id,user_id,state) VALUES (?,1,'ready')").run(previewRef);
+  database.prepare("INSERT INTO planner_previews VALUES (1,?,?,?)").run(look.id, selection, previewRef);
+  const { version } = await dispatch("setDraftStage", { briefId: brief.id, stage: "refine", version: brief.version, optionId: look.id, previewRef });
+  return { dispatch, makeSession, database, brief, look, selection, version, previewRef, save: {
+    optionId: look.id, slots: look.slots, previewRef, catalogItemIds: [], draftVersion: version,
+  } };
+}
+
+test("a restored review reads the exact selected file and refuses an evicted or replaced photo", async t => {
+  const { dispatch, makeSession, database, brief, look, previewRef, version, selection } = await selectedDraft(t);
+  const input = { briefId: brief.id, optionId: look.id, version };
+  assert.equal((await dispatch("restoreReview", input)).imageRef, previewRef);
+  await assert.rejects(makeSession(2)("restoreReview", input), { status: 409 });
+  database.prepare("DELETE FROM planner_previews WHERE file_id=?").run(previewRef);
+  const replacement = "private/1/40000000-0000-4000-8000-000000000004";
+  database.prepare("INSERT INTO private_files(file_id,user_id,state) VALUES (?,1,'ready')").run(replacement);
+  database.prepare("INSERT INTO planner_previews VALUES (1,?,?,?)").run(look.id, selection, replacement);
+  await assert.rejects(dispatch("restoreReview", input), { status: 409 });
+});
+
+test("discarding a reviewed draft prevents a stale tab from saving its outfit", async t => {
+  const { dispatch, database, brief, version, save } = await selectedDraft(t);
+  await dispatch("setDraftStage", { briefId: brief.id, stage: "closed", version });
+  await assert.rejects(dispatch("save", save), { status: 409 });
+  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM saved_looks").get().count, 0);
+});
+
+test("two tabs saving one reviewed draft produce exactly one outfit", async t => {
+  const { dispatch, database, save } = await selectedDraft(t);
+  const results = await Promise.allSettled([dispatch("save", save), dispatch("save", save)]);
+  assert.equal(results.filter(item => item.status === "fulfilled").length, 1);
+  assert.equal(results.find(item => item.status === "rejected").reason.status, 409);
+  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM saved_looks").get().count, 1);
 });

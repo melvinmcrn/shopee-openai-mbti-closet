@@ -3,7 +3,7 @@
 import { privateFetch } from "../../private-fetch.mjs";
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { wardrobeHref } from "../flow.mjs";
 import { useWardrobeFlow } from "../use-wardrobe-flow";
@@ -37,6 +37,11 @@ const secondaryButton = "inline-flex min-h-11 items-center justify-center rounde
 const fieldClass = "mt-1 block min-h-11 w-full rounded-lg border border-divider bg-surface px-3 py-2 text-base text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:opacity-60";
 
 export default function ConfirmWardrobeItemsPage() {
+  const query = useSearchParams().toString();
+  return <DraftReview key={query} query={query} />;
+}
+
+function DraftReview({ query }: { query: string }) {
   const router = useRouter();
   const { origin, destination, error: flowError, retry: retryFlow } = useWardrobeFlow("confirm");
   const [items, setItems] = useState<DraftItem[]>([]);
@@ -71,7 +76,7 @@ export default function ConfirmWardrobeItemsPage() {
 
         const data: { items: DraftItem[] } = await response.json();
         if (controller.signal.aborted) return;
-        const params = new URLSearchParams(window.location.search);
+        const params = new URLSearchParams(query);
         const requestedId = params.get("item");
         const batchIds = params.get("batch");
         const manualIds = new Set(params.get("manual")?.split(","));
@@ -85,11 +90,10 @@ export default function ConfirmWardrobeItemsPage() {
             return draft ? [draft] : [];
           });
           setItems(batch);
+        } else if (requestedId !== null) {
+          setItems(data.items.filter((item) => String(item.id) === requestedId));
         } else {
-          const requestedItem = data.items.find((item) => String(item.id) === requestedId);
-          setItems(requestedItem
-            ? [requestedItem, ...data.items.filter((item) => item.id !== requestedItem.id)]
-            : data.items);
+          setItems(data.items);
         }
         setStatus("ready");
       } catch {
@@ -99,7 +103,7 @@ export default function ConfirmWardrobeItemsPage() {
 
     void loadDrafts();
     return () => controller.abort();
-  }, [reloads]);
+  }, [query, reloads]);
 
   function editItem(id: number, edits: Partial<ItemEdits>) {
     setItems((current) => current.map((item) => item.id === id ? { ...item, ...edits } : item));
@@ -130,11 +134,10 @@ export default function ConfirmWardrobeItemsPage() {
         body: JSON.stringify({ discard: true }),
       });
       if (controller.signal.aborted) return;
-      if (response.status === 204) {
+      if (response.status === 204 || response.status === 404 || response.status === 409) {
         setItems((current) => current.filter(({ id }) => id !== item.id));
       } else {
         const message = response.status === 401 ? "Sign in again to discard this draft."
-          : response.status === 409 ? "This item has already been confirmed. Refresh to see your remaining drafts."
           : "Couldn’t discard this draft. Try again.";
         setErrors((current) => ({ ...current, [item.id]: message }));
       }
@@ -185,10 +188,11 @@ export default function ConfirmWardrobeItemsPage() {
           break;
         }
 
-        if (!response.ok) throw new Error("Confirmation failed");
+        if (!response.ok && response.status !== 404) throw new Error("Confirmation failed");
 
+        // Another tab may have already saved or discarded this draft.
         setItems((current) => current.filter(({ id }) => id !== item.id));
-        setSavedCount((count) => count + 1);
+        if (response.ok) setSavedCount((count) => count + 1);
       } catch {
         if (controller.signal.aborted) return;
         failed = true;
@@ -213,7 +217,7 @@ export default function ConfirmWardrobeItemsPage() {
           </Link>
           <h1 className="mt-5 text-4xl font-semibold tracking-tight sm:text-5xl">Confirm items</h1>
           <p className="mt-3 max-w-lg leading-relaxed text-supporting">
-            Choose what to save to your closet. Unselected items stay in drafts for later.
+            Select items to add to your closet. Save to keep your edits, or review the original drafts later.
           </p>
         </header>
 

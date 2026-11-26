@@ -777,6 +777,43 @@ def check_outfit_upload(browser, device, base):
     context.close()
 
 
+def check_stale_draft_reviews(browser, device, base):
+    context, batch = mobile_session(browser, device, base, "other-account")
+    batch.goto(f"{base}/wardrobe/add/?from=closet")
+    photo = Path(__file__).resolve().parents[1] / "public/sample-wardrobe/studio-model.webp"
+    batch.get_by_label("Choose photos").set_input_files(photo)
+    batch.get_by_role("button", name="Upload photos").tap()
+    batch.get_by_role("link", name="Review 3 items").tap()
+    expect(batch.get_by_role("article")).to_have_count(3)
+    first, second, third = map(int, parse_qs(urlparse(batch.url).query)["batch"][0].split(","))
+
+    single = context.new_page()
+    def open_item(item_id):
+        single.goto(f"{base}/wardrobe/confirm/?from=closet&item={item_id}")
+    open_item(999999)
+    expect(single.get_by_text("No items to review", exact=True)).to_be_visible()
+    open_item(first)
+    expect(single.get_by_role("article")).to_have_count(1)
+    single.get_by_role("button", name="Save 1 selected item and continue").tap()
+    expect_heading(single, "Closet")
+    def patch(item_id, data):
+        return context.request.patch(f"{base}/api/wardrobe/items/{item_id}", headers={"Origin": base}, data=data)
+    assert patch(first, {"name": "Updated in Closet"}).ok
+    assert patch(second, {"discard": True}).ok
+    open_item(first)
+    expect(single.get_by_text("No items to review", exact=True)).to_be_visible()
+
+    # The original tab still shows all three. Keep the newer name, skip the
+    # discarded draft, and finish saving the one that remains pending.
+    batch.get_by_role("button", name="Save 3 selected items and continue").tap()
+    expect_heading(batch, "Closet")
+    active = {row["id"]: row for row in context.request.get(f"{base}/api/wardrobe/items").json()["items"]}
+    assert active[first]["name"] == "Updated in Closet"
+    assert second not in active
+    assert third in active
+    context.close()
+
+
 def check_wardrobe_return(browser, device, base):
     context, page = mobile_session(browser, device, base, "profile-only")
     page.goto(f"{base}/wardrobe/add/?from=onboarding")
@@ -1158,6 +1195,8 @@ def check_deferred_photo(browser, device, base):
     page.get_by_role("button", name="Continue").tap()
     page.get_by_role("button", name="Loose fit").tap()
     create = page.get_by_role("button", name="Create looks with my profile photo")
+    disclosure = re.compile(r"send your saved profile photo to OpenAI.*ask for one first")
+    expect(create).to_have_accessible_description(disclosure)
     create.tap()
     expect_heading(page, "Add your try-on photo")
     expect(page.get_by_text(re.compile("OpenAI uses"))).to_be_visible()
@@ -1171,12 +1210,30 @@ def check_deferred_photo(browser, device, base):
     page.get_by_role("button", name="Save photo and create looks").tap()
     expect(page.get_by_role("main").get_by_role("alert")).to_contain_text("could not be read")
     assert context.request.get(base + "/api/profile").json()["facePhotoUrl"] is None
+    # Interrupt after the upload succeeds, before the planner records the next stage.
+    def interrupt_prepare(route):
+        if route.request.post_data_json.get("action") == "prepareTryOn":
+            route.abort()
+        else:
+            route.continue_()
+    page.route("**/api/planner", interrupt_prepare)
     picture.set_input_files(Path(__file__).resolve().parents[1] / "public/google-sign-in.png")
     page.get_by_role("button", name="Save photo and create looks").tap()
+    expect(page.get_by_role("main").get_by_role("alert")).to_be_visible()
+    assert context.request.get(base + "/api/profile").json()["facePhotoUrl"]
+    page.unroute("**/api/planner", interrupt_prepare)
+    page.reload()
+    page.get_by_role("button", name="Use saved profile photo and create looks").tap()
     expect_heading(page, "Compare looks")
     assert context.request.get(base + "/api/profile").json()["facePhotoUrl"]
     page.goto(base)
     expect_heading(page, "Outfit planner")
+    page.get_by_role("button", name="Plan a new outfit").tap()
+    page.get_by_role("textbox", name="Occasion", exact=True).fill("Another lunch")
+    page.get_by_role("button", name="Continue").tap()
+    expect(create).to_have_accessible_description(disclosure)
+    create.tap()
+    expect_heading(page, "Compare looks")
     context.close()
 
 
@@ -1213,6 +1270,11 @@ def check_journey_recovery(browser, device, base, screenshot=None):
     context, page = mobile_session(browser, device, base, "returning-session")
     page.goto(base + "/planner/")
     page.get_by_role("button", name="Plan a new outfit").tap()
+    timing = page.get_by_role("textbox", name="Timing")
+    timing.fill("Sunday afternoon")
+    page.goto(base + "/planner/")
+    page.get_by_role("button", name="Continue unfinished outfit").tap()
+    expect(timing).to_have_value("Sunday afternoon")
     page.get_by_role("textbox", name="Occasion", exact=True).fill("Charity gala")
     page.reload()
     expect(page.get_by_role("textbox", name="Occasion", exact=True)).to_have_value("Charity gala")
@@ -1259,8 +1321,24 @@ def check_journey_recovery(browser, device, base, screenshot=None):
     expect_heading(page, "Review your outfit")
     expect(page.get_by_role("img", name="Full-body try-on of your selected look")).to_have_js_property("src", photo)
     assert provider_calls(context, base) == before
+    evict_photo(context, base, photo)
+    page.reload()
+    expect(page.get_by_role("main").get_by_role("alert")).to_contain_text("try-on is unavailable")
+    expect(page.get_by_role("button", name="Save outfit")).to_have_count(0)
+    assert provider_calls(context, base) == before
+    page.get_by_role("button", name="Back to compare looks").tap()
+    page.get_by_role("button", name="Choose occasion look").tap()
+    expect_heading(page, "Review your outfit")
+    second = context.new_page()
+    second.goto(page.url)
+    expect_heading(second, "Review your outfit")
     page.get_by_role("button", name="Save outfit").tap()
     expect_heading(page, "Charity gala")
+    with second.expect_response(lambda response: response.url.endswith("/api/planner") and
+                                response.request.post_data_json["action"] == "save") as duplicate:
+        second.get_by_role("button", name="Save outfit").tap()
+    assert duplicate.value.status == 409
+    second.close()
     page.reload()
     expect_heading(page, "Charity gala")
     page.get_by_role("navigation", name="Main navigation").get_by_role("link", name="Home").tap()
@@ -1276,6 +1354,33 @@ def check_journey_recovery(browser, device, base, screenshot=None):
     expect_heading(page, "Outfit planner")
     expect(page.get_by_role("button", name="Continue “Birthday picnic”")).to_have_count(0)
     context.close()
+
+def check_custom_outfit_styles(browser, device, base):
+    context, page = mobile_session(browser, device, base, "first-session")
+    try:
+        profile = base + "/api/profile"
+        assert context.request.patch(profile, headers={"Origin": base}, data={"styles": ["Classic", "Coastal"]}).ok
+        page.goto(base + "/planner/")
+        page.get_by_role("button", name="Plan a new outfit").tap()
+        page.get_by_role("textbox", name="Occasion", exact=True).fill("Gallery opening")
+        page.get_by_role("button", name="Continue").tap()
+        coastal = page.get_by_role("checkbox", name="Coastal", exact=True)
+        expect(coastal).to_be_checked()
+        coastal.uncheck()
+        page.get_by_role("button", name="Create looks with my profile photo").tap()
+        expect_heading(page, "Compare looks")
+        page.get_by_role("button", name="Edit brief").tap()
+        expect(coastal).to_be_visible()
+        expect(coastal).not_to_be_checked()
+        coastal.check()
+        with page.expect_response(lambda r: r.url.endswith("/api/planner") and
+                                  r.request.post_data_json["action"] == "prepareTryOn") as save:
+            page.get_by_role("button", name="Create looks with my profile photo").tap()
+        assert set(save.value.json()["brief"]["styles"]) == {"Classic", "Coastal"}
+        assert context.request.get(profile).json()["styles"] == ["Classic", "Coastal"]
+    finally:
+        context.close()
+
 
 def main():
     root = Path(__file__).resolve().parent.parent
@@ -1308,12 +1413,14 @@ def main():
                     check_failed_photo_removal(browser, device, base)
                     check_occasion_look(browser, device, base, "returning-session")
                     check_occasion_look(browser, device, base, "empty-closet")
+                    check_custom_outfit_styles(browser, device, base)
                     check_deferred_photo(browser, device, base)
                     check_wardrobe_session_expiry(browser, device, base)
                     check_wardrobe_return(browser, device, base)
                     check_journey_recovery(browser, device, base)
                     check_setup_recovery(browser, device, base)
                     check_saved_shortcuts(browser, device, base)
+                    check_stale_draft_reviews(browser, device, base)
                 finally:
                     browser.close()
         finally:
