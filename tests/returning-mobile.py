@@ -168,6 +168,16 @@ def check_saved_shortcuts(browser, device, base, capture=None):
     recent.get_by_role("button", name="Open saved look for " + look["occasion"]).tap()
     expect_heading(page, look["occasion"])
     assert page.evaluate("window.closetEvents").count("closet:saved-look-reopened") == 2
+    bookmark = page.url
+    page.goto("about:blank")
+    page.goto(bookmark)
+    expect_heading(page, look["occasion"])
+    assert page.evaluate("window.closetEvents") == ["closet:saved-look-reopened"]
+    page.get_by_role("button", name="Saved looks", exact=True).tap()
+    expect_heading(page, "Saved looks")
+    page.go_back()
+    expect_heading(page, look["occasion"])
+    assert page.evaluate("window.closetEvents") == ["closet:saved-look-reopened"] * 2
     context.close()
 
 
