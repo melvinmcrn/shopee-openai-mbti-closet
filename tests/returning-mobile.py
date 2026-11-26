@@ -558,11 +558,24 @@ def check_failed_photo_removal(browser, device, base):
     page.get_by_role("button", name="Upload photos").tap()
     remove = page.get_by_role("button", name=f"Remove {photo.name}")
     expect(page.get_by_text("Ready for manual review", exact=True)).to_be_visible()
+    failed_names = ["first.webp", "second.webp"]
+    page.get_by_label("Choose more photos").set_input_files([
+        {"name": name, "mimeType": "image/webp", "buffer": photo.read_bytes()} for name in failed_names
+    ])
+    page.route("**/api/wardrobe/upload", lambda route: route.fulfill(status=413), times=1)
+    page.get_by_role("button", name="Upload photos").tap()
+    batch_error = page.get_by_role("alert").filter(has_text="The batch is too large to send")
+    expect(batch_error).to_be_visible()
     page.route("**/api/wardrobe/upload?draftKey=*", lambda route: route.fulfill(status=503), times=1)
     remove.tap()
     expect(page.get_by_role("alert").filter(has_text="Couldn’t confirm removal")).to_be_visible()
     remove.tap()
     expect(remove).to_have_count(0)
+    expect(batch_error).to_be_visible()
+    page.get_by_role("button", name="Remove first.webp").tap()
+    expect(batch_error).to_be_visible()
+    page.get_by_role("button", name="Remove second.webp").tap()
+    expect(batch_error).to_have_count(0)
     expect(review).to_be_visible()
     assert draft_ids() == retained_ids
 

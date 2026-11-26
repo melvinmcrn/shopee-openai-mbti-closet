@@ -76,7 +76,8 @@ export default function AddWardrobePhotoPage() {
   const [preparingSelection, setPreparingSelection] = useState(false);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [selectionError, setSelectionError] = useState("");
-  const [batchError, setBatchError] = useState("");
+  const [preparationError, setPreparationError] = useState("");
+  const [failedBatch, setFailedBatch] = useState<{ keys: Set<string>; message: string } | null>(null);
   const [removingKey, setRemovingKey] = useState<string | null>(null);
   const [removalError, setRemovalError] = useState<{ key: string; message: string; missing?: boolean } | null>(null);
   const previews = useRef(new Set<string>());
@@ -111,6 +112,8 @@ export default function AddWardrobePhotoPage() {
       : "Reading garment details…";
   const hasQueued = photos.some((photo) => photo.status === "queued");
   const hasFailures = photos.some((photo) => photo.status.endsWith("-failed"));
+  const batchError = preparationError || (failedBatch && photos.some(({ draftKey }) => failedBatch.keys.has(draftKey))
+    ? failedBatch.message : "");
   const uploaded = photos.filter((photo) => photo.id !== null);
   const reviewIds = uploaded.flatMap((photo) => photo.garments?.map((garment) => garment.id) ?? [photo.id]);
   const params = new URLSearchParams();
@@ -132,7 +135,7 @@ export default function AddWardrobePhotoPage() {
     activeTask.current = controller;
     setPreparingSelection(true);
     setSelectionError("");
-    setBatchError("");
+    setPreparationError("");
     let currentName = "";
     try {
       const prepared = [];
@@ -164,7 +167,7 @@ export default function AddWardrobePhotoPage() {
     previews.current.delete(photo.preview);
     setPhotos((current) => current.filter(({ draftKey }) => draftKey !== photo.draftKey));
     setSelectionError("");
-    setBatchError("");
+    setPreparationError("");
     setRemovalError(null);
   }
 
@@ -209,7 +212,8 @@ export default function AddWardrobePhotoPage() {
     if (activeTask.current || !selection.length) return;
     const controller = new AbortController();
     activeTask.current = controller;
-    setBatchError("");
+    setPreparationError("");
+    setFailedBatch(null);
     setRemovalError(null);
     setSelectionError("");
     setProgress({ phase: "preparing" });
@@ -228,7 +232,7 @@ export default function AddWardrobePhotoPage() {
         prepared = await prepareWardrobeBatch(batch);
       } catch (error) {
         if (!controller.signal.aborted) {
-          setBatchError(error instanceof Error ? error.message : "Photos could not be prepared. No photos were sent.");
+          setPreparationError(error instanceof Error ? error.message : "Photos could not be prepared. No photos were sent.");
         }
         return;
       }
@@ -247,15 +251,16 @@ export default function AddWardrobePhotoPage() {
         if (result.status === 200 && result.body && typeof result.body === "object" && "items" in result.body && Array.isArray(result.body.items)) {
           items = result.body.items;
         } else {
-          setBatchError(result.status === 401
+          const message = result.status === 401
             ? "Sign in again to upload or review wardrobe photos."
             : result.status === 413
               ? "The batch is too large to send. Remove some photos or choose smaller versions and retry."
-              : "The upload could not be confirmed. Retry or check your saved drafts.");
+              : "The upload could not be confirmed. Retry or check your saved drafts.";
+          setFailedBatch({ keys, message });
         }
       } catch {
         if (controller.signal.aborted) return;
-        setBatchError("The upload could not be confirmed. Retry or check your saved drafts.");
+        setFailedBatch({ keys, message: "The upload could not be confirmed. Retry or check your saved drafts." });
       }
 
       const byKey = new Map(items?.filter((item) => item && typeof item.draftKey === "string")
