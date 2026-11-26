@@ -12,10 +12,13 @@ const outfitCategories = [
 
 type PlannerHomeProps = {
   garments: readonly Garment[];
+  occasion?: string;
+  onResume: () => void;
+  onDiscard: () => void;
   onNew: () => void;
 };
 
-export function PlannerHome({ garments, onNew }: PlannerHomeProps) {
+export function PlannerHome({ garments, occasion, onResume, onDiscard, onNew }: PlannerHomeProps) {
   const categoryCounts = outfitCategories.map(({ category, label }) => ({
     label,
     count: garments.filter((garment) => garment.category === category).length,
@@ -49,6 +52,12 @@ export function PlannerHome({ garments, onNew }: PlannerHomeProps) {
           </Link>
         </div>
       </section>
+      {occasion && <section aria-label="Unfinished outfit" className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-divider bg-surface px-5 py-3">
+        <button className="min-h-11 min-w-0 break-words text-left font-semibold text-secondary underline underline-offset-4" onClick={onResume}>
+          Continue “{occasion}”
+        </button>
+        <button className="min-h-11 text-sm text-supporting underline" onClick={onDiscard}>Discard plan</button>
+      </section>}
       <section aria-labelledby="planner-closet-title" className="mt-8">
         <h2 id="planner-closet-title" className="text-xl font-semibold tracking-tight">
           Available in your closet

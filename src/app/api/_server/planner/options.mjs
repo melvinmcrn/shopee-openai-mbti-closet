@@ -2,19 +2,35 @@ import { generateLooks } from "./decision.mjs";
 import { generateOccasionLook } from "./occasion-look.mjs";
 import { snapshotSlots } from "./saved.mjs";
 
-export async function readOption(db, accountId, id) {
-  // Older databases have no look_kind. Read the optional marker from the row.
-  const row = await db.prepare(`
-    SELECT o.*, CAST(o.id AS TEXT) AS optionId,
-      (SELECT CAST(request_id AS TEXT) FROM generation_runs WHERE id=o.run_id AND user_id=o.user_id) AS briefId,
-      (SELECT json_group_object(slot, CAST(item_id AS TEXT)) FROM outfit_option_items
-       WHERE option_id = o.id AND user_id = o.user_id) AS slots
-    FROM outfit_options o WHERE o.user_id = ? AND o.id = ?
-  `).bind(accountId, id).first();
-  return row && {
+const optionFields = `o.*, CAST(o.id AS TEXT) AS optionId, CAST(r.request_id AS TEXT) AS briefId,
+  (SELECT json_group_object(slot, CAST(item_id AS TEXT)) FROM outfit_option_items
+   WHERE option_id = o.id AND user_id = o.user_id) AS slots`;
+const optionRows = "outfit_options o JOIN generation_runs r ON r.id = o.run_id AND r.user_id = o.user_id";
+
+function optionView(row) {
+  // Older options have no look_kind marker.
+  return {
     id: row.optionId, occasion: row.title, explanation: row.explanation, briefId: row.briefId,
     slots: JSON.parse(row.slots), ...(row.look_kind === "occasion" ? { kind: "occasion" } : {}),
   };
+}
+
+export async function readOption(db, accountId, id) {
+  const row = await db.prepare(`SELECT ${optionFields} FROM ${optionRows} WHERE o.user_id = ? AND o.id = ?`)
+    .bind(accountId, id).first();
+  return row && optionView(row);
+}
+
+export async function readDraftOptions(db, accountId, briefId, floor) {
+  const { results } = await db.prepare(`
+    SELECT ${optionFields} FROM ${optionRows}
+    WHERE r.user_id = ? AND r.request_id = ? AND r.id > ? AND r.status = 'completed'
+      AND NOT EXISTS (SELECT 1 FROM outfit_option_items s JOIN wardrobe_items w ON w.id = s.item_id
+        WHERE s.option_id = o.id AND (w.archived_at IS NOT NULL OR w.confirmed_at IS NULL
+          OR w.image_file_id <> s.image_file_id_snapshot OR w.category <> s.category_snapshot))
+    ORDER BY r.id, o.position
+  `).bind(accountId, briefId, floor).all();
+  return results.map(optionView);
 }
 
 async function storeOptions(db, accountId, runId, occasion, garments, looks, offset = 0) {

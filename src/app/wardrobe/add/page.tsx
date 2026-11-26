@@ -75,7 +75,7 @@ const fileButton = "relative inline-flex cursor-pointer items-center rounded-ful
 const actionButton = "rounded-full bg-primary px-5 py-2.5 font-semibold text-on-primary hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:cursor-not-allowed disabled:opacity-60";
 
 export default function AddWardrobePhotoPage() {
-  const { origin, destination, error: flowError, retry: retryFlow } = useWardrobeFlow();
+  const { origin, destination, error: flowError, retry: retryFlow } = useWardrobeFlow("add");
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [preparingSelection, setPreparingSelection] = useState(false);
   const [progress, setProgress] = useState<Progress | null>(null);

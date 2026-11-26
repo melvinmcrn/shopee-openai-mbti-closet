@@ -55,7 +55,7 @@ const comfortForRequest = `
   ), '')
 `;
 
-function selectBrief(db, accountId, id) {
+function selectBrief(db, accountId, id, version) {
   return db.prepare(`
     SELECT CAST(request.id AS TEXT) AS id, request.occasion,
       COALESCE(request.planned_for, '') AS timing,
@@ -72,8 +72,8 @@ function selectBrief(db, accountId, id) {
         ) AS sorted_categories
       ) AS preferences
     FROM outfit_requests AS request
-    WHERE request.user_id = ? AND request.id = ?
-  `).bind(accountId, id);
+    WHERE request.user_id = ? AND request.id = ? ${version ? "AND resume_version = ?" : ""}
+  `).bind(accountId, id, ...(version ? [version] : []));
 }
 
 function readBrief(row) {
@@ -81,7 +81,7 @@ function readBrief(row) {
   return { ...row, preferences: JSON.parse(row.preferences) };
 }
 
-export async function saveBrief(db, accountId, input) {
+export async function saveBrief(db, accountId, input, stage) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new BriefValidationError("An occasion brief is required.");
   }
@@ -94,16 +94,22 @@ export async function saveBrief(db, accountId, input) {
 
   const creating = input.id === undefined;
   const id = creating ? newBriefId() : readId(input.id);
+  const nextVersion = stage ? crypto.randomUUID() : null;
+  const versionGuard = stage ? " AND resume_version = ?" : "";
+  const guardValues = stage ? [nextVersion] : [];
   const saveRequest = creating
     ? db.prepare(`
-      INSERT INTO outfit_requests (id, user_id, occasion, planned_for, location_or_weather, formality)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).bind(id, accountId, occasion, timing, location, formality)
+      INSERT INTO outfit_requests (id, user_id, occasion, planned_for, location_or_weather, formality${stage ? ", resume_stage, resume_version" : ""})
+      SELECT ?, ?, ?, ?, ?, ?${stage ? `, ?, ? WHERE NOT EXISTS (
+        SELECT 1 FROM outfit_requests WHERE user_id = ? AND resume_stage IS NOT NULL AND resume_stage <> 'closed')` : ""}
+    `).bind(id, accountId, occasion, timing, location, formality, ...(stage ? [stage, nextVersion, accountId] : []))
     : db.prepare(`
       UPDATE outfit_requests
       SET occasion = ?, planned_for = ?, location_or_weather = ?, formality = ?
-      WHERE user_id = ? AND id = ?
-    `).bind(occasion, timing, location, formality, accountId, id);
+        ${stage ? `, resume_stage = ?, resume_version = ?, resume_option_id = NULL,
+          resume_after_run = COALESCE((SELECT MAX(r.id) FROM generation_runs r WHERE r.request_id = outfit_requests.id), 0)` : ""}
+      WHERE user_id = ? AND id = ? ${stage ? "AND resume_stage <> 'closed' AND resume_version IS ?" : ""}
+    `).bind(occasion, timing, location, formality, ...(stage ? [stage, nextVersion] : []), accountId, id, ...(stage ? [input.version ?? null] : []));
 
   const statements = [saveRequest];
   if (!creating) {
@@ -113,23 +119,23 @@ export async function saveBrief(db, accountId, input) {
         DELETE FROM request_comfort_choices
         WHERE request_id IN (
           SELECT request.id FROM outfit_requests AS request
-          WHERE request.user_id = ? AND request.id = ? AND ${comfortForRequest} <> ?
+          WHERE request.user_id = ? AND request.id = ?${versionGuard} AND ${comfortForRequest} <> ?
         )
-      `).bind(accountId, id, comfort),
+      `).bind(accountId, id, ...guardValues, comfort),
       db.prepare(`
         DELETE FROM request_clothing_choices
-        WHERE request_id IN (SELECT id FROM outfit_requests WHERE user_id = ? AND id = ?)
+        WHERE request_id IN (SELECT id FROM outfit_requests WHERE user_id = ? AND id = ?${versionGuard})
           AND category NOT IN (SELECT value FROM json_each(?))
-      `).bind(accountId, id, preferences),
+      `).bind(accountId, id, ...guardValues, preferences),
     );
   }
   if (comfort) {
     statements.push(db.prepare(`
       INSERT INTO request_comfort_choices (request_id, choice)
       SELECT request.id, ? FROM outfit_requests AS request
-      WHERE request.user_id = ? AND request.id = ?
+      WHERE request.user_id = ? AND request.id = ?${versionGuard}
         AND NOT EXISTS (SELECT 1 FROM request_comfort_choices WHERE request_id = request.id)
-    `).bind(comfort, accountId, id));
+    `).bind(comfort, accountId, id, ...guardValues));
   }
   // The planner selects categories. Preserve garment types already stored for those categories.
   statements.push(
@@ -137,17 +143,19 @@ export async function saveBrief(db, accountId, input) {
       INSERT INTO request_clothing_choices (request_id, category, garment_type)
       SELECT request.id, selected.value, ''
       FROM outfit_requests AS request CROSS JOIN json_each(?) AS selected
-      WHERE request.user_id = ? AND request.id = ?
+      WHERE request.user_id = ? AND request.id = ?${versionGuard}
         AND NOT EXISTS (
           SELECT 1 FROM request_clothing_choices
           WHERE request_id = request.id AND category = selected.value
         )
-    `).bind(preferences, accountId, id),
-    selectBrief(db, accountId, id),
+    `).bind(preferences, accountId, id, ...guardValues),
+    selectBrief(db, accountId, id, nextVersion),
   );
 
   const results = await db.batch(statements);
-  return readBrief(results.at(-1).results[0]);
+  const saved = readBrief(results.at(-1).results[0]);
+  if (stage && !saved) throw Object.assign(new Error("This plan changed. Reopen the planner to continue."), { status: 409 });
+  return saved && nextVersion ? { ...saved, version: nextVersion } : saved;
 }
 
 export async function getBrief(db, accountId, id) {

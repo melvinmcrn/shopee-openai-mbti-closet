@@ -117,7 +117,7 @@ test("Postgres supports owner-scoped profiles, wardrobe items, and the planner",
     assert.equal((await owned.getActiveWardrobeItems(Object.values(garments).map(Number))).length, 3);
 
     const brief = await dispatchPlanner(env, owner.id, "saveBrief", {
-      occasion: "Dinner", comfort: "Loosely fitted", preferences: ["shoes", "top"],
+      occasion: "Dinner", comfort: "Loosely fitted", preferences: ["shoes", "top"], trackDraft: true,
     });
     assert.ok(Number.isSafeInteger(Number(brief.id)));
     assert.deepEqual(brief.preferences, ["shoes", "top"]);
@@ -127,10 +127,19 @@ test("Postgres supports owner-scoped profiles, wardrobe items, and the planner",
     assert.deepEqual(extra.comfortChoices, ["Warm"]);
     assert.deepEqual(extra.clothingChoices, [{ category: "top", garmentType: "tee" }]);
 
+    const plannerDraft = await dispatchPlanner(env, owner.id, "resumePlanner");
+    assert.equal(plannerDraft.stage, "style");
+    assert.equal(await dispatchPlanner(env, visitor.id, "resumePlanner", { briefId: brief.id }), null);
+    const compare = await dispatchPlanner(env, owner.id, "setDraftStage", { briefId: brief.id, version: plannerDraft.version, stage: "compare" });
     const generated = await dispatchPlanner(env, owner.id, "generate", { briefId: brief.id }, {
       generateLooks: async () => ({ status: "ready", looks: [{ slots: garments, explanation: "A complete outfit" }] }),
     });
     const option = generated.looks[0];
+    const resumed = await dispatchPlanner(env, owner.id, "resumePlanner", { briefId: brief.id });
+    assert.deepEqual(resumed.looks.map(item => item.id), generated.looks.map(item => item.id));
+    await dispatchPlanner(env, owner.id, "setDraftStage", {
+      briefId: brief.id, stage: "refine", version: compare.version, optionId: option.id,
+    });
     assert.deepEqual((await dispatchPlanner(env, owner.id, "option", { id: option.id })).slots, garments);
     const look = await dispatchPlanner(env, owner.id, "save", { optionId: option.id, slots: garments });
     assert.equal(look.slots.shoes.id, garments.shoes);

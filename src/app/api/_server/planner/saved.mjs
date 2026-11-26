@@ -254,6 +254,13 @@ export async function saveLook(db, accountId, sourceOption, slots, garments, ren
     `).bind(accountId, JSON.stringify(pin?.effective ?? snapshot)),
   );
   try {
+    writes.push(db.prepare(`
+      UPDATE outfit_requests SET resume_stage = 'closed', resume_option_id = NULL, resume_version = NULL
+      WHERE user_id = ? AND id = (SELECT r.request_id FROM generation_runs r JOIN outfit_options o ON o.run_id = r.id WHERE o.id = ?)
+        AND resume_stage IS NOT NULL AND resume_stage <> 'closed'
+        AND resume_after_run < (SELECT run_id FROM outfit_options WHERE id = ? AND user_id = ?)
+        ${rendered?.draftVersion ? "AND resume_version = ?" : ""}
+    `).bind(accountId, sourceOption.id, sourceOption.id, accountId, ...(rendered?.draftVersion ? [rendered.draftVersion] : [])));
     const [insert] = await db.batch(writes);
     return getLook(db, accountId, String(insert.results[0].id));
   } catch (error) {

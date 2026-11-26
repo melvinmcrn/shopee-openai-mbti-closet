@@ -5,7 +5,7 @@ import { readUploadForm } from "./upload.mjs";
 
 const cacheHeaders = { "Cache-Control": "no-store" };
 const editableFields = new Set([
-  "heightCm", "weightKg", "styles", "facePhotoUrl", "setupCompletedAt", "complete",
+  "heightCm", "weightKg", "styles", "facePhotoUrl", "setupCompletedAt", "complete", "setupStage",
 ]);
 
 const createProfile = "INSERT INTO profiles (user_id) VALUES (?) ON CONFLICT (user_id) DO NOTHING";
@@ -14,15 +14,23 @@ function error(message, status) {
   return Response.json({ error: message }, { status, headers: cacheHeaders });
 }
 
-async function readProfile(db, userId) {
+async function readProfile(db, userId, resume = false) {
   const row = await db.prepare(`
     SELECT p.height_cm, p.weight_kg, p.face_photo_file_id, p.setup_completed_at,
+      ${resume ? `CASE
+        WHEN p.setup_stage IN ('style', 'ready') THEN p.setup_stage
+        WHEN EXISTS (SELECT 1 FROM wardrobe_items WHERE user_id = u.id AND archived_at IS NULL AND confirmed_at IS NULL) THEN 'confirm'
+        WHEN p.setup_stage IN ('add', 'confirm') THEN p.setup_stage
+        WHEN EXISTS (SELECT 1 FROM style_preferences WHERE user_id = u.id) THEN 'ready'
+        WHEN EXISTS (SELECT 1 FROM wardrobe_items WHERE user_id = u.id AND archived_at IS NULL AND confirmed_at IS NOT NULL) THEN 'style'
+        ELSE 'add' END AS setup_stage,` : ""}
       (SELECT json_group_array(style) FROM (
         SELECT style FROM style_preferences WHERE user_id = u.id ORDER BY style
       ) AS sorted_styles) AS styles
     FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE u.id = ?
   `).bind(userId).first();
   return Response.json({
+    ...(resume && { setupStage: row?.setup_stage ?? "add" }),
     heightCm: row?.height_cm ?? null,
     weightKg: row?.weight_kg ?? null,
     styles: row?.styles ? JSON.parse(row.styles) : [],
@@ -37,6 +45,9 @@ function validatePatch(patch) {
   }
   if (Object.keys(patch).some((key) => !editableFields.has(key))) {
     return "The request contains an unknown profile field.";
+  }
+  if (Object.hasOwn(patch, "setupStage") && !["add", "confirm", "style", "ready"].includes(patch.setupStage)) {
+    return "Choose a supported setup stage.";
   }
   for (const field of ["heightCm", "weightKg"]) {
     if (Object.hasOwn(patch, field) && patch[field] !== null &&
@@ -67,11 +78,15 @@ async function updateProfile(db, userId, patch) {
       values.push(patch[field]);
     }
   }
+  if (patch.setupStage) {
+    assignments.push("setup_stage = CASE WHEN setup_completed_at IS NULL THEN ? ELSE setup_stage END");
+    values.push(patch.setupStage);
+  }
   if (patch.complete) {
     assignments.push("setup_completed_at = COALESCE(setup_completed_at, ?)");
     values.push(new Date().toISOString());
   }
-  if (patch.setupCompletedAt === null) assignments.push("setup_completed_at = NULL");
+  if (patch.setupCompletedAt === null) assignments.push("setup_completed_at = NULL", "setup_stage = NULL");
   if (patch.facePhotoUrl === null) assignments.push("face_photo_file_id = NULL");
 
   const statements = [];
@@ -140,7 +155,7 @@ export async function profile(request, env, userId) {
     if (pathname === "/api/profile") {
       if (method === "GET") {
         await retryPhotoCleanup(env, account);
-        return await readProfile(db, userId);
+        return await readProfile(db, userId, new URL(request.url).searchParams.get("resume") === "1");
       }
       if (method === "PATCH") {
         const patch = await request.json().catch(() => null);

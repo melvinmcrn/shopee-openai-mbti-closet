@@ -3,10 +3,14 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { normalizeProfilePhoto, profilePhotoAccept, profilePhotoRequirements } from "../wardrobe/add/normalize-upload.mjs";
 import { api, type Brief } from "./shared";
 
-type PreparedTryOn = { status: "ready"; brief: Brief } | { status: "photo_required" };
+type PreparedTryOn = { status: "ready"; brief: Brief } | { status: "photo_required"; brief: Brief };
 
 type StyleProps = {
   brief: Brief;
+  needsPhoto: boolean;
+  onPhoto: (saved: Brief) => void;
+  onStyle: () => void;
+  onChange: (updated: Brief) => void;
   onNext: (saved: Brief) => void;
   onBack: () => void;
 };
@@ -17,12 +21,12 @@ const inputClass =
 const actionClass =
   "min-h-11 rounded-lg px-3 text-sm font-semibold text-secondary hover:bg-selected focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:opacity-60";
 
-export function Style({ brief, onNext, onBack }: StyleProps) {
-  const [formality, setFormality] = useState(brief.formality);
-  const [comfort, setComfort] = useState(brief.comfort);
+export function Style({ brief, needsPhoto, onPhoto, onStyle, onChange, onNext, onBack }: StyleProps) {
+  const { formality, comfort } = brief;
+  const setFormality = (formality: string) => onChange({ ...brief, formality });
+  const setComfort = (comfort: string) => onChange({ ...brief, comfort });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [needsPhoto, setNeedsPhoto] = useState(false);
   const [photo, setPhoto] = useState<File | null>(null);
   const savePending = useRef(false);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -33,7 +37,7 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
   }, [needsPhoto]);
 
   function deferPhoto() {
-    setNeedsPhoto(false);
+    onStyle();
     setPhoto(null);
     setError("");
   }
@@ -57,16 +61,16 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
           throw new Error(problem.error || "Your photo could not be saved. Try again.");
         }
         setPhoto(null);
-        setNeedsPhoto(false);
       }
       const result = await api<PreparedTryOn>("prepareTryOn", {
         ...brief,
+        trackDraft: true,
         formality: formality.trim(),
         comfort: comfort.trim(),
         preferences: [],
       });
       if (result.status === "photo_required") {
-        setNeedsPhoto(true);
+        onPhoto(result.brief);
         return;
       }
       onNext(result.brief);

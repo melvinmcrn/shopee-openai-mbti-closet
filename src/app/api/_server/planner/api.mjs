@@ -1,4 +1,5 @@
 import { catalogListingKey } from "../../../planner/catalog-listing.mjs";
+import { resumePlanner, setDraftStage } from "./resume.mjs";
 import { getGarments } from "./garments.mjs";
 import { saveBrief, getBrief } from "./brief.mjs";
 import { readOption, generateOptions } from "./options.mjs";
@@ -86,17 +87,21 @@ export async function dispatchPlanner(env, accountId, action, input = {}, depend
     return (await basePhotos(ref, look.slots)).coverage;
   }
   switch (action) {
+    case "resumePlanner": return resumePlanner(db, accountId, input.briefId);
+    case "setDraftStage": return setDraftStage(db, accountId, input);
     case "wardrobe": return wardrobe();
     case "prepareTryOn": {
       try {
         await currentPortrait(await photo());
       } catch (error) {
-        if (error instanceof ProfilePhotoError && error.code === "profile_photo_required") return { status: "photo_required" };
+        if (error instanceof ProfilePhotoError && error.code === "profile_photo_required") return input.trackDraft
+          ? { status: "photo_required", brief: found(await saveBrief(db, accountId, input, "photo")) }
+          : { status: "photo_required" };
         throw error;
       }
-      return { status: "ready", brief: found(await saveBrief(db, accountId, input)) };
+      return { status: "ready", brief: found(await saveBrief(db, accountId, input, input.trackDraft ? "compare" : undefined)) };
     }
-    case "saveBrief": return found(await saveBrief(db, accountId, input));
+    case "saveBrief": return found(await saveBrief(db, accountId, input, input.trackDraft ? "style" : undefined));
     case "option": return option(db, accountId, input.id);
     case "generate": {
       const brief = found(await getBrief(db, accountId, input.briefId));
@@ -158,7 +163,7 @@ export async function dispatchPlanner(env, accountId, action, input = {}, depend
     }
     case "save": {
       const source = await option(db, accountId, input.optionId);
-      const rendered = input.previewRef === undefined ? undefined : { previewRef: input.previewRef, catalogItemIds: input.catalogItemIds };
+      const rendered = input.previewRef === undefined ? undefined : { previewRef: input.previewRef, draftVersion: input.draftVersion, catalogItemIds: input.catalogItemIds };
       return saveLook(db, accountId, source, requestedSlots(source, input), await wardrobe(), rendered);
     }
     case "list": return listLooks(db, accountId);

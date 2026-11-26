@@ -36,7 +36,7 @@ const secondaryButton = "inline-flex min-h-11 items-center justify-center rounde
 const fieldClass = "mt-1 block min-h-11 w-full rounded-lg border border-divider bg-surface px-3 py-2 text-base text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:opacity-60";
 
 export default function ConfirmWardrobeItemsPage() {
-  const { origin, destination, error: flowError, retry: retryFlow } = useWardrobeFlow();
+  const { origin, destination, error: flowError, retry: retryFlow } = useWardrobeFlow("confirm");
   const [items, setItems] = useState<DraftItem[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "signed-out" | "error">("loading");
   const [manualItemIds, setManualItemIds] = useState<Set<string>>(() => new Set());

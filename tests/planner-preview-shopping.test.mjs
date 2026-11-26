@@ -983,3 +983,52 @@ test("a legacy saved photo stays hidden and cannot be pinned as a newly audited 
   assert.equal(saved.previewRef, null);
   await assert.rejects(dispatch("save", { optionId, slots: refined, previewRef: "old-photo", catalogItemIds: [] }), { status: 409 });
 });
+
+test("planner recovery restores owned options and closes superseded and saved drafts", async t => {
+  const { dispatch, makeSession } = await startPlanner(t);
+  const brief = await dispatch("saveBrief", { occasion: "Sunday lunch", trackDraft: true });
+  const draft = await dispatch("resumePlanner");
+  assert.equal(draft?.brief.id, brief.id);
+  assert.equal(draft.stage, "style");
+  assert.equal(await makeSession(2)("resumePlanner", { briefId: brief.id }), null);
+  await dispatch("prepareTryOn", { ...brief, trackDraft: true, version: draft.version });
+  const { looks } = await dispatch("generate", { briefId: brief.id });
+  const comparison = await dispatch("resumePlanner", { briefId: brief.id });
+  assert.equal(comparison.stage, "compare");
+  assert.deepEqual(comparison.looks.map(look => look.id), looks.map(look => look.id));
+  await dispatch("setDraftStage", { briefId: brief.id, version: comparison.version, stage: "refine", optionId: looks[0].id });
+  const review = await dispatch("resumePlanner");
+  assert.equal(review.optionId, looks[0].id);
+  await assert.rejects(dispatch("setDraftStage", { briefId: brief.id, version: comparison.version, stage: "closed" }), error => error.status === 409);
+  await dispatch("save", { optionId: looks[0].id, slots: looks[0].slots });
+  assert.equal(await dispatch("resumePlanner"), null);
+  assert.equal(await dispatch("resumePlanner", { briefId: brief.id }), null);
+});
+
+test("an older wardrobe return can resume its original brief, while a current draft wins over old links", async t => {
+  const { dispatch, optionId } = await startPlanner(t);
+  const { briefId } = await dispatch("option", { id: optionId });
+  const original = await dispatch("resumePlanner", { briefId });
+  assert.equal(original.stage, "compare");
+  assert.equal(original.looks[0].id, optionId);
+  const selected = await dispatch("setDraftStage", { briefId, stage: "refine", optionId });
+  assert.equal((await dispatch("resumePlanner")).optionId, optionId);
+  await dispatch("setDraftStage", { briefId, stage: "closed", version: selected.version });
+  const next = await dispatch("saveBrief", { occasion: "Gallery", trackDraft: true });
+  assert.equal(await dispatch("resumePlanner", { briefId }), null);
+  assert.equal((await dispatch("resumePlanner")).brief.id, next.id);
+});
+
+test("editing a brief starts a new comparison without resurrecting options from its previous run", async t => {
+  const { dispatch } = await startPlanner(t);
+  const draft = await dispatch("saveBrief", { occasion: "Gallery", trackDraft: true });
+  const first = (await dispatch("prepareTryOn", { ...draft, trackDraft: true })).brief;
+  const { looks } = await dispatch("generate", { briefId: first.id });
+  const edited = (await dispatch("prepareTryOn", { ...first, comfort: "Loose fit", trackDraft: true })).brief;
+  assert.deepEqual((await dispatch("resumePlanner")).looks, []);
+  await assert.rejects(dispatch("setDraftStage", {
+    briefId: edited.id, stage: "refine", optionId: looks[0].id, version: edited.version,
+  }), error => error.status === 409);
+  await assert.rejects(dispatch("saveBrief", { ...first, comfort: "Stale", trackDraft: true }), error => error.status === 409);
+  assert.equal((await dispatch("resumePlanner")).brief.comfort, "Loose fit");
+});

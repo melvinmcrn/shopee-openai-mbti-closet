@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 import subprocess
 import sys
+from uuid import uuid4
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 from playwright.sync_api import expect, sync_playwright
@@ -867,6 +868,98 @@ def check_deferred_photo(browser, device, base):
     context.close()
 
 
+
+def check_setup_recovery(browser, device, base):
+    context, page = mobile_session(browser, device, base, "empty-closet")
+    origin = {"Origin": base}
+    assert context.request.patch(base + "/api/profile", headers=origin, data={"setupCompletedAt": None}).ok
+    photo = Path(__file__).resolve().parents[1] / "public/google-sign-in.png"
+    upload = context.request.post(base + "/api/wardrobe/upload", headers=origin, multipart={
+        "draftKey": str(uuid4()),
+        "image": {"name": "piece.png", "mimeType": "image/png", "buffer": photo.read_bytes()},
+    })
+    assert upload.ok, upload.text()
+    page.goto(base)
+    expect(page).to_have_url(re.compile(r"/wardrobe/confirm/?\?from=onboarding$"))
+    page.goto(base + "/profile/style/")
+    page.get_by_role("checkbox", name="Classic").check()
+    page.goto(base)
+    expect_heading(page, "Confirm style")
+    expect(page.get_by_role("checkbox", name="Classic")).to_be_checked()
+    page.get_by_role("button", name="Save and continue").tap()
+    expect_heading(page, "Review your setup")
+    context.close()
+    context, page = mobile_session(browser, device, base, "empty-closet")
+    page.goto(base)
+    expect_heading(page, "Review your setup")
+    page.get_by_role("button", name="Open planner").tap()
+    expect_heading(page, "Outfit planner")
+    context.close()
+
+
+def check_journey_recovery(browser, device, base, screenshot=None):
+    context, page = mobile_session(browser, device, base, "returning-session")
+    page.goto(base + "/planner/")
+    page.get_by_role("button", name="Plan a new outfit").tap()
+    page.get_by_role("textbox", name="Occasion", exact=True).fill("Charity gala")
+    page.reload()
+    expect(page.get_by_role("textbox", name="Occasion", exact=True)).to_have_value("Charity gala")
+    page.get_by_role("button", name="Continue").tap()
+    page.get_by_role("button", name="Loose fit").tap()
+    page.reload()
+    expect(page.get_by_role("button", name="Loose fit")).to_have_attribute("aria-pressed", "true")
+    page.get_by_role("button", name="Create looks with my profile photo").tap()
+    expect_heading(page, "Compare looks")
+    choice = page.get_by_role("button", name="Choose occasion look")
+    expect(choice).to_be_visible()
+    photo = choice.get_by_role("img").evaluate("image => image.src")
+    compare_url = page.url
+    # The wardrobe return carries only the saved brief ID and the comparison screen.
+    page.goto(base + "/wardrobe/add/?" + urlparse(compare_url).query + "&from=planner")
+    page.get_by_role("link", name="Return to outfit").tap()
+    expect(choice).to_be_visible()
+    expect(choice.get_by_role("img")).to_have_js_property("src", photo)
+    choice.tap()
+    expect_heading(page, "Review your outfit")
+    page.reload()
+    expect(page.get_by_role("img", name="Full-body try-on of your selected look")).to_have_js_property("src", photo)
+    context.close()
+
+    other, other_page = mobile_session(browser, device, base, "other-account")
+    other_page.goto(compare_url)
+    expect_heading(other_page, "Outfit planner")
+    expect(other_page.get_by_role("button", name="Continue “Charity gala”")).to_have_count(0)
+    other.close()
+
+    context, page = mobile_session(browser, device, base, "returning-session")
+    page.goto(base + "/planner/")
+    resume = page.get_by_role("button", name="Continue “Charity gala”")
+    expect(resume).to_be_visible()
+    if screenshot:
+        page.screenshot(path=screenshot)
+    before = provider_calls(context, base)
+    resume.tap()
+    expect_heading(page, "Review your outfit")
+    expect(page.get_by_role("img", name="Full-body try-on of your selected look")).to_have_js_property("src", photo)
+    assert provider_calls(context, base) == before
+    page.get_by_role("button", name="Save outfit").tap()
+    expect_heading(page, "Charity gala")
+    page.reload()
+    expect_heading(page, "Charity gala")
+    page.get_by_role("navigation", name="Main navigation").get_by_role("link", name="Home").tap()
+    expect_heading(page, "Outfit planner")
+    expect(resume).to_have_count(0)
+    page.get_by_role("button", name="Plan a new outfit").tap()
+    page.get_by_role("textbox", name="Occasion", exact=True).fill("Birthday picnic")
+    page.get_by_role("button", name="Continue").tap()
+    expect_heading(page, "Today’s style")
+    page.get_by_role("navigation", name="Main navigation").get_by_role("link", name="Home").tap()
+    page.get_by_role("button", name="Discard plan").tap()
+    page.reload()
+    expect_heading(page, "Outfit planner")
+    expect(page.get_by_role("button", name="Continue “Birthday picnic”")).to_have_count(0)
+    context.close()
+
 def main():
     root = Path(__file__).resolve().parent.parent
     output = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root / "out"
@@ -898,6 +991,8 @@ def main():
                     check_occasion_look(browser, device, base, "empty-closet")
                     check_deferred_photo(browser, device, base)
                     check_wardrobe_return(browser, device, base)
+                    check_journey_recovery(browser, device, base)
+                    check_setup_recovery(browser, device, base)
                 finally:
                     browser.close()
         finally:
