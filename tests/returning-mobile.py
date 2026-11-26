@@ -494,6 +494,39 @@ def check_outfit_upload(browser, device, base):
     context.close()
 
 
+def check_wardrobe_return(browser, device, base):
+    context, page = mobile_session(browser, device, base, "profile-only")
+    page.goto(f"{base}/wardrobe/confirm/?from=onboarding")
+    page.get_by_role("link", name="Continue to style profile").tap()
+    expect_heading(page, "Confirm style")
+    page.get_by_role("checkbox", name="Classic").check()
+    page.get_by_role("button", name="Save and continue").tap()
+    page.get_by_role("button", name="Open planner").tap()
+    expect_heading(page, "Outfit planner")
+
+    page.get_by_role("link", name="Add new clothes to wardrobe").tap()
+    page.get_by_role("link", name="Review saved drafts").tap()
+    page.get_by_role("link", name="Return to planner").tap()
+    expect_heading(page, "Outfit planner")
+    page.get_by_role("navigation", name="Main navigation").get_by_role("link", name="Wardrobe").tap()
+    page.get_by_role("link", name="Add items").tap()
+    page.get_by_role("link", name="Review saved drafts").tap()
+    page.get_by_role("link", name="Return to closet").tap()
+    expect_heading(page, "Closet")
+
+    page.goto(f"{base}/wardrobe/confirm/?from=onboarding")
+    expect(page.get_by_role("link", name="Return to closet")).to_be_visible()
+    page.goto(f"{base}/profile/style/")
+    expect_heading(page, "Account")
+    expect(page.get_by_role("checkbox", name="Classic")).to_be_checked()
+    page.get_by_role("checkbox", name="Classic").uncheck()
+    page.get_by_role("button", name="Save preferences").tap()
+    expect(page.get_by_text("Preferences saved.")).to_be_visible()
+    page.reload()
+    expect(page.get_by_role("checkbox", name="Classic")).not_to_be_checked()
+    context.close()
+
+
 def check_automatic_cutout_retry(browser, device, base):
     photo = Path(__file__).resolve().parents[1] / "public/sample-wardrobe/studio-model.webp"
     for action, succeeds in [("extract_primary", True), ("extract_primary", False), ("manual_review", False)]:
@@ -726,6 +759,7 @@ def main():
                     check_automatic_cutout_retry(browser, device, base)
                     check_occasion_look(browser, device, base, "returning-session")
                     check_occasion_look(browser, device, base, "empty-closet")
+                    check_wardrobe_return(browser, device, base)
                 finally:
                     browser.close()
         finally:

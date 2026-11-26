@@ -6,6 +6,8 @@ import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "r
 import { normalizeUpload, photoAccept, photoRequirements } from "./normalize-upload.mjs";
 import { maxBatchSize, prepareWardrobeBatch } from "./prepare-batch.mjs";
 import { requestWardrobeUploadBatch, type BatchProgress } from "./request-wardrobe-upload.mjs";
+import { wardrobeHref } from "../flow.mjs";
+import { useWardrobeFlow } from "../use-wardrobe-flow";
 
 const uploadError = "This photo could not be uploaded. Try again.";
 const extractionError = "The garment details could not be read. Your photo is saved and ready for manual review.";
@@ -71,6 +73,7 @@ const fileButton = "relative inline-flex cursor-pointer items-center rounded-ful
 const actionButton = "rounded-full bg-primary px-5 py-2.5 font-semibold text-on-primary hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:cursor-not-allowed disabled:opacity-60";
 
 export default function AddWardrobePhotoPage() {
+  const { origin, destination, error: flowError, retry: retryFlow } = useWardrobeFlow();
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [preparingSelection, setPreparingSelection] = useState(false);
   const [progress, setProgress] = useState<Progress | null>(null);
@@ -270,12 +273,14 @@ export default function AddWardrobePhotoPage() {
     <main className="wardrobe-page mx-auto w-full max-w-xl flex-1 px-5 py-10 sm:px-8 sm:py-14">
       <header className="mb-7 space-y-3">
         {!busy && (
-          <Link className="text-sm font-medium underline underline-offset-4" href="/wardrobe/confirm">
-            Review saved drafts
-          </Link>
+          <nav aria-label="Wardrobe" className="flex flex-wrap gap-4 text-sm font-medium underline underline-offset-4">
+            {destination && destination.href !== "/profile/style" && <Link href={destination.href}>{destination.label}</Link>}
+            <Link href={wardrobeHref("/wardrobe/confirm", origin)}>Review saved drafts</Link>
+          </nav>
         )}
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Add wardrobe photos</h1>
         <p>Upload individual pieces or a full outfit. You can review and save each item we find.</p>
+        {flowError && <p role="alert">Couldn’t load your setup. <button className="underline" type="button" onClick={retryFlow}>Try again</button></p>}
       </header>
 
       <form onSubmit={submitPhotos} className="space-y-5">
@@ -388,7 +393,7 @@ export default function AddWardrobePhotoPage() {
                 </button>
               )}
               {!busy && !hasQueued && reviewIds.length > 0 && (
-                <Link className={actionButton} href={`/wardrobe/confirm?${params}`}>
+                <Link className={actionButton} href={wardrobeHref("/wardrobe/confirm", origin, params)}>
                   {reviewIds.length === 1 ? "Review item" : `Review ${reviewIds.length} items`}
                 </Link>
               )}
