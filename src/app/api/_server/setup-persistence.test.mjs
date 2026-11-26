@@ -300,3 +300,20 @@ test("incomplete setup resumes saved drafts, style and ready in another session"
   const other = client(env, await signIn("resume-other", "other@example.com"));
   assert.equal((await jsonSuccess(await other("/api/profile?resume=1"))).setupStage, "add");
 });
+
+test("journey activity accepts only signed-in same-origin observations for the current account", async t => {
+  const { env, signIn } = setup(t);
+  const owner = client(env, await signIn("journey-owner", "owner@example.com"));
+  const other = client(env, await signIn("journey-other", "other@example.com"));
+  const { user } = await jsonSuccess(await owner("/api/account", { method: "POST" }));
+  const url = "/api/journey";
+  const request = { method: "POST", json: { accountId: String(user.id), activity: "wear" } };
+  assert.equal((await client(env)(url, request)).status, 401);
+  assert.equal((await owner(url, { ...request, origin: "https://elsewhere.example" })).status, 403);
+  assert.equal((await other(url, request)).status, 403);
+  assert.equal((await owner(url, { ...request, json: { ...request.json, activity: "raw-user-content" } })).status, 400);
+  assert.equal((await owner(url, request)).status, 204);
+  assert.equal((await owner(url)).status, 405);
+  const { results } = await env.DB.prepare("SELECT user_id, activity FROM journey_activity").bind().all();
+  assert.deepEqual(results.map(row => ({ ...row })), [{ user_id: user.id, activity: "wear" }]);
+});

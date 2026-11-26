@@ -4,6 +4,7 @@ import { usePathname, useSelectedLayoutSegment } from "next/navigation";
 import { createContext, Fragment, useContext, useEffect, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { AppHeader, FooterNavigation } from "./app-navigation";
+import { listenForJourneyOutcomes, observeJourney } from "./journey-activity";
 import { sessionEnded } from "./private-fetch.mjs";
 import { isPublicResourcePath, returnDestination } from "./return-destination.mjs";
 
@@ -58,6 +59,7 @@ export function AccountSession({ children }: { children: ReactNode }) {
         if (!data?.user) return signedOut();
         const expiresIn = Date.parse(data.expires) - Date.now();
         if (expiresIn <= 0) return signedOut();
+        if (document.visibilityState === "visible") observeJourney(data.user.id, "open");
         setSnapshot({ pathname, session: { status: "signed-in", user: data.user } });
         window.clearTimeout(timer);
         if (Number.isFinite(expiresIn)) timer = window.setTimeout(() => {
@@ -106,6 +108,11 @@ export function AccountSession({ children }: { children: ReactNode }) {
   }, [pathname, segment, attempt]);
 
   const checkedUser = snapshot?.session.user;
+  const accountId = checkedUser?.id;
+  useEffect(() => {
+    if (accountId != null) return listenForJourneyOutcomes(accountId);
+  }, [accountId]);
+
   const publicNotFound = segment === "_not-found" && session.status === "signed-out";
   return (
     <AccountContext.Provider value={session}>
