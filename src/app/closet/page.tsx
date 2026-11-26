@@ -244,7 +244,7 @@ export default function ClosetPage() {
               </p>
             )}
           </div>
-          <Link className={primaryButton} href="/wardrobe/add">Add items</Link>
+          <Link className={primaryButton} href="/wardrobe/add?from=closet">Add items</Link>
         </div>
 
         {notice && <p className="mt-5 text-sm text-secondary" role="status">{notice}</p>}
