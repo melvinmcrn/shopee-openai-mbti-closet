@@ -46,11 +46,12 @@ async function updateItem(request, db, userId, itemId) {
   if (!data || typeof data !== "object" || Array.isArray(data)) {
     return error("Expected a JSON object.", 400);
   }
-  if (Object.hasOwn(data, "archive")) {
-    if (data.archive !== true || Object.keys(data).length !== 1) {
-      return error("Send archive by itself and set it to true.", 400);
+  if (Object.hasOwn(data, "archive") || Object.hasOwn(data, "discard")) {
+    const action = Object.hasOwn(data, "discard") ? "discard" : "archive";
+    if (data[action] !== true || Object.keys(data).length !== 1) {
+      return error(`Send ${action} by itself and set it to true.`, 400);
     }
-    return archiveItem(db, userId, itemId);
+    return archiveItem(db, userId, itemId, action === "discard");
   }
 
   const { name, category, garmentType, color, confirm } = data;
@@ -97,15 +98,20 @@ async function updateItem(request, db, userId, itemId) {
   return updated ? Response.json({ item: itemView(updated) }) : error("Wardrobe item not found.", 404);
 }
 
-async function archiveItem(db, userId, itemId) {
+async function archiveItem(db, userId, itemId, draftOnly) {
   // Keep outfit references and let a retry of the same archive succeed.
   const archived = await db.prepare(`
     UPDATE wardrobe_items
     SET archived_at = COALESCE(archived_at, CURRENT_TIMESTAMP)
-    WHERE user_id = ? AND id = ?
+    WHERE user_id = ? AND id = ? ${draftOnly ? "AND confirmed_at IS NULL" : ""}
     RETURNING id
   `).bind(userId, itemId).first();
-  return archived ? new Response(null, { status: 204 }) : error("Wardrobe item not found.", 404);
+  if (archived) return new Response(null, { status: 204 });
+  if (draftOnly && await db.prepare("SELECT id FROM wardrobe_items WHERE user_id = ? AND id = ? AND confirmed_at IS NOT NULL")
+    .bind(userId, itemId).first()) {
+    return error("This item has already been confirmed.", 409);
+  }
+  return error("Wardrobe item not found.", 404);
 }
 
 const affectedLookIds = `

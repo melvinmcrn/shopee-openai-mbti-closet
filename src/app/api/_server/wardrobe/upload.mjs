@@ -90,6 +90,24 @@ function draftKey(value) {
   return typeof value === "string" && uuid.test(value) ? value.toLowerCase() : null;
 }
 
+export async function discardUpload(request, env, userId) {
+  const key = draftKey(new URL(request.url).searchParams.get("draftKey"));
+  if (!key) return error("The upload is missing a valid draft key.", 400);
+
+  // A lost response may describe an entire outfit. Discard only the drafts
+  // from this upload, even if a garment has since been confirmed elsewhere.
+  const rootId = "SELECT id FROM wardrobe_items WHERE user_id = ?1 AND draft_key = ?2";
+  const [root] = await env.DB.batch([
+    env.DB.prepare(rootId).bind(userId, key),
+    env.DB.prepare(`
+      UPDATE wardrobe_items SET archived_at = CURRENT_TIMESTAMP
+      WHERE user_id = ?1 AND confirmed_at IS NULL AND archived_at IS NULL
+        AND (draft_key = ?2 OR extraction_group_id = (${rootId}))
+    `).bind(userId, key),
+  ]);
+  return root.results.length ? new Response(null, { status: 204 }) : error("Wardrobe draft not found.", 404);
+}
+
 export async function upload(request, env, userId) {
   const parsed = await readUploadForm(request);
   if (!parsed.form) return error(parsed.error, parsed.status);

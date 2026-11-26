@@ -1,5 +1,5 @@
 import { profile } from "./wardrobe/profile.mjs";
-import { upload } from "./wardrobe/upload.mjs";
+import { discardUpload, upload } from "./wardrobe/upload.mjs";
 import { items } from "./wardrobe/items.mjs";
 import { extract } from "./wardrobe/extract.mjs";
 
@@ -8,6 +8,7 @@ export function wardrobeApi(request, env, userId) {
   const method = request.method;
   if (path === "/api/profile" || path === "/api/profile/photo") return profile(request, env, userId);
   if (path === "/api/wardrobe/upload" && method === "POST") return upload(request, env, userId);
+  if (path === "/api/wardrobe/upload" && method === "DELETE") return discardUpload(request, env, userId);
   const item = /^\/api\/wardrobe\/items(?:\/(\d+)(?:\/(extract|delete-impact))?)?$/.exec(path);
   if (item && item[2] !== "extract") return items(request, env, userId, item[1], item[2]);
   if (item && method === "POST") return extract(request, env, userId, Number(item[1]));
