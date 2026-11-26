@@ -29,7 +29,7 @@ type Item = {
 
 type Closet =
   | { status: "loading" | "signed-out" | "failed" }
-  | { status: "ready"; items: Item[] };
+  | { status: "ready"; items: Item[]; draftCount: number };
 
 type ItemAction = { id: number; type: "edit" | "archive" };
 type AffectedLook = { id: number; title: string };
@@ -43,11 +43,11 @@ function deleteImpactMessage(looks: AffectedLook[] | null) {
 }
 
 async function listCloset(signal?: AbortSignal): Promise<Closet> {
-  const response = await privateFetch(itemsEndpoint, { cache: "no-store", signal });
+  const response = await privateFetch(`${itemsEndpoint}?includeDraftCount=1`, { cache: "no-store", signal });
   if (response.status === 401) return { status: "signed-out" };
   if (!response.ok) throw new Error("Couldn’t load your closet.");
-  const { items } = (await response.json()) as { items: Item[] };
-  return { status: "ready", items };
+  const { items, draftCount } = (await response.json()) as { items: Item[]; draftCount: number };
+  return { status: "ready", items, draftCount };
 }
 
 const secondaryButton =
@@ -125,7 +125,7 @@ export default function ClosetPage() {
       const { item: updated } = (await response.json()) as { item: Item };
       setCloset((current) =>
         current.status === "ready"
-          ? { status: "ready", items: current.items.map((existing) => existing.id === item.id ? updated : existing) }
+          ? { ...current, items: current.items.map((existing) => existing.id === item.id ? updated : existing) }
           : current,
       );
       setAction(null);
@@ -155,7 +155,7 @@ export default function ClosetPage() {
 
     setCloset((current) =>
       current.status === "ready"
-        ? { status: "ready", items: current.items.filter((existing) => existing.id !== item.id) }
+        ? { ...current, items: current.items.filter((existing) => existing.id !== item.id) }
         : current,
     );
     setAction(null);
@@ -272,9 +272,19 @@ export default function ClosetPage() {
             </button>
           </div>
         )}
+        {closet.status === "ready" && closet.draftCount > 0 && (
+          <section className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-divider bg-selected px-5 py-4">
+            <p className="font-semibold">Drafts waiting for review</p>
+            <Link className={secondaryButton} href="/wardrobe/confirm?from=closet">
+              Review {closet.draftCount} {closet.draftCount === 1 ? "draft" : "drafts"}
+            </Link>
+          </section>
+        )}
         {closet.status === "ready" && items.length === 0 && (
           <p className="mt-8 rounded-2xl border border-divider bg-surface px-5 py-8">
-            Your closet is empty. Add and confirm your first item to see it here.
+            {closet.draftCount > 0
+              ? "Your confirmed items will appear here after you review your drafts."
+              : "Your closet is empty. Add and confirm your first item to see it here."}
           </p>
         )}
 
