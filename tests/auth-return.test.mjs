@@ -20,15 +20,18 @@ async function oauthReturnCookie(callbackUrl) {
   return decodeURIComponent(cookie.split(";")[0].slice("__Secure-authjs.callback-url=".length));
 }
 
-test("sign-in remembers a Saved deep link and a wardrobe review query through OAuth", async () => {
-  for (const path of ["/planner#saved/42", "/wardrobe/confirm?batch=3%2C5"]) {
+test("sign-in remembers local app pages, including unknown paths, through OAuth", async () => {
+  for (const path of ["/planner#saved/42", "/wardrobe/confirm?batch=3%2C5",
+    "/missing-app-route?q=2#saved", "/older/saved%20look?q=2#saved"]) {
     assert.equal(await oauthReturnCookie(path), origin + path);
     assert.equal(await oauthReturnCookie(origin + path), origin + path);
   }
 });
 
 test("sign-in falls back to the landing page for external links and non-page destinations", async () => {
-  for (const path of ["https://elsewhere.example/closet", "//elsewhere.example/planner", "/api/auth/signout", "/offline.html"]) {
+  for (const path of ["https://elsewhere.example/closet", "//elsewhere.example/planner", "/api/auth/signout",
+    "/%61pi/profile", "/auth/login", "/_next/static", "/offline", "/offline.html", "/index",
+    "/sw.js", "/sample-wardrobe/missing", "/assets/logo", "/"]) {
     assert.equal(new URL(await oauthReturnCookie(path)).href, origin + "/");
   }
 });
