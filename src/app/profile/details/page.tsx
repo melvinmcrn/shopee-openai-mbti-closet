@@ -1,5 +1,6 @@
 "use client";
 
+import { privateFetch } from "../../private-fetch.mjs";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
@@ -44,7 +45,7 @@ export default function ProfileDetailsPage() {
 
     async function loadProfile() {
       try {
-        const response = await fetch("/api/profile", { cache: "no-store", signal: controller.signal });
+        const response = await privateFetch("/api/profile", { cache: "no-store", signal: controller.signal });
         if (!response.ok) {
           setLoadError(response.status === 401 ? "Sign in to edit your profile." : "Your profile could not be loaded.");
           return;
@@ -118,7 +119,7 @@ export default function ProfileDetailsPage() {
         failureMessage = "Your profile photo could not be saved. Try again.";
         const body = new FormData();
         body.set("image", photoChange.file, "profile-photo.jpg");
-        const response = await fetch("/api/profile/photo", { method: "PUT", body });
+        const response = await privateFetch("/api/profile/photo", { method: "PUT", body });
         if (response.status === 413) {
           setFormError("This photo is too large to upload. Choose a smaller version and try again.");
           return;
@@ -137,7 +138,7 @@ export default function ProfileDetailsPage() {
         setProfile(savedProfile);
         setPhotoChange(null);
       } else {
-        const response = await fetch("/api/profile", { cache: "no-store" });
+        const response = await privateFetch("/api/profile", { cache: "no-store" });
         if (response.status === 401) {
           setFormError("Sign in again to continue.");
           return;
@@ -158,7 +159,7 @@ export default function ProfileDetailsPage() {
 
       if (Object.keys(measurements).length) {
         failureMessage = "Your measurements could not be saved. Try again.";
-        const response = await fetch("/api/profile", {
+        const response = await privateFetch("/api/profile", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(measurements),

@@ -1,5 +1,6 @@
 "use client";
 
+import { privateFetch } from "../../private-fetch.mjs";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
@@ -55,7 +56,7 @@ type UploadItem = {
 
 async function retryMainItem(photo: Photo, signal: AbortSignal): Promise<Photo> {
   try {
-    const response = await fetch(`/api/wardrobe/items/${photo.id}/extract?mode=primary`, { method: "POST", signal });
+    const response = await privateFetch(`/api/wardrobe/items/${photo.id}/extract?mode=primary`, { method: "POST", signal });
     const result: unknown = await response.json();
     if (typeof result !== "object" || result === null) return { ...photo, status: "manual", error: manualCutoutError };
     if (response.ok && "items" in result && Array.isArray(result.items) && result.items.length

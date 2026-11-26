@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 import subprocess
 import sys
-from urllib.parse import unquote, urljoin, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -119,11 +119,48 @@ def check_shared_navigation(browser, device, base):
     assert initial_footer.evaluate("node => node.isConnected"), "Navigating replaced the footer"
     context.close()
 
+    # The static document paints before JavaScript can confirm an account.
+    context = browser.new_context(**device, java_script_enabled=False)
+    page = context.new_page()
+    page.goto(f"{base}/account")
+    expect(page.get_by_role("heading", name="Account", exact=True)).to_have_count(0)
+    expect(page.get_by_role("contentinfo")).to_have_count(0)
+    context.close()
+
     context = browser.new_context(**device)
     page = context.new_page()
     page.goto(base)
     expect(page.get_by_role("button", name="Sign in to get started")).to_be_visible()
-    expect_navigation(page)
+    expect(page.get_by_role("contentinfo")).to_have_count(0)
+    expect(page.get_by_role("link", name="Closet home")).to_have_attribute("href", "/")
+
+    for destination in (
+        "/account", "/closet", "/profile/details", "/profile/style", "/profile/ready",
+        "/profile/settings", "/wardrobe/add", "/wardrobe/confirm?batch=3%2C5", "/planner#saved",
+    ):
+        page.goto(base + destination)
+        expect(page.get_by_role("button", name="Sign in to get started")).to_be_visible()
+        login = urlparse(page.url)
+        assert login.path == "/" and parse_qs(login.query)["returnTo"] == [destination]
+        expect(page.locator('input[name="callbackUrl"]')).to_have_value(destination)
+        expect(page.get_by_role("contentinfo")).to_have_count(0)
+
+    context.add_cookies([{"name": "planner-fixture", "value": "returning-session", "url": base}])
+    page.reload()
+    expect_heading(page, "Saved looks")
+    expect_navigation(page, "Saved")
+
+    page.get_by_role("link", name="Profile", exact=True).tap()
+    height = page.get_by_label("Height (cm)")
+    height.fill("179.5")
+    context.clear_cookies()
+    page.get_by_role("button", name="Save preferences").tap()
+    expect(page.get_by_role("button", name="Sign in to get started")).to_be_visible()
+    assert parse_qs(urlparse(page.url).query)["returnTo"] == ["/account"]
+    expect(page.get_by_role("contentinfo")).to_have_count(0)
+    page.go_back()
+    expect(page.get_by_role("button", name="Sign in to get started")).to_be_visible()
+    expect(page.get_by_role("contentinfo")).to_have_count(0)
     context.close()
 
 

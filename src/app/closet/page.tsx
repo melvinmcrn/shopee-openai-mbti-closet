@@ -1,5 +1,6 @@
 "use client";
 
+import { privateFetch } from "../private-fetch.mjs";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -42,7 +43,7 @@ function deleteImpactMessage(looks: AffectedLook[] | null) {
 }
 
 async function listCloset(signal?: AbortSignal): Promise<Closet> {
-  const response = await fetch(itemsEndpoint, { cache: "no-store", signal });
+  const response = await privateFetch(itemsEndpoint, { cache: "no-store", signal });
   if (response.status === 401) return { status: "signed-out" };
   if (!response.ok) throw new Error("Couldn’t load your closet.");
   const { items } = (await response.json()) as { items: Item[] };
@@ -111,7 +112,7 @@ export default function ClosetPage() {
     setBusy(true);
     setError("");
     try {
-      const response = await fetch(`${itemsEndpoint}/${item.id}`, {
+      const response = await privateFetch(`${itemsEndpoint}/${item.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -140,7 +141,7 @@ export default function ClosetPage() {
     setBusy(true);
     setError("");
     try {
-      const response = await fetch(`${itemsEndpoint}/${item.id}`, {
+      const response = await privateFetch(`${itemsEndpoint}/${item.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ archive: true }),
@@ -181,7 +182,7 @@ export default function ClosetPage() {
     beginAction(null);
     setDeletePrompt({ item, looks: null });
     try {
-      const response = await fetch(`${itemsEndpoint}/${item.id}/delete-impact`, {
+      const response = await privateFetch(`${itemsEndpoint}/${item.id}/delete-impact`, {
         cache: "no-store",
         signal: controller.signal,
       });
@@ -200,7 +201,7 @@ export default function ClosetPage() {
     setBusy(true);
     setError("");
     try {
-      const response = await fetch(`${itemsEndpoint}/${item.id}`, {
+      const response = await privateFetch(`${itemsEndpoint}/${item.id}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ savedLookIds: looks.map((look) => look.id) }),
