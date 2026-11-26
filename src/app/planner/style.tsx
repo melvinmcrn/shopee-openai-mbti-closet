@@ -4,10 +4,14 @@ import { normalizeProfilePhoto, profilePhotoAccept, profilePhotoRequirements } f
 import { styleOptions } from "../profile/style-options";
 import { api, type Brief } from "./shared";
 
-type PreparedTryOn = { status: "ready"; brief: Brief } | { status: "photo_required" };
+type PreparedTryOn = { status: "ready"; brief: Brief } | { status: "photo_required"; brief: Brief };
 
 type StyleProps = {
   brief: Brief;
+  needsPhoto: boolean;
+  onPhoto: (saved: Brief) => void;
+  onStyle: () => void;
+  onChange: (updated: Brief) => void;
   onNext: (saved: Brief) => void;
   onBack: () => void;
 };
@@ -18,14 +22,13 @@ const inputClass =
 const actionClass =
   "min-h-11 rounded-lg px-3 text-sm font-semibold text-secondary hover:bg-selected focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:opacity-60";
 
-export function Style({ brief, onNext, onBack }: StyleProps) {
-  const [styles, setStyles] = useState(brief.styles ?? []);
-  const options = [...new Set([...styleOptions, ...(brief.styles ?? [])])];
-  const [formality, setFormality] = useState(brief.formality);
-  const [comfort, setComfort] = useState(brief.comfort);
+export function Style({ brief, needsPhoto, onPhoto, onStyle, onChange, onNext, onBack }: StyleProps) {
+  const { formality, comfort, styles = [] } = brief;
+  const options = [...new Set([...styleOptions, ...styles])];
+  const setFormality = (formality: string) => onChange({ ...brief, formality });
+  const setComfort = (comfort: string) => onChange({ ...brief, comfort });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [needsPhoto, setNeedsPhoto] = useState(false);
   const [photo, setPhoto] = useState<File | null>(null);
   const savePending = useRef(false);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -36,7 +39,7 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
   }, [needsPhoto]);
 
   function deferPhoto() {
-    setNeedsPhoto(false);
+    onStyle();
     setPhoto(null);
     setError("");
   }
@@ -60,16 +63,16 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
           throw new Error(problem.error || "Your photo could not be saved. Try again.");
         }
         setPhoto(null);
-        setNeedsPhoto(false);
       }
       const result = await api<PreparedTryOn>("prepareTryOn", {
         ...brief,
+        trackDraft: true,
         formality: formality.trim(),
         comfort: comfort.trim(),
         styles,
       });
       if (result.status === "photo_required") {
-        setNeedsPhoto(true);
+        onPhoto(result.brief);
         return;
       }
       onNext(result.brief);
@@ -110,7 +113,7 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
                   checked={styles.includes(style)}
                   onChange={event => {
                     const checked = event.currentTarget.checked;
-                    setStyles(selected => checked ? [...selected, style] : selected.filter(name => name !== style));
+                    onChange({ ...brief, styles: checked ? [...styles, style] : styles.filter(name => name !== style) });
                   }}
                 />
                 <span className="wrap-anywhere">{style}</span>

@@ -38,7 +38,7 @@ const fieldClass = "mt-1 block min-h-11 w-full rounded-lg border border-divider 
 
 export default function ConfirmWardrobeItemsPage() {
   const router = useRouter();
-  const { origin, destination, error: flowError, retry: retryFlow } = useWardrobeFlow();
+  const { origin, destination, error: flowError, retry: retryFlow } = useWardrobeFlow("confirm");
   const [items, setItems] = useState<DraftItem[]>([]);
   const [excludedIds, setExcludedIds] = useState<Set<number>>(() => new Set());
   const [status, setStatus] = useState<"loading" | "ready" | "signed-out" | "error">("loading");

@@ -25,14 +25,21 @@ export function GoogleAccount() {
             window.location.replace(destination);
             return;
           }
-          const profileResponse = await privateFetch("/api/profile", {
+          const profileResponse = await privateFetch("/api/profile?resume=1", {
             cache: "no-store",
             signal: controller.signal,
           });
           if (!profileResponse.ok) throw new Error("Profile endpoint unavailable");
           const profile = await profileResponse.json();
           if (!controller.signal.aborted) {
-            window.location.replace(profile.setupCompletedAt ? "/planner" : "/wardrobe/add?from=onboarding");
+            const destinations: Record<string, string> = {
+              confirm: "/wardrobe/confirm?from=onboarding", style: "/profile/style", ready: "/profile/ready",
+            };
+            const stage = profile.setupStage;
+            if (!profile.setupCompletedAt && Object.hasOwn(destinations, stage)) {
+              window.dispatchEvent(new CustomEvent("closet:journey-resumed", { detail: { journey: "setup", stage } }));
+            }
+            window.location.replace(profile.setupCompletedAt ? "/planner" : destinations[stage] ?? "/wardrobe/add?from=onboarding");
           }
           return;
         }

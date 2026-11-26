@@ -9,6 +9,7 @@ import { api, imageUrl, occasionLookLabel, PlannerApiError, type CompletedLook, 
 type RefineProps = {
   look: CompletedLook;
   garments: Garment[];
+  draftVersion?: string;
   onSaved: (id: string) => void;
   onStale: () => void;
   onBack: () => void;
@@ -18,7 +19,7 @@ const slotOrder = ["other", "top", "bottom", "dress", "shoes", "outerwear", "acc
 const controlClass =
   "min-h-11 rounded-xl px-4 py-2 text-sm font-semibold transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:cursor-not-allowed disabled:opacity-60";
 
-export function Refine({ look, garments, onSaved, onStale, onBack }: RefineProps) {
+export function Refine({ look, garments, draftVersion, onSaved, onStale, onBack }: RefineProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const savePending = useRef(false);
@@ -40,7 +41,7 @@ export function Refine({ look, garments, onSaved, onStale, onBack }: RefineProps
 
     try {
       const saved = await api<{ id: string }>("save", {
-        optionId: look.id, slots: look.slots, previewRef: look.imageRef,
+        optionId: look.id, draftVersion, slots: look.slots, previewRef: look.imageRef,
         catalogItemIds: look.products.map(product => product.id),
       });
       if (mounted.current && window.location.hash === reviewHash) onSaved(saved.id);

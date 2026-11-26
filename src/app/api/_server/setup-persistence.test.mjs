@@ -281,3 +281,22 @@ test("setup saves three pieces and styles without a photo, then persists a later
   }
   assert.equal((await signedOut("/api/profile", setStyles)).status, 401);
 });
+
+test("incomplete setup resumes saved drafts, style and ready in another session", async t => {
+  const { env, signIn } = setup(t);
+  const owner = client(env, await signIn("resume-owner", "owner@example.com"));
+  const resume = async () => (await jsonSuccess(await owner("/api/profile?resume=1"))).setupStage;
+  assert.equal(await resume(), "add");
+  const form = new FormData();
+  form.set("draftKey", crypto.randomUUID());
+  form.set("image", new Blob([png], { type: "image/png" }), "top.png");
+  await jsonSuccess(await owner("/api/wardrobe/upload", { method: "POST", form }));
+  assert.equal(await resume(), "confirm");
+  await jsonSuccess(await owner("/api/profile", { method: "PATCH", json: { setupStage: "style" } }));
+  assert.equal(await resume(), "style");
+  await jsonSuccess(await owner("/api/profile", { method: "PATCH", json: { styles: [], setupStage: "ready" } }));
+  const next = client(env, await signIn("resume-owner", "new@example.com"));
+  assert.equal((await jsonSuccess(await next("/api/profile?resume=1"))).setupStage, "ready");
+  const other = client(env, await signIn("resume-other", "other@example.com"));
+  assert.equal((await jsonSuccess(await other("/api/profile?resume=1"))).setupStage, "add");
+});

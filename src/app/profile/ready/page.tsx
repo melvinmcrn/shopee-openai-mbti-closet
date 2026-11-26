@@ -102,7 +102,8 @@ export default function ProfileReadyPage() {
       try {
         const options = { signal: controller.signal, cache: "no-store" as const };
         const [profileResponse, wardrobeResponse] = await Promise.all([
-          privateFetch("/api/profile", options),
+          privateFetch("/api/profile", { ...options, method: "PATCH", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ setupStage: "ready" }) }),
           privateFetch("/api/wardrobe/items", options),
         ]);
         if (!profileResponse.ok || !wardrobeResponse.ok) {

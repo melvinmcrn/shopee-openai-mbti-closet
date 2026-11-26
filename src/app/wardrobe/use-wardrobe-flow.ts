@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { privateFetch } from "../private-fetch.mjs";
 import { wardrobeDestination, wardrobeOrigin } from "./flow.mjs";
 
-export function useWardrobeFlow() {
+export function useWardrobeFlow(stage: "add" | "confirm") {
   const origin = wardrobeOrigin(useSearchParams());
   const [completedAt, setCompletedAt] = useState<string | null>();
   const [error, setError] = useState(false);
@@ -17,7 +17,9 @@ export function useWardrobeFlow() {
     const controller = new AbortController();
     async function loadSetupStatus() {
       try {
-        const response = await privateFetch("/api/profile", { cache: "no-store", signal: controller.signal });
+        const response = await privateFetch("/api/profile", { cache: "no-store", signal: controller.signal,
+          ...(origin.from === "onboarding" && { method: "PATCH", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ setupStage: stage }) }) });
         if (!response.ok) throw new Error("Profile unavailable");
         const { setupCompletedAt } = await response.json();
         if (setupCompletedAt !== null && typeof setupCompletedAt !== "string") throw new Error("Invalid profile");
@@ -28,7 +30,7 @@ export function useWardrobeFlow() {
     }
     void loadSetupStatus();
     return () => controller.abort();
-  }, [attempt, needsProfile]);
+  }, [attempt, needsProfile, origin.from, stage]);
 
   function retry() {
     setError(false);

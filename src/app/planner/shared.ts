@@ -7,7 +7,7 @@ type LookKind = "occasion";
 export type Look = { kind?: LookKind; id: string; profileRef?: string; occasion: string; explanation: string; slots: Record<string, string> };
 export type PhotoClothes = { profile: string[]; original: string[] };
 export type CompletedLook = Look & { imageRef: string; products: CatalogProduct[]; photoClothes?: PhotoClothes; effectiveSlots?: Record<string, string>; useProfilePhoto?: boolean };
-export type Brief = { id?: string; occasion: string; timing: string; location: string; formality: string; comfort: string; preferences: string[]; styles?: string[] };
+export type Brief = { id?: string; version?: string; occasion: string; timing: string; location: string; formality: string; comfort: string; preferences: string[]; styles?: string[] };
 export type SavedLook = { kind?: LookKind; enhancements: CatalogProduct[]; id: string; optionId: string; useProfilePhoto: boolean; previewRef: string | null; hasPinnedPreview?: boolean; occasion: string; explanation: string; createdAt: string; slots: Record<string, Garment>; originalSlots: Record<string, Garment> };
 
 export function imageUrl(imageRef: string) {
