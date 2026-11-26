@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { RecentLook } from "./recent-look";
+import type { SavedLookNavigation } from "./saved-look-actions";
 import type { Garment } from "./shared";
 
 const outfitCategories = [
@@ -12,10 +14,11 @@ const outfitCategories = [
 
 type PlannerHomeProps = {
   garments: readonly Garment[];
+  savedNavigation: SavedLookNavigation;
   onNew: () => void;
 };
 
-export function PlannerHome({ garments, onNew }: PlannerHomeProps) {
+export function PlannerHome({ garments, savedNavigation, onNew }: PlannerHomeProps) {
   const categoryCounts = outfitCategories.map(({ category, label }) => ({
     label,
     count: garments.filter((garment) => garment.category === category).length,
@@ -49,6 +52,7 @@ export function PlannerHome({ garments, onNew }: PlannerHomeProps) {
           </Link>
         </div>
       </section>
+      <RecentLook {...savedNavigation} />
       <section aria-labelledby="planner-closet-title" className="mt-8">
         <h2 id="planner-closet-title" className="text-xl font-semibold tracking-tight">
           Available in your closet

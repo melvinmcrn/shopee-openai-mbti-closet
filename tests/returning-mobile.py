@@ -75,6 +75,96 @@ def open_saved(page, base):
     expect(flats_photo).to_have_js_property("naturalWidth", 1)
 
 
+def check_saved_shortcuts(browser, device, base, screenshot=None):
+    # Seed a fresh saved look via the public planner actions and their fixture provider.
+    context = browser.new_context(**device, locale="en-US", timezone_id="America/Los_Angeles")
+    context.add_cookies([{"name": "planner-fixture", "value": "first-session", "url": base}])
+    def planner(action, data):
+        response = context.request.post(base + "/api/planner", headers={"Origin": base},
+                                        data={"action": action, "input": data})
+        assert response.ok, response.text()
+        return response.json()
+
+    brief = planner("saveBrief", {"occasion": "Sunday brunch"})
+    option = planner("generate", {"briefId": brief["id"]})["looks"][0]
+    look = planner("save", {"optionId": option["id"], "slots": option["slots"]})
+    page = context.new_page()
+    page.set_default_timeout(7000)
+    page.clock.install(time="2026-11-26T03:45:00Z")
+    page.add_init_script("""window.closetEvents = [];
+        for (const name of ['closet:wear-logged', 'closet:saved-look-reopened']) {
+            window.addEventListener(name, () => window.closetEvents.push(name));
+        }""")
+    files = []
+    page.on("request", lambda request: files.append(request.url) if "/api/files/" in request.url else None)
+    calls = provider_calls(context, base)
+    page.goto(base + "/planner/")
+    recent = page.get_by_role("region", name="Most recent saved look")
+    expect(recent.get_by_role("heading", name=look["occasion"])).to_be_visible()
+    assert not files
+    assert provider_calls(context, base) == calls
+    recent.get_by_role("button", name="Wore today").tap()
+    confirm = recent.get_by_role("status")
+    expect(confirm).to_have_text("Logged for Nov 25, 2026.")
+    expect(confirm.locator("time")).to_have_attribute("datetime", "2026-11-25")
+    assert page.evaluate("window.closetEvents") == ["closet:wear-logged"]
+    assert not files
+    assert provider_calls(context, base) == calls
+    if screenshot:
+        recent.scroll_into_view_if_needed()
+        page.screenshot(path=screenshot, animations="disabled")
+
+    recent.get_by_role("button", name="Add note or rating").tap()
+    expect_heading(page, "Wear entry")
+    page.get_by_label("Note").fill("Comfortable all morning")
+    page.get_by_text("4", exact=True).tap()
+    page.get_by_role("button", name="Save wear entry").tap()
+    expect_heading(page, look["occasion"])
+    expect(page.get_by_text("Comfortable all morning", exact=True)).to_be_visible()
+    assert page.evaluate("window.closetEvents") == ["closet:wear-logged"]
+
+    page.get_by_role("navigation", name="Main navigation").get_by_role("link", name="Saved").tap()
+    card = page.get_by_role("article").filter(has=page.get_by_role("heading", name=look["occasion"], exact=True)).first
+    expect(card.get_by_role("status")).to_have_text("Logged for Nov 25, 2026.")
+    page.clock.set_system_time("2026-11-26T08:15:00Z")
+    page.evaluate("window.dispatchEvent(new Event('focus'))")
+    attempts = []
+    def retry_wear(route):
+        if route.request.post_data_json["action"] == "wearAdd":
+            attempts.append(1)
+            if len(attempts) == 1:
+                route.fulfill(status=503, json={"message": "Try recording this wear again."})
+                return
+        route.continue_()
+    page.route("**/api/planner", retry_wear)
+    card.get_by_role("button", name="Wore today").tap()
+    expect(card.get_by_role("alert")).to_have_text("Try recording this wear again.")
+    card.get_by_role("button", name="Wore today").tap()
+    expect(card.get_by_role("status")).to_have_text("Logged for Nov 26, 2026.")
+    assert len(attempts) == 2
+    assert page.evaluate("window.closetEvents") == ["closet:wear-logged"] * 2
+    assert len(planner("wearList", {"lookId": look["id"]})) == 2
+
+    def block_detail(route):
+        if route.request.post_data_json["action"] == "detail":
+            route.fulfill(status=503, json={"message": "Temporarily unavailable."})
+        else:
+            route.fallback()
+    page.route("**/api/planner", block_detail)
+    card.get_by_role("button", name="Open saved look for " + look["occasion"]).tap()
+    expect(page.get_by_role("main").get_by_role("alert")).to_have_text("Temporarily unavailable.")
+    assert page.evaluate("window.closetEvents") == ["closet:wear-logged"] * 2
+    page.unroute("**/api/planner", block_detail)
+    page.get_by_role("button", name="Try again").tap()
+    expect_heading(page, look["occasion"])
+    assert page.evaluate("window.closetEvents")[-1] == "closet:saved-look-reopened"
+    page.get_by_role("navigation", name="Main navigation").get_by_role("link", name="Home").tap()
+    recent.get_by_role("button", name="Open saved look for " + look["occasion"]).tap()
+    expect_heading(page, look["occasion"])
+    assert page.evaluate("window.closetEvents").count("closet:saved-look-reopened") == 2
+    context.close()
+
+
 def check_shared_navigation(browser, device, base):
     context, page = mobile_session(browser, device, base, "returning-session")
     page.goto(f"{base}/planner/")
@@ -726,6 +816,7 @@ def main():
                     check_automatic_cutout_retry(browser, device, base)
                     check_occasion_look(browser, device, base, "returning-session")
                     check_occasion_look(browser, device, base, "empty-closet")
+                    check_saved_shortcuts(browser, device, base)
                 finally:
                     browser.close()
         finally:

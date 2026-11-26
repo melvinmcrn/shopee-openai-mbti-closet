@@ -144,6 +144,35 @@ test("preparing a try-on keeps the brief editable until the account photo is rea
   assert.deepEqual(await dispatch("prepareTryOn", input), { status: "ready", brief: input });
 });
 
+test("Home returns only the latest owned look and its wear for the requested day", async t => {
+  const { dispatch, makeSession, optionId, database } = await startPlanner(t);
+  const day = { date: "2026-11-26" };
+  assert.equal(await dispatch("recentLook", day), null);
+  const first = await dispatch("save", { optionId, slots: original });
+  const second = await dispatch("save", { optionId, slots: refined });
+  database.prepare("UPDATE saved_looks SET saved_at = '2026-11-25 08:00:00'").run();
+  const summary = { id: second.id, occasion: second.occasion, wear: null };
+  assert.deepEqual(await dispatch("recentLook", day), summary);
+  assert.equal(await makeSession(2)("recentLook", day), null);
+  await assert.rejects(makeSession(2)("wearAdd", { lookId: second.id, ...day }), { status: 404 });
+  const entry = await dispatch("wearAdd", { lookId: second.id, ...day });
+  assert.equal(entry.created, true);
+  await dispatch("wearUpdate", { id: entry.id, rating: 4, note: "Wore it to lunch." });
+  const retry = await dispatch("wearAdd", { lookId: second.id, ...day });
+  assert.equal(retry.created, false);
+  assert.equal(retry.id, entry.id);
+  assert.equal(retry.note, "Wore it to lunch.");
+  assert.equal(retry.rating, 4);
+  const wear = { id: entry.id, ...day };
+  assert.deepEqual(await dispatch("recentLook", day), { ...summary, wear });
+  assert.deepEqual((await dispatch("list", day)).map(look => look.wear), [wear, null]);
+  assert.equal((await dispatch("recentLook", { date: "2026-11-27" })).wear, null);
+  database.prepare("UPDATE saved_looks SET saved_at = '2026-11-26T07:00:00.000Z' WHERE id = ?").run(second.id);
+  database.prepare("UPDATE saved_looks SET saved_at = '2026-11-26 18:00:00' WHERE id = ?").run(first.id);
+  assert.equal((await dispatch("recentLook", day)).id, first.id);
+  assert.equal((await dispatch("wearList", { lookId: second.id })).length, 1);
+});
+
 test("deleting a garment confirms exactly the saved looks containing its final slot", async (t) => {
   const { dispatch, optionId, database } = await startPlanner(t);
   const env = { DB: d1Binding(database) };

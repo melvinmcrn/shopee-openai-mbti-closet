@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { usePlannerScreen } from "./use-planner-screen";
 import { api, type Brief, type CompletedLook, type Garment } from "./shared";
 import { PlannerHome } from "./home";
@@ -69,13 +69,31 @@ export default function PlannerPage() {
     setReload(count => count + 1);
     window.history.back();
   }
+  const pendingOpen = useRef<string | null>(null);
+  useEffect(() => {
+    if (screen !== "saved/" + pendingOpen.current) pendingOpen.current = null;
+  }, [screen]);
+  const reportOpened = useCallback((id: string) => {
+    if (pendingOpen.current !== id) return;
+    pendingOpen.current = null;
+    window.dispatchEvent(new Event("closet:saved-look-reopened"));
+  }, []);
+
+  function openSavedLook(id: string) {
+    pendingOpen.current = id;
+    go("saved/" + id);
+  }
+  const savedNavigation = {
+    onOpen: openSavedLook,
+    onWear: (lookId: string, entryId: string) => go("saved/" + lookId + "/" + entryId),
+  };
   const [view, routeId, wearId] = screen.split("/");
   const look = view === "refine" && (routeId ? reviewed.find(item => item.id === routeId) : reviewed.at(-1));
   let content;
-  if (screen === "saved") content = <SavedList onOpen={id => go("saved/" + id)} onNew={start} />;
+  if (screen === "saved") content = <SavedList {...savedNavigation} onNew={start} />;
   else if (view === "saved" && routeId) content = wearId
     ? <WearEntry id={wearId} onBack={() => go("saved/" + routeId)} />
-    : <Detail id={routeId} onWear={id => go("saved/" + routeId + "/" + id)} onBack={() => go("saved")}
+    : <Detail id={routeId} onOpened={reportOpened} onWear={id => go("saved/" + routeId + "/" + id)} onBack={() => go("saved")}
         onCompare={lastSavedId === routeId && comparison ? () => go("compare") : undefined} />;
   else if (!garments) content = loadError
     ? <div className="text-danger" role="alert">{loadError} <Link className="underline" href="/account">Account</Link> · <button onClick={() => {setLoadError(""); setReload(n => n + 1);}}>Retry</button></div>
@@ -87,7 +105,7 @@ export default function PlannerPage() {
   else if (look) content = <Refine key={look.id} look={look} garments={garments}
     onBack={() => window.history.back()} onStale={() => refreshStaleLook(look)}
     onSaved={id => { setLastSavedId(id); go("saved/" + id); }} />;
-  else content = <PlannerHome garments={garments} onNew={start} />;
+  else content = <PlannerHome garments={garments} savedNavigation={savedNavigation} onNew={start} />;
   return <main className="flex-1 bg-canvas px-5 py-6 text-text sm:px-10">
     <div className={screen === "compare" ? "mx-auto max-w-7xl" : "mx-auto max-w-4xl"}>{content}</div>
   </main>;

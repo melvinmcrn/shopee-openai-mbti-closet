@@ -146,7 +146,15 @@ test("Postgres supports owner-scoped profiles, wardrobe items, and the planner",
     const [hidden] = await dispatchPlanner(env, owner.id, "list");
     assert.deepEqual(hidden.enhancements, []);
     assert.deepEqual(await dispatchPlanner(env, visitor.id, "list"), []);
-    const wear = await dispatchPlanner(env, owner.id, "wearAdd", { lookId: look.id, date: "2026-11-21" });
+    const day = { date: "2026-11-21" };
+    const wears = await Promise.all(Array.from({ length: 8 },
+      () => dispatchPlanner(env, owner.id, "wearAdd", { lookId: look.id, ...day })));
+    const [wear] = wears;
+    assert.equal(new Set(wears.map(entry => entry.id)).size, 1);
+    assert.equal(wears.filter(entry => entry.created).length, 1);
+    assert.equal((await dispatchPlanner(env, owner.id, "wearList", { lookId: look.id })).length, 1);
+    assert.deepEqual((await dispatchPlanner(env, owner.id, "recentLook", day)).wear, { id: wear.id, ...day });
+    assert.equal(await dispatchPlanner(env, visitor.id, "recentLook", day), null);
     await dispatchPlanner(env, owner.id, "wearUpdate", { id: wear.id, rating: 5 });
     assert.equal((await dispatchPlanner(env, owner.id, "wearGet", { id: wear.id })).rating, 5);
 
