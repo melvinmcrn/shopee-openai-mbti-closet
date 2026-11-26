@@ -11,7 +11,7 @@ export function RestoreReview({ look, loadTryOn, onReady, onBack }: {
   const [error, setError] = useState(false);
   useEffect(() => {
     let active = true;
-    loadTryOn(look).then(photo => {
+    loadTryOn(look).preview.then(photo => {
       if (active && photo) onReady(photo);
       else if (active) setError(true);
     }).catch(() => { if (active) setError(true); });

@@ -718,6 +718,23 @@ test("a profile-only option can offer both missing categories from an empty clos
   assert.equal(new Set(products.map(product => product.id)).size, 2);
 });
 
+test("comparison discloses effective closet pieces, retained profile clothing and catalog prices before rendering", async t => {
+  const slots = { accessory: necklace.id };
+  const product = { id: "jacket", title: "Linen jacket", price: 350, currency: "THB", searchTerm: "men jacket" };
+  const evaluate = t.mock.fn(async () => [product]);
+  const { dispatch, optionId } = await startPlanner(t, undefined, slots, undefined, {
+    dependencies: {
+      readBaseCoverage: async () => ({ top: true, bottom: true, outerwear: true, dress: false, shoes: false }),
+      evaluateEnhancements: evaluate,
+    },
+  });
+  const pieces = await dispatch("enhancements", { optionId, slots, includePieces: true });
+  assert.deepEqual(pieces.effectiveSlots, { ...slots, shoes: heels.id });
+  assert.deepEqual(pieces.photoClothes, { profile: ["top", "bottom"], original: [] });
+  assert.deepEqual(pieces.products, [product]);
+  assert.equal(evaluate.mock.callCount(), 1);
+});
+
 test("a headshot is completed with the exact stored catalog images chosen by Elevate your look", async t => {
   const preview = {
     readImage: t.mock.fn(async ref => ref === profileRef ? portrait() : new Blob([ref], { type: "image/jpeg" })),

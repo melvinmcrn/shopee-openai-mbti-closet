@@ -90,6 +90,7 @@ export default function PlannerPage() {
       setBrief(form?.brief ?? saved ?? emptyBrief);
       setStage(nextStage);
       setOptionId(draft?.optionId);
+      draft?.looks.forEach(look => loadTryOn.clear(look));
       setComparison(draft?.looks.length ? { looks: draft.looks, result: { status: "ready", looks: draft.looks } } : undefined);
       setReviewed([]);
       setLastSavedId(undefined);
@@ -111,7 +112,7 @@ export default function PlannerPage() {
     }
     load();
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [accountId, reload]);
+  }, [accountId, loadTryOn, reload]);
 
   function edit(formStage: FormStage, fields: Brief) {
     setBrief(fields);
