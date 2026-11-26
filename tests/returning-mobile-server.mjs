@@ -295,7 +295,13 @@ const server = createServer(async (request, response) => {
     const page = !route ? "/index.html" : extname(route) ? route : route + ".html";
     const file = resolve(output, "." + page);
     if (!file.startsWith(output + sep)) return reply(response, 404, "Not found", "text/plain");
-    return reply(response, 200, await readFile(file), types.get(extname(file)) ?? "application/octet-stream");
+    try {
+      return reply(response, 200, await readFile(file), types.get(extname(file)) ?? "application/octet-stream");
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      // Match the Sites Worker's exported 404 document at the originally requested URL.
+      return reply(response, 404, await readFile(resolve(output, "404.html")), "text/html");
+    }
   } catch (error) {
     const status = error.status ?? (error.code === "ENOENT" ? 404 : 500);
     if (status === 500) console.error(error);

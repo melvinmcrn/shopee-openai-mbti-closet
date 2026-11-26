@@ -186,7 +186,7 @@ export default function AddWardrobePhotoPage() {
     setRemovingKey(photo.draftKey);
     setRemovalError(null);
     try {
-      const response = await fetch(`/api/wardrobe/upload?draftKey=${encodeURIComponent(photo.draftKey)}`, {
+      const response = await privateFetch(`/api/wardrobe/upload?draftKey=${encodeURIComponent(photo.draftKey)}`, {
         method: "DELETE", signal: controller.signal,
       });
       if (controller.signal.aborted) return;

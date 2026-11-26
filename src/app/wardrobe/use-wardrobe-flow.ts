@@ -2,6 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { privateFetch } from "../private-fetch.mjs";
 import { wardrobeDestination, wardrobeOrigin } from "./flow.mjs";
 
 export function useWardrobeFlow() {
@@ -16,7 +17,7 @@ export function useWardrobeFlow() {
     const controller = new AbortController();
     async function loadSetupStatus() {
       try {
-        const response = await fetch("/api/profile", { cache: "no-store", signal: controller.signal });
+        const response = await privateFetch("/api/profile", { cache: "no-store", signal: controller.signal });
         if (!response.ok) throw new Error("Profile unavailable");
         const { setupCompletedAt } = await response.json();
         if (setupCompletedAt !== null && typeof setupCompletedAt !== "string") throw new Error("Invalid profile");

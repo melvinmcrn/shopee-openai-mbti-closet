@@ -108,7 +108,7 @@ export default function ConfirmWardrobeItemsPage() {
     setDiscardingId(item.id);
     setErrors((current) => ({ ...current, [item.id]: "" }));
     try {
-      const response = await fetch(`/api/wardrobe/items/${item.id}`, {
+      const response = await privateFetch(`/api/wardrobe/items/${item.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ discard: true }),
