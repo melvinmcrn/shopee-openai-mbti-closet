@@ -10,6 +10,7 @@ const brief = {
   formality: "Smart casual",
   comfort: "Standing for two hours",
   preferences: ["dress", "top", "bottom"],
+  styles: ["Vintage", "Classic"],
 };
 
 function garment(id, category, name, fields = {}) {

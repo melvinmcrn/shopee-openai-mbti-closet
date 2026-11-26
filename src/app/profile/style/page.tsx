@@ -99,7 +99,7 @@ export default function ConfirmStylePage() {
           </Link>
           <h1 className="mt-5 text-4xl font-semibold tracking-tight sm:text-5xl">Confirm style</h1>
           <p className="mt-3 max-w-lg leading-relaxed text-supporting">
-            Choose the styles you like to wear regularly. You can update your choices in Settings.
+            Choose the styles to start with for each new outfit. You can adjust them for an occasion or update your defaults in Settings.
           </p>
         </header>}
 

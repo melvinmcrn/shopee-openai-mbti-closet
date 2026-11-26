@@ -121,6 +121,7 @@ async function startPlanner(t, preview, optionSlots = original, shoppingFetch, c
     formality: "",
     comfort: "",
     preferences: [],
+    styles: ["Minimalist"],
   });
   const { looks: [option] } = await dispatch("generate", { briefId: brief.id });
   return { dispatch, makeSession, optionId: option.id, database };
@@ -416,6 +417,7 @@ test("Decisions selects a Shopee catalog product from the final outfit and the o
   assert.equal(payload.model, "gpt-6-luna");
   const evidence = payload.input[1].content[0].data;
   assert.equal(evidence.occasion, "Anniversary dinner");
+  assert.deepEqual(evidence.styles, ["Minimalist"]);
   assert.deepEqual(evidence.outfit.sort((a, b) => a.slot.localeCompare(b.slot)), [
     { slot: "dress", category: "dress", name: "Column dress", color: "midnight blue" },
     { slot: "shoes", category: "shoes", name: "Walking flats", color: "silver" },
