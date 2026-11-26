@@ -459,7 +459,7 @@ def check_wardrobe_deletion(browser, device, base):
 
 def check_outfit_upload(browser, device, base):
     context, page = mobile_session(browser, device, base, "other-account")
-    page.goto(f"{base}/wardrobe/add/")
+    page.goto(f"{base}/wardrobe/add/?from=closet")
     photo = Path(__file__).resolve().parents[1] / "public/sample-wardrobe/studio-model.webp"
     page.get_by_label("Choose photos").set_input_files(photo)
     page.get_by_role("button", name="Upload photos").tap()
@@ -472,30 +472,62 @@ def check_outfit_upload(browser, device, base):
     remove.tap()
     review.tap()
     expect(page.get_by_text("3 items to review", exact=True)).to_be_visible()
-    forms = page.locator("form")
-    expect(forms).to_have_count(3)
+    cards = page.get_by_role("article")
+    expect(cards).to_have_count(3)
     photos = []
-    for form, name, category in zip(forms.all(), ["Striped shirt", "Straight jeans", "White sneakers"], ["top", "bottom", "shoes"]):
-        expect(form.get_by_label("Name", exact=True)).to_have_value(name)
-        expect(form.get_by_role("combobox", name="Category")).to_have_value(category)
-        image = form.get_by_role("img")
+    for card, name, category in zip(cards.all(), ["Striped shirt", "Straight jeans", "White sneakers"], ["top", "bottom", "shoes"]):
+        expect(card.get_by_label("Name", exact=True)).to_have_value(name)
+        expect(card.get_by_role("combobox", name="Category")).to_have_value(category)
+        expect(card.get_by_role("checkbox")).to_be_checked()
+        image = card.get_by_role("img")
         image.scroll_into_view_if_needed()
         expect(image).not_to_have_js_property("naturalWidth", 0)
         photos.append(image.get_attribute("src"))
     assert len(set(photos)) == 3
-    forms.first.get_by_label("Name", exact=True).fill("My striped shirt")
-    forms.first.get_by_role("button", name="Confirm item").tap()
+    cards.first.get_by_label("Name", exact=True).fill("My striped shirt")
+    cards.last.get_by_role("checkbox").uncheck()
+
+    # The second save fails after the first succeeds. Only the remaining selected
+    # item should be retried, and the unchecked shoes should remain a draft.
+    attempts = []
+    def fail_second(route):
+        attempts.append(route.request.post_data_json["name"])
+        if len(attempts) == 2:
+            route.fulfill(status=503)
+        else:
+            route.continue_()
+    page.route("**/api/wardrobe/items/*", fail_second)
+    page.get_by_role("button", name="Save 2 selected items and continue").tap()
+    expect(cards.get_by_role("alert")).to_contain_text("Try again")
     expect(page.get_by_text("2 items to review · 1 confirmed")).to_be_visible()
-    page.get_by_role("button", name="Confirm all").tap()
-    expect(page.get_by_text("No items to review · 3 confirmed")).to_be_visible()
-    page.goto(f"{base}/closet/")
-    for name in ["My striped shirt", "Straight jeans", "White sneakers"]:
+    page.get_by_role("button", name="Save 1 selected item and continue").tap()
+    expect_heading(page, "Closet")
+    assert attempts == ["My striped shirt", "Straight jeans", "Straight jeans"]
+    page.unroute("**/api/wardrobe/items/*", fail_second)
+    for name in ["My striped shirt", "Straight jeans"]:
         expect(page.get_by_role("heading", name=name)).to_be_visible()
+    expect(page.get_by_role("heading", name="White sneakers")).to_have_count(0)
+
+    review_remaining = page.get_by_role("link", name="Review 1 draft")
+    review_remaining.tap()
+    expect(page.get_by_label("Name", exact=True)).to_have_value("White sneakers")
+    page.get_by_role("checkbox").uncheck()
+    expect(page.get_by_role("button", name="Save 0 selected items and continue")).to_be_disabled()
+    page.get_by_role("link", name="Review later").tap()
+    expect_heading(page, "Closet")
+    review_remaining.tap()
+    page.get_by_role("button", name="Save 1 selected item and continue").tap()
+    expect_heading(page, "Closet")
+    expect(page.get_by_role("heading", name="White sneakers")).to_be_visible()
+    expect(review_remaining).to_have_count(0)
     context.close()
 
 
 def check_wardrobe_return(browser, device, base):
     context, page = mobile_session(browser, device, base, "profile-only")
+    page.goto(f"{base}/wardrobe/add/?from=onboarding")
+    page.get_by_role("link", name="Add clothes later").tap()
+    expect_heading(page, "Confirm style")
     page.goto(f"{base}/wardrobe/confirm/?from=onboarding")
     page.get_by_role("link", name="Continue to style profile").tap()
     expect_heading(page, "Confirm style")
@@ -524,6 +556,20 @@ def check_wardrobe_return(browser, device, base):
     expect(page.get_by_text("Preferences saved.")).to_be_visible()
     page.reload()
     expect(page.get_by_role("checkbox", name="Classic")).not_to_be_checked()
+    # A completed account with only pending uploads can recover them directly from Closet.
+    page.goto(f"{base}/wardrobe/add/?from=onboarding")
+    expect(page.get_by_role("link", name="Add clothes later")).to_have_count(0)
+    photo = Path(__file__).resolve().parents[1] / "public/sample-wardrobe/studio-model.webp"
+    page.get_by_label("Choose photos").set_input_files(photo)
+    page.get_by_role("button", name="Upload photos").tap()
+    page.get_by_role("link", name="Review 3 items").tap()
+    page.get_by_role("link", name="Review later").tap()
+    expect_heading(page, "Closet")
+    expect(page.get_by_text("0 items", exact=True)).to_be_visible()
+    page.get_by_role("link", name="Review 3 drafts").tap()
+    page.get_by_role("button", name="Save 3 selected items and continue").tap()
+    expect_heading(page, "Closet")
+    expect(page.get_by_text("3 items", exact=True)).to_be_visible()
     context.close()
 
 

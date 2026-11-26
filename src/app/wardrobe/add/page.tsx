@@ -274,7 +274,11 @@ export default function AddWardrobePhotoPage() {
       <header className="mb-7 space-y-3">
         {!busy && (
           <nav aria-label="Wardrobe" className="flex flex-wrap gap-4 text-sm font-medium underline underline-offset-4">
-            {destination && destination.href !== "/profile/style" && <Link href={destination.href}>{destination.label}</Link>}
+            {destination && (
+              <Link href={destination.href}>
+                {destination.href === "/profile/style" ? "Add clothes later" : destination.label}
+              </Link>
+            )}
             <Link href={wardrobeHref("/wardrobe/confirm", origin)}>Review saved drafts</Link>
           </nav>
         )}
