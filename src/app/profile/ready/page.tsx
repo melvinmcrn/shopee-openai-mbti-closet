@@ -67,7 +67,7 @@ function SetupSummary({ profile, items }: Setup) {
       </section>
 
       <section className={`${cardClass} sm:col-span-2`} aria-labelledby="styles-heading">
-        <h2 id="styles-heading" className="text-lg font-semibold">Style preferences</h2>
+        <h2 id="styles-heading" className="text-lg font-semibold">Default outfit styles</h2>
         {profile.styles.length > 0 ? (
           <ul className="mt-3 flex flex-wrap gap-2" aria-label="Selected styles">
             {profile.styles.map((style) => (

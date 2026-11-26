@@ -297,7 +297,8 @@ export default function AccountPage() {
 
               <div className="border-t border-divider pt-5">
                 <fieldset disabled={busy !== null}>
-                  <legend className="mb-3 text-lg font-semibold">Preferred styles</legend>
+                  <legend className="mb-1 text-lg font-semibold">Default outfit styles</legend>
+                  <p className="mb-3 text-sm text-supporting">New outfits start with these styles. You can change them for each occasion.</p>
                   <div className="flex flex-wrap gap-2">
                     {[...availableStyles].map((style) => (
                       <label key={style} className="flex cursor-pointer items-center gap-2 rounded-full border border-divider px-3 py-2 text-sm has-checked:border-secondary has-checked:bg-selected">
