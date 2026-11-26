@@ -1,5 +1,6 @@
 "use client";
 
+import { privateFetch } from "../../private-fetch.mjs";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
@@ -47,7 +48,7 @@ export default function ConfirmWardrobeItemsPage() {
 
     async function loadDrafts() {
       try {
-        const response = await fetch("/api/wardrobe/items?status=draft", {
+        const response = await privateFetch("/api/wardrobe/items?status=draft", {
           cache: "no-store",
           signal: controller.signal,
         });
@@ -112,7 +113,7 @@ export default function ConfirmWardrobeItemsPage() {
       }
 
       try {
-        const response = await fetch(`/api/wardrobe/items/${item.id}`, {
+        const response = await privateFetch(`/api/wardrobe/items/${item.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ name, category: item.category, garmentType, color, confirm: true }),
