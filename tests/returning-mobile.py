@@ -142,10 +142,15 @@ def check_shared_navigation(browser, device, base):
         expect(page.get_by_role("heading", name="404", exact=True)).to_be_visible()
         assert page.url == base + resource
 
+    page.goto(base + "/bad%2Fsegment")
+    expect(page.get_by_role("button", name="Sign in to get started")).to_be_visible()
+    assert page.url == base + "/"
+
     for destination in (
         "/account", "/closet", "/profile/details", "/profile/style", "/profile/ready",
         "/profile/settings", "/wardrobe/add", "/wardrobe/confirm?batch=3%2C5",
-        "/missing-app-route?q=2#saved", "/planner#saved",
+        "/missing-app-route?q=2#saved", r"/account?name=folder\look",
+        "/v2.1/looks/recent?tab=saved", "/retired.page", "/planner#saved",
     ):
         page.goto(base + destination)
         expect(page.get_by_role("button", name="Sign in to get started")).to_be_visible()
