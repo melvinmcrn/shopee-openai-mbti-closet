@@ -35,6 +35,7 @@ type Photo = {
   id: number | null;
   garments?: ExtractedItem[];
   retryMainItem?: boolean;
+  mayHaveDraft?: boolean;
   status: keyof typeof photoStatuses;
   error?: string;
 };
@@ -76,6 +77,8 @@ export default function AddWardrobePhotoPage() {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [selectionError, setSelectionError] = useState("");
   const [batchError, setBatchError] = useState("");
+  const [removingKey, setRemovingKey] = useState<string | null>(null);
+  const [removalError, setRemovalError] = useState<{ key: string; message: string; missing?: boolean } | null>(null);
   const previews = useRef(new Set<string>());
   const activeTask = useRef<AbortController | null>(null);
 
@@ -88,7 +91,7 @@ export default function AddWardrobePhotoPage() {
     };
   }, []);
 
-  const hasActiveUpload = progress !== null;
+  const hasActiveUpload = progress !== null || removingKey !== null;
   useEffect(() => {
     if (!hasActiveUpload) return;
     const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
@@ -156,13 +159,50 @@ export default function AddWardrobePhotoPage() {
     }
   }
 
-  function removePhoto(photo: Photo) {
-    if (activeTask.current) return;
+  function forgetPhoto(photo: Photo) {
     URL.revokeObjectURL(photo.preview);
     previews.current.delete(photo.preview);
     setPhotos((current) => current.filter(({ draftKey }) => draftKey !== photo.draftKey));
     setSelectionError("");
     setBatchError("");
+    setRemovalError(null);
+  }
+
+  async function removePhoto(photo: Photo) {
+    if (activeTask.current) return;
+    if (photo.id === null && !photo.mayHaveDraft) {
+      forgetPhoto(photo);
+      return;
+    }
+    const controller = new AbortController();
+    activeTask.current = controller;
+    setRemovingKey(photo.draftKey);
+    setRemovalError(null);
+    try {
+      const response = await fetch(`/api/wardrobe/upload?draftKey=${encodeURIComponent(photo.draftKey)}`, {
+        method: "DELETE", signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
+      if (response.status === 204) {
+        forgetPhoto(photo);
+      } else if (response.status === 404 && photo.id === null) {
+        setRemovalError({
+          key: photo.draftKey, missing: true,
+          message: "No saved draft was found yet. Try removing again, or dismiss this photo here and check saved drafts later.",
+        });
+      } else {
+        setRemovalError({ key: photo.draftKey, message: response.status === 401
+          ? "Sign in again to remove this photo from your saved drafts."
+          : "Couldn’t confirm removal. Try removing this photo again." });
+      }
+    } catch {
+      if (!controller.signal.aborted) {
+        setRemovalError({ key: photo.draftKey, message: "Couldn’t confirm removal. Try removing this photo again." });
+      }
+    } finally {
+      activeTask.current = null;
+      if (!controller.signal.aborted) setRemovingKey(null);
+    }
   }
 
   async function processPhotos(selection: Photo[]) {
@@ -170,6 +210,7 @@ export default function AddWardrobePhotoPage() {
     const controller = new AbortController();
     activeTask.current = controller;
     setBatchError("");
+    setRemovalError(null);
     setSelectionError("");
     setProgress({ phase: "preparing" });
     try {
@@ -198,9 +239,11 @@ export default function AddWardrobePhotoPage() {
         keys.has(photo.draftKey) ? { ...photo, status: "uploading", error: undefined } : photo,
       ));
       let items: UploadItem[] | undefined;
+      let responseStatus: number | undefined;
       try {
         const result = await requestWardrobeUploadBatch(prepared, setProgress, controller.signal);
         if (controller.signal.aborted) return;
+        responseStatus = result.status;
         if (result.status === 200 && result.body && typeof result.body === "object" && "items" in result.body && Array.isArray(result.body.items)) {
           items = result.body.items;
         } else {
@@ -222,7 +265,7 @@ export default function AddWardrobePhotoPage() {
         if (typeof item?.id === "number" && Number.isSafeInteger(item.id) && item.id > 0) {
           if (item.extraction?.status === "ready") {
             const garments = item.extraction.items ?? (item.extraction.item && [item.extraction.item]);
-            return { ...photo, id: item.id, garments, status: "ready" };
+            return { ...photo, id: item.id, garments, status: "ready", error: undefined };
           }
           if (item.extraction?.nextAction === "manual_review") {
             return { ...photo, id: item.id, status: "manual", error: manualCutoutError };
@@ -239,6 +282,8 @@ export default function AddWardrobePhotoPage() {
         return {
           ...photo,
           status: photo.id === null ? "upload-failed" : "extraction-failed",
+          // A lost response can leave a saved draft even when its ID never arrived.
+          mayHaveDraft: photo.mayHaveDraft || ![400, 401, 403, 413, 415].includes(item?.status ?? responseStatus ?? 0),
           error: items
             ? item?.status === 409
               ? "This draft changed. Check the wardrobe review page for its latest details."
@@ -329,16 +374,26 @@ export default function AddWardrobePhotoPage() {
                     </div>
                   ) : <p className="mt-1 text-sm">{photoStatuses[photo.status]}</p>}
                   {photo.error && <p className="mt-1 text-sm text-danger" role="alert">{photo.error}</p>}
-                  {photo.id === null && (
+                  {(photo.status === "queued" || photo.status === "manual" || photo.status.endsWith("-failed")) && (
                     <button
                       type="button"
                       className="mt-2 text-sm underline underline-offset-4 disabled:opacity-60"
                       aria-label={`Remove ${photo.name}`}
                       disabled={busy}
-                      onClick={() => removePhoto(photo)}
+                      onClick={() => void removePhoto(photo)}
                     >
-                      Remove
+                      {removingKey === photo.draftKey ? "Removing…" : "Remove"}
                     </button>
+                  )}
+                  {removalError?.key === photo.draftKey && (
+                    <div className="mt-2 text-sm">
+                      <p role="alert" className="text-danger">{removalError.message}</p>
+                      {removalError.missing && (
+                        <button type="button" disabled={busy} className="mt-2 underline underline-offset-4" onClick={() => forgetPhoto(photo)}>
+                          Dismiss from this batch
+                        </button>
+                      )}
+                    </div>
                   )}
                 </li>
               ))}

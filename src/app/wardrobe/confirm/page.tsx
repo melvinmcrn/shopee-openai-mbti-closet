@@ -38,6 +38,7 @@ export default function ConfirmWardrobeItemsPage() {
   const [manualItemIds, setManualItemIds] = useState<Set<string>>(() => new Set());
   const [reloads, setReloads] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [discardingId, setDiscardingId] = useState<number | null>(null);
   const [savedCount, setSavedCount] = useState(0);
   const [errors, setErrors] = useState<Record<number, string>>({});
   const savingRef = useRef(false);
@@ -94,6 +95,35 @@ export default function ConfirmWardrobeItemsPage() {
   function editItem(id: number, edits: Partial<ItemEdits>) {
     setItems((current) => current.map((item) => item.id === id ? { ...item, ...edits } : item));
     setErrors((current) => ({ ...current, [id]: "" }));
+  }
+
+  async function discardItem(item: DraftItem) {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    setDiscardingId(item.id);
+    setErrors((current) => ({ ...current, [item.id]: "" }));
+    try {
+      const response = await fetch(`/api/wardrobe/items/${item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ discard: true }),
+      });
+      if (response.status === 204) {
+        setItems((current) => current.filter(({ id }) => id !== item.id));
+      } else {
+        const message = response.status === 401 ? "Sign in again to discard this draft."
+          : response.status === 409 ? "This item has already been confirmed. Refresh to see your remaining drafts."
+          : "Couldn’t discard this draft. Try again.";
+        setErrors((current) => ({ ...current, [item.id]: message }));
+      }
+    } catch {
+      setErrors((current) => ({ ...current, [item.id]: "Couldn’t confirm removal. Try discarding this draft again." }));
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+      setDiscardingId(null);
+    }
   }
 
   async function confirmItems(drafts: DraftItem[]) {
@@ -190,7 +220,7 @@ export default function ConfirmWardrobeItemsPage() {
                   disabled={saving}
                   onClick={() => void confirmItems(items)}
                 >
-                  {saving ? "Confirming…" : "Confirm all"}
+                  {saving && discardingId === null ? "Confirming…" : "Confirm all"}
                 </button>
               )}
             </div>
@@ -266,7 +296,10 @@ export default function ConfirmWardrobeItemsPage() {
                       </label>
                       {errors[item.id] && <p className="text-sm text-danger" role="alert">{errors[item.id]}</p>}
                       <button type="submit" className={`${primaryButton} w-full`}>
-                        {saving ? "Confirming…" : "Confirm item"}
+                        {saving && discardingId === null ? "Confirming…" : "Confirm item"}
+                      </button>
+                      <button type="button" className={secondaryButton} onClick={() => void discardItem(item)}>
+                        {discardingId === item.id ? "Discarding…" : "Discard item"}
                       </button>
                     </fieldset>
                   </form>
