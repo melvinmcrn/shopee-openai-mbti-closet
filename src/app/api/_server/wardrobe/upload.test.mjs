@@ -323,6 +323,51 @@ function postBatch(env, entries, userId = 1) {
   return wardrobeApi(new Request("https://wardrobe.example/api/wardrobe/upload", { method: "POST", body: form }), env, userId);
 }
 
+test("discarding a photo after a lost response removes its unconfirmed garments and preserves other items", async (t) => {
+  const { env, send } = fixture(t);
+  const key = crypto.randomUUID();
+  const manual = await (await send(crypto.randomUUID(), 1, photoPng)).json();
+  const otherOwner = await (await send(key, 2, photoPng)).json();
+  env.OPENAI_API_KEY = "mock-key";
+  t.mock.method(globalThis, "fetch", outfitExtraction);
+  const { extraction: { items: [top, trousers] } } = await (await send(key, 1, photoPng)).json();
+
+  const api = (path, options, owner = 1) => wardrobeApi(new Request("https://wardrobe.example/api/wardrobe/" + path, options), env, owner);
+  const draftIds = async (owner) => (await (await api("items?status=draft", {}, owner)).json()).items.map(({ id }) => id);
+  const patch = (id, body, owner) => api("items/" + id, { method: "PATCH", body: JSON.stringify(body) }, owner);
+  const discardPhoto = () => api("upload?draftKey=" + key, { method: "DELETE" });
+
+  assert.equal((await patch(trousers.id, { confirm: true })).status, 200);
+  assert.equal((await discardPhoto()).status, 204);
+  assert.equal((await discardPhoto()).status, 204);
+  assert.deepEqual(await draftIds(1), [manual.id]);
+  assert.deepEqual(await draftIds(2), [otherOwner.id]);
+  assert.deepEqual((await (await api("items?status=active", {})).json()).items.map(({ id }) => id), [trousers.id]);
+  assert.equal((await api("upload?draftKey=" + crypto.randomUUID(), { method: "DELETE" })).status, 404);
+  assert.equal((await api("upload?draftKey=invalid", { method: "DELETE" })).status, 400);
+  assert.notEqual(top.id, trousers.id);
+});
+
+test("discarding a reviewed draft is owner-scoped, retryable, and cannot discard a confirmed item", async (t) => {
+  const { env, send } = fixture(t);
+  const key = crypto.randomUUID();
+  const { id } = await (await send(key, 1, photoPng)).json();
+  const patch = (itemId, body, owner = 1) => wardrobeApi(new Request("https://wardrobe.example/api/wardrobe/items/" + itemId, {
+    method: "PATCH", body: JSON.stringify(body),
+  }), env, owner);
+
+  assert.equal((await patch(id, { discard: true }, 2)).status, 404);
+  assert.equal((await patch(id, { discard: true, confirm: true })).status, 400);
+  assert.equal((await patch(id, { discard: true })).status, 204);
+  assert.equal((await patch(id, { discard: true })).status, 204);
+  assert.equal((await send(key, 1, photoPng)).status, 404);
+  const other = await (await send(crypto.randomUUID(), 1, photoPng)).json();
+  assert.equal((await patch(other.id, { confirm: true })).status, 200);
+  assert.equal((await patch(other.id, { discard: true })).status, 409);
+  const active = await wardrobeApi(new Request("https://wardrobe.example/api/wardrobe/items"), env, 1);
+  assert.deepEqual((await active.json()).items.map(({ id }) => id), [other.id]);
+});
+
 test("extracts a full-resolution portrait JPEG on upload and on a key-only retry of a saved draft", async (t) => {
   const { env, sqlite } = fixture(t);
   const jpeg = await sharp({

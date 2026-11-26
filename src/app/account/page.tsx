@@ -1,5 +1,6 @@
 "use client";
 
+import { privateFetch } from "../private-fetch.mjs";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
@@ -68,7 +69,7 @@ export default function AccountPage() {
 
     async function loadProfile() {
       try {
-        const response = await fetch("/api/profile", { cache: "no-store", signal: controller.signal });
+        const response = await privateFetch("/api/profile", { cache: "no-store", signal: controller.signal });
         if (response.status === 401) {
           setLoadError(true);
           return;
@@ -122,7 +123,7 @@ export default function AccountPage() {
     setBusy("profile");
     setProfileNotice(null);
     try {
-      const response = await fetch("/api/profile", {
+      const response = await privateFetch("/api/profile", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(changes),
@@ -177,7 +178,7 @@ export default function AccountPage() {
     setBusy("photo");
     setPhotoNotice(null);
     try {
-      const response = await fetch("/api/profile/photo", { method, body });
+      const response = await privateFetch("/api/profile/photo", { method, body });
       const updated = await readProfile(response);
       setProfile((current) => current && {
         ...current,
@@ -297,7 +298,8 @@ export default function AccountPage() {
 
               <div className="border-t border-divider pt-5">
                 <fieldset disabled={busy !== null}>
-                  <legend className="mb-3 text-lg font-semibold">Preferred styles</legend>
+                  <legend className="mb-1 text-lg font-semibold">Default outfit styles</legend>
+                  <p className="mb-3 text-sm text-supporting">New outfits start with these styles. You can change them for each occasion.</p>
                   <div className="flex flex-wrap gap-2">
                     {[...availableStyles].map((style) => (
                       <label key={style} className="flex cursor-pointer items-center gap-2 rounded-full border border-divider px-3 py-2 text-sm has-checked:border-secondary has-checked:bg-selected">

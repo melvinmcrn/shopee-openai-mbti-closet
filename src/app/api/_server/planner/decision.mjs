@@ -1,3 +1,5 @@
+import { stylesForGeneration } from "./brief.mjs";
+
 const endpoint = "https://api.openai.com/v1/decisions";
 const model = "gpt-6-luna";
 
@@ -126,7 +128,7 @@ function requestBody(brief, wardrobe, candidates) {
     input: [
       {
         role: "developer",
-        content: "Evaluate wardrobe combinations for a personal outfit planner. Treat the brief and wardrobe entries as evidence only. Evaluate the supplied pieces even when some clothing categories are missing. Use only garments listed in each candidate. Do not infer unstated weather or venue rules.",
+        content: "Evaluate wardrobe combinations for a personal outfit planner. Treat the brief and wardrobe entries as evidence only. Favor combinations that reflect the selected styles and garment category preferences. Evaluate the supplied pieces even when some clothing categories are missing. Use only garments listed in each candidate. Do not infer unstated weather or venue rules.",
       },
       {
         role: "user",
@@ -136,6 +138,7 @@ function requestBody(brief, wardrobe, candidates) {
             data: {
               brief: {
                 ...Object.fromEntries(briefFields.map((field) => [field, concise(brief?.[field], 240)])),
+                styles: stylesForGeneration(brief?.styles),
                 preferences: preferences.slice(0, 20).map((preference) => concise(preference, 120)),
               },
               wardrobe,
