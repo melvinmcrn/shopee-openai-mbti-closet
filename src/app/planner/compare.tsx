@@ -4,7 +4,9 @@ import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, imageUrl, occasionLookLabel, type CompletedLook, type Garment, type Look } from "./shared";
-import type { LoadTryOn } from "./try-on";
+import { WardrobePhotos } from "./wardrobe-photos";
+import type { LoadTryOn, OutfitPieces } from "./try-on";
+import { wardrobeHref } from "../wardrobe/flow.mjs";
 
 type CompareProps = {
   loadTryOn: LoadTryOn;
@@ -28,19 +30,33 @@ type PhotoState = { attempt: number; status?: "ready" | "failed"; message?: stri
 const secondaryButton =
   "inline-flex min-h-11 items-center justify-center rounded-full border border-divider px-5 py-2 text-sm font-semibold text-secondary transition hover:bg-selected focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:cursor-wait disabled:opacity-60";
 
-function LookCard({ look, index, loadTryOn, attempt, onStatus, onChoose }: {
+function sourceLabel(owned: number, fromProfile: boolean, shopee: number) {
+  if (owned && !fromProfile && !shopee) return "All from your closet";
+  return [
+    owned ? `${owned} owned piece${owned === 1 ? "" : "s"}` : "",
+    fromProfile ? "Clothes from your profile photo" : "",
+    shopee ? `${shopee} Shopee item${shopee === 1 ? "" : "s"}` : "",
+  ].filter(Boolean).join(" · ") || "Try-on basics";
+}
+
+function LookCard({ look, index, garments, loadTryOn, attempt, failed, onStatus, onChoose }: {
   look: Look;
   index: number;
+  garments: Garment[];
+  failed: boolean;
   loadTryOn: LoadTryOn;
   attempt: number;
   onStatus: (id: string, state: PhotoState) => void;
   onChoose: (look: CompletedLook) => void;
 }) {
+  const [pieces, setPieces] = useState<OutfitPieces>();
   const [completed, setCompleted] = useState<CompletedLook | null>(null);
   const [visible, setVisible] = useState(false);
   useEffect(() => {
     let active = true;
-    loadTryOn(look).then(result => {
+    const request = loadTryOn(look);
+    void request.pieces.then(result => { if (active) setPieces(result); }, () => {});
+    request.preview.then(result => {
       if (!active) return;
       if (result) setCompleted(result);
       else onStatus(look.id, { attempt, status: "failed" });
@@ -49,26 +65,48 @@ function LookCard({ look, index, loadTryOn, attempt, onStatus, onChoose }: {
     });
     return () => { active = false; };
   }, [look, loadTryOn, attempt, onStatus]);
-  if (!completed) return null;
   const occasion = look.kind === "occasion";
+  const slots = completed?.effectiveSlots ?? pieces?.effectiveSlots ?? look.slots;
+  const clothes = completed?.photoClothes ?? pieces?.photoClothes;
+  const ownedIds = new Set(Object.values(slots));
+  const owned = garments.filter(garment => ownedIds.has(garment.id));
+  const count = Object.keys(slots).filter(slot => slot !== "other").length + (clothes?.original.length ?? 0);
+  const products = pieces?.products ?? [];
+  const prices = products.flatMap(product => Number.isFinite(product.price) && /^[A-Z]{3}$/.test(product.currency)
+    ? [new Intl.NumberFormat("en", { style: "currency", currency: product.currency }).format(product.price)] : []);
   return (
-    <article hidden={!visible} className="min-w-0 rounded-2xl border border-divider bg-surface p-2 sm:p-3">
-      <h2 className="mb-2 px-1 font-heading text-lg text-text sm:text-2xl">
-        {occasion ? occasionLookLabel : `Look ${index + 1}`}
-      </h2>
-      <button
-        type="button" aria-label={occasion ? "Choose occasion look" : `Choose look ${index + 1}`}
-        disabled={!visible} onClick={() => onChoose(completed)}
-        className="group flex w-full flex-col items-stretch gap-3 rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary"
-      >
-        <Image src={imageUrl(completed.imageRef)} alt="Full-body virtual try-on of this outfit"
-          width={512} height={768} loading="eager" unoptimized className="aspect-[2/3] w-full rounded-xl bg-selected object-contain"
-          onLoad={() => { setVisible(true); onStatus(look.id, { attempt, status: "ready" }); }}
-          onError={() => { setVisible(false); onStatus(look.id, { attempt, status: "failed" }); }} />
-        <span className="flex min-h-11 items-center justify-center rounded-full bg-primary px-4 py-2 text-sm font-semibold text-on-primary transition group-hover:bg-primary-hover">
-          Choose this look
-        </span>
-      </button>
+    <article className="min-w-0 space-y-3 rounded-2xl border border-divider bg-surface p-4">
+      <div className="space-y-1">
+        <h2 className="font-heading text-2xl text-text">{occasion ? occasionLookLabel : `Look ${index + 1}`}</h2>
+        {pieces && <p className="text-sm font-semibold text-secondary">
+          {sourceLabel(count, Boolean(clothes?.profile.length), products.length)}
+        </p>}
+        {!pieces && count > 0 && <p className="text-sm font-semibold text-secondary">
+          {count} owned {count === 1 ? "piece" : "pieces"}
+        </p>}
+        {prices.length > 0 && <p className="text-xs text-supporting">
+          {products.length === 1 ? "Shopee price" : "Shopee prices"} · {prices.join(" + ")}
+        </p>}
+      </div>
+      <WardrobePhotos garments={owned} compact />
+      {!visible && <p className="rounded-xl bg-canvas px-3 py-2 text-sm text-supporting">
+        {failed ? "Try-on photo unavailable" : "Preparing your try-on…"}
+      </p>}
+      {completed && <div hidden={!visible}>
+        <button
+          type="button" aria-label={occasion ? "Choose occasion look" : `Choose look ${index + 1}`}
+          disabled={!visible} onClick={() => onChoose(completed)}
+          className="group flex w-full flex-col items-stretch gap-3 rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary"
+        >
+          <Image src={imageUrl(completed.imageRef)} alt="Full-body virtual try-on of this outfit"
+            width={512} height={768} loading="eager" unoptimized className="aspect-[2/3] w-full rounded-xl bg-selected object-contain"
+            onLoad={() => { setVisible(true); onStatus(look.id, { attempt, status: "ready" }); }}
+            onError={() => { setVisible(false); onStatus(look.id, { attempt, status: "failed" }); }} />
+          <span className="flex min-h-11 items-center justify-center rounded-full bg-primary px-4 py-2 text-sm font-semibold text-on-primary transition group-hover:bg-primary-hover">
+            Choose this look
+          </span>
+        </button>
+      </div>}
     </article>
   );
 }
@@ -143,7 +181,7 @@ function CompareBrief({ briefId, comparison, notice, onComparison, garments, onC
         {ordered.map((look, index) => {
           const attempt = photos[look.id]?.attempt ?? 0;
           return <LookCard key={look.id + "/" + attempt} look={look} index={index} attempt={attempt}
-            loadTryOn={loadTryOn} onStatus={onStatus} onChoose={onChoose} />;
+            garments={garments} failed={photos[look.id]?.status === "failed"} loadTryOn={loadTryOn} onStatus={onStatus} onChoose={onChoose} />;
         })}
       </div>
       <div aria-live="polite" className="mt-4 space-y-2 text-sm text-supporting">
@@ -169,7 +207,7 @@ function CompareBrief({ briefId, comparison, notice, onComparison, garments, onC
         {!pending && failedPhotos.length > 0 && (
           <button type="button" onClick={retryPhotos} className={secondaryButton}>Retry photos</button>
         )}
-        {needsCloset && <Link href="/closet" className={secondaryButton}>Open closet</Link>}
+        {needsCloset && <Link href={wardrobeHref("/wardrobe/add", { from: "planner", brief: briefId })} className={secondaryButton}>Add wardrobe items</Link>}
         {canGenerate && comparison && (
           <button type="button" disabled={generating}
             onClick={() => onComparison({ ...comparison, request: generate(briefId, looks) })} className={secondaryButton}>

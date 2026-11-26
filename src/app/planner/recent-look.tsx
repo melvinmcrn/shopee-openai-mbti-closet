@@ -12,7 +12,12 @@ export function RecentLook(navigation: SavedLookNavigation) {
   useEffect(() => {
     const controller = new AbortController();
     api<SavedLookSummary | null>("recentLook", { date: today }, controller.signal)
-      .then(result => { if (!controller.signal.aborted) setLook(result); })
+      .then(result => {
+        if (!controller.signal.aborted) {
+          setLook(result);
+          setError("");
+        }
+      })
       .catch(cause => {
         if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Could not load your recent look.");
       });

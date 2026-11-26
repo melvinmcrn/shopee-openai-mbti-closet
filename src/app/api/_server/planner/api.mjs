@@ -1,4 +1,5 @@
 import { catalogListingKey } from "../../../planner/catalog-listing.mjs";
+import { resumePlanner, setDraftStage } from "./resume.mjs";
 import { getGarments } from "./garments.mjs";
 import { saveBrief, getBrief } from "./brief.mjs";
 import { readOption, generateOptions } from "./options.mjs";
@@ -6,7 +7,7 @@ import { requireWearDate, wearAction } from "./wear.mjs";
 import { evaluateEnhancements, shoppingAction, suggestionsForLook } from "./shopping.mjs";
 import { readBaseCoverage } from "./base-coverage.mjs";
 import { combineBaseCoverage, effectiveWardrobeSlots } from "./wardrobe-completion.mjs";
-import { generatePreview, readProfileImage, ProfilePhotoError, profilePhotoRequired, profilePhotoChanged } from "./preview.mjs";
+import { generatePreview, retainedPhotoClothes, readProfileImage, ProfilePhotoError, profilePhotoRequired, profilePhotoChanged } from "./preview.mjs";
 import { previewFiles, previewSelection, profilePhotoRef, readPreviewImage } from "./preview-files.mjs";
 import { saveLook, listLooks, recentLook, getLook, snapshotSlots } from "./saved.mjs";
 
@@ -86,17 +87,21 @@ export async function dispatchPlanner(env, accountId, action, input = {}, depend
     return (await basePhotos(ref, look.slots)).coverage;
   }
   switch (action) {
+    case "resumePlanner": return resumePlanner(db, accountId, input.briefId);
+    case "setDraftStage": return setDraftStage(db, accountId, input);
     case "wardrobe": return wardrobe();
     case "prepareTryOn": {
       try {
         await currentPortrait(await photo());
       } catch (error) {
-        if (error instanceof ProfilePhotoError && error.code === "profile_photo_required") return { status: "photo_required" };
+        if (error instanceof ProfilePhotoError && error.code === "profile_photo_required") return input.trackDraft
+          ? { status: "photo_required", brief: found(await saveBrief(db, accountId, input, "photo")) }
+          : { status: "photo_required" };
         throw error;
       }
-      return { status: "ready", brief: found(await saveBrief(db, accountId, input)) };
+      return { status: "ready", brief: found(await saveBrief(db, accountId, input, input.trackDraft ? "compare" : undefined)) };
     }
-    case "saveBrief": return found(await saveBrief(db, accountId, input));
+    case "saveBrief": return found(await saveBrief(db, accountId, input, input.trackDraft ? "style" : undefined));
     case "option": return option(db, accountId, input.id);
     case "generate": {
       const brief = found(await getBrief(db, accountId, input.briefId));
@@ -116,16 +121,17 @@ export async function dispatchPlanner(env, accountId, action, input = {}, depend
       const base = source.kind === "occasion" ? {} : await basePhotos(ref, slots);
       const evaluate = dependencies.evaluateEnhancements ?? evaluateEnhancements;
       const products = await evaluate(env, accountId, source, slots, garments, dependencies.shoppingFetch, base.coverage);
-      if (action === "enhancements") return products;
       if (action === "enhancement") return products[0] ?? null;
-      if (!matchesRequestedProducts(input, products)) return { imageRef: null };
+      if (action === "enhancements" && !input.includePieces) return products;
       const effective = effectiveWardrobeSlots(slots, garments, base.coverage);
+      const effectiveSlots = Object.fromEntries(Object.entries(effective).map(([slot, item]) => [slot, String(item.id)]));
+      const pieces = input.includePieces ? { effectiveSlots, photoClothes: retainedPhotoClothes(Object.values(effective), products, base) } : {};
+      if (action === "enhancements") return { ...pieces, products };
+      if (!matchesRequestedProducts(input, products)) return { imageRef: null };
       const result = await render(source.id, slots, portrait, products, effective, base);
       if (!result.imageRef) return result;
       const added = Object.keys(effective).length !== Object.keys(slots).length;
-      return { ...result, useProfilePhoto: Boolean(ref), ...(added ? {
-        effectiveSlots: Object.fromEntries(Object.entries(effective).map(([slot, item]) => [slot, String(item.id)])),
-      } : {}) };
+      return { ...result, useProfilePhoto: Boolean(ref), ...(added ? { effectiveSlots } : {}), ...pieces };
     }
     case "shopping": case "hide":
       return shoppingAction(env, accountId, action, input, dependencies.shoppingFetch, wardrobe, savedCoverage);
@@ -158,7 +164,7 @@ export async function dispatchPlanner(env, accountId, action, input = {}, depend
     }
     case "save": {
       const source = await option(db, accountId, input.optionId);
-      const rendered = input.previewRef === undefined ? undefined : { previewRef: input.previewRef, catalogItemIds: input.catalogItemIds };
+      const rendered = input.previewRef === undefined ? undefined : { previewRef: input.previewRef, draftVersion: input.draftVersion, catalogItemIds: input.catalogItemIds };
       return saveLook(db, accountId, source, requestedSlots(source, input), await wardrobe(), rendered);
     }
     case "recentLook": return recentLook(db, accountId, requireWearDate(input.date));

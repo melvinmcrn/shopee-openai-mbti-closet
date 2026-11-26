@@ -121,6 +121,7 @@ async function startPlanner(t, preview, optionSlots = original, shoppingFetch, c
     formality: "",
     comfort: "",
     preferences: [],
+    styles: ["Minimalist"],
   });
   const { looks: [option] } = await dispatch("generate", { briefId: brief.id });
   return { dispatch, makeSession, optionId: option.id, database };
@@ -445,6 +446,7 @@ test("Decisions selects a Shopee catalog product from the final outfit and the o
   assert.equal(payload.model, "gpt-6-luna");
   const evidence = payload.input[1].content[0].data;
   assert.equal(evidence.occasion, "Anniversary dinner");
+  assert.deepEqual(evidence.styles, ["Minimalist"]);
   assert.deepEqual(evidence.outfit.sort((a, b) => a.slot.localeCompare(b.slot)), [
     { slot: "dress", category: "dress", name: "Column dress", color: "midnight blue" },
     { slot: "shoes", category: "shoes", name: "Walking flats", color: "silver" },
@@ -745,6 +747,23 @@ test("a profile-only option can offer both missing categories from an empty clos
   assert.equal(new Set(products.map(product => product.id)).size, 2);
 });
 
+test("comparison discloses effective closet pieces, retained profile clothing and catalog prices before rendering", async t => {
+  const slots = { accessory: necklace.id };
+  const product = { id: "jacket", title: "Linen jacket", price: 350, currency: "THB", searchTerm: "men jacket" };
+  const evaluate = t.mock.fn(async () => [product]);
+  const { dispatch, optionId } = await startPlanner(t, undefined, slots, undefined, {
+    dependencies: {
+      readBaseCoverage: async () => ({ top: true, bottom: true, outerwear: true, dress: false, shoes: false }),
+      evaluateEnhancements: evaluate,
+    },
+  });
+  const pieces = await dispatch("enhancements", { optionId, slots, includePieces: true });
+  assert.deepEqual(pieces.effectiveSlots, { ...slots, shoes: heels.id });
+  assert.deepEqual(pieces.photoClothes, { profile: ["top", "bottom"], original: [] });
+  assert.deepEqual(pieces.products, [product]);
+  assert.equal(evaluate.mock.callCount(), 1);
+});
+
 test("a headshot is completed with the exact stored catalog images chosen by Elevate your look", async t => {
   const preview = {
     readImage: t.mock.fn(async ref => ref === profileRef ? portrait() : new Blob([ref], { type: "image/jpeg" })),
@@ -1011,4 +1030,53 @@ test("a legacy saved photo stays hidden and cannot be pinned as a newly audited 
   const saved = await dispatch("save", { optionId, slots: refined });
   assert.equal(saved.previewRef, null);
   await assert.rejects(dispatch("save", { optionId, slots: refined, previewRef: "old-photo", catalogItemIds: [] }), { status: 409 });
+});
+
+test("planner recovery restores owned options and closes superseded and saved drafts", async t => {
+  const { dispatch, makeSession } = await startPlanner(t);
+  const brief = await dispatch("saveBrief", { occasion: "Sunday lunch", trackDraft: true });
+  const draft = await dispatch("resumePlanner");
+  assert.equal(draft?.brief.id, brief.id);
+  assert.equal(draft.stage, "style");
+  assert.equal(await makeSession(2)("resumePlanner", { briefId: brief.id }), null);
+  await dispatch("prepareTryOn", { ...brief, trackDraft: true, version: draft.version });
+  const { looks } = await dispatch("generate", { briefId: brief.id });
+  const comparison = await dispatch("resumePlanner", { briefId: brief.id });
+  assert.equal(comparison.stage, "compare");
+  assert.deepEqual(comparison.looks.map(look => look.id), looks.map(look => look.id));
+  await dispatch("setDraftStage", { briefId: brief.id, version: comparison.version, stage: "refine", optionId: looks[0].id });
+  const review = await dispatch("resumePlanner");
+  assert.equal(review.optionId, looks[0].id);
+  await assert.rejects(dispatch("setDraftStage", { briefId: brief.id, version: comparison.version, stage: "closed" }), error => error.status === 409);
+  await dispatch("save", { optionId: looks[0].id, slots: looks[0].slots });
+  assert.equal(await dispatch("resumePlanner"), null);
+  assert.equal(await dispatch("resumePlanner", { briefId: brief.id }), null);
+});
+
+test("an older wardrobe return can resume its original brief, while a current draft wins over old links", async t => {
+  const { dispatch, optionId } = await startPlanner(t);
+  const { briefId } = await dispatch("option", { id: optionId });
+  const original = await dispatch("resumePlanner", { briefId });
+  assert.equal(original.stage, "compare");
+  assert.equal(original.looks[0].id, optionId);
+  const selected = await dispatch("setDraftStage", { briefId, stage: "refine", optionId });
+  assert.equal((await dispatch("resumePlanner")).optionId, optionId);
+  await dispatch("setDraftStage", { briefId, stage: "closed", version: selected.version });
+  const next = await dispatch("saveBrief", { occasion: "Gallery", trackDraft: true });
+  assert.equal(await dispatch("resumePlanner", { briefId }), null);
+  assert.equal((await dispatch("resumePlanner")).brief.id, next.id);
+});
+
+test("editing a brief starts a new comparison without resurrecting options from its previous run", async t => {
+  const { dispatch } = await startPlanner(t);
+  const draft = await dispatch("saveBrief", { occasion: "Gallery", trackDraft: true });
+  const first = (await dispatch("prepareTryOn", { ...draft, trackDraft: true })).brief;
+  const { looks } = await dispatch("generate", { briefId: first.id });
+  const edited = (await dispatch("prepareTryOn", { ...first, comfort: "Loose fit", trackDraft: true })).brief;
+  assert.deepEqual((await dispatch("resumePlanner")).looks, []);
+  await assert.rejects(dispatch("setDraftStage", {
+    briefId: edited.id, stage: "refine", optionId: looks[0].id, version: edited.version,
+  }), error => error.status === 409);
+  await assert.rejects(dispatch("saveBrief", { ...first, comfort: "Stale", trackDraft: true }), error => error.status === 409);
+  assert.equal((await dispatch("resumePlanner")).brief.comfort, "Loose fit");
 });

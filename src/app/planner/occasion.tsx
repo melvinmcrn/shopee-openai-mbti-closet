@@ -3,6 +3,7 @@ import { api, type Brief } from "./shared";
 
 type OccasionProps = {
   brief: Brief;
+  onChange: (updated: Brief) => void;
   onNext: (updated: Brief) => void;
   onBack: () => void;
 };
@@ -33,10 +34,11 @@ function Suggestions({ label, options, value, onPick }: {
   );
 }
 
-export function Occasion({ brief, onNext, onBack }: OccasionProps) {
-  const [occasion, setOccasion] = useState(brief.occasion);
-  const [timing, setTiming] = useState(brief.timing);
-  const [location, setLocation] = useState(brief.location);
+export function Occasion({ brief, onChange, onNext, onBack }: OccasionProps) {
+  const { occasion, timing, location } = brief;
+  const setOccasion = (occasion: string) => onChange({ ...brief, occasion });
+  const setTiming = (timing: string) => onChange({ ...brief, timing });
+  const setLocation = (location: string) => onChange({ ...brief, location });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const savePending = useRef(false);
@@ -58,6 +60,7 @@ export function Occasion({ brief, onNext, onBack }: OccasionProps) {
     try {
       const updated = await api<Brief>("saveBrief", {
         ...brief,
+        trackDraft: true,
         occasion: occasionText,
         timing: timing.trim(),
         location: location.trim(),

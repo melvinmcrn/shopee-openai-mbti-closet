@@ -1,6 +1,8 @@
 "use client";
 
+import { privateFetch } from "../../private-fetch.mjs";
 import Link from "next/link";
+import { useAccountSession } from "../../account-session";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { styleOptions } from "../style-options";
@@ -10,6 +12,7 @@ const secondaryButton = "inline-flex min-h-11 items-center justify-center rounde
 
 export default function ConfirmStylePage() {
   const router = useRouter();
+  const draftKey = "closet:setup-styles:v1:" + useAccountSession().user!.id;
   const [status, setStatus] = useState<"loading" | "ready" | "signed-out" | "error">("loading");
   const [loadCount, setLoadCount] = useState(0);
   const [savedStyles, setSavedStyles] = useState<string[]>([]);
@@ -24,7 +27,8 @@ export default function ConfirmStylePage() {
 
     async function loadStyles() {
       try {
-        const response = await fetch("/api/profile", { cache: "no-store", signal: controller.signal });
+        const response = await privateFetch("/api/profile", { method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ setupStage: "style" }), signal: controller.signal });
         if (controller.signal.aborted) return;
         if (response.status === 401) {
           setStatus("signed-out");
@@ -32,13 +36,23 @@ export default function ConfirmStylePage() {
         }
         if (!response.ok) throw new Error("Style preferences unavailable");
 
-        const data = (await response.json()) as { styles?: unknown };
+        const data = (await response.json()) as { styles?: unknown; setupCompletedAt: string | null };
         if (controller.signal.aborted) return;
+        if (data.setupCompletedAt) {
+          router.replace("/profile/settings");
+          return;
+        }
         if (!Array.isArray(data.styles) || !data.styles.every((style) => typeof style === "string")) {
           throw new Error("Invalid style preferences");
         }
         setSavedStyles(data.styles);
-        setSelectedStyles(data.styles);
+        let choices = data.styles;
+        try {
+          const draft = JSON.parse(localStorage.getItem(draftKey) ?? "null");
+          if (draft?.base === JSON.stringify(data.styles) && Array.isArray(draft.selected) &&
+              draft.selected.every((value: unknown) => typeof value === "string")) choices = draft.selected;
+        } catch { /* Browser storage is optional. */ }
+        setSelectedStyles(choices);
         setStatus("ready");
       } catch {
         if (!controller.signal.aborted) setStatus("error");
@@ -47,12 +61,14 @@ export default function ConfirmStylePage() {
 
     void loadStyles();
     return () => controller.abort();
-  }, [loadCount]);
+  }, [loadCount, router, draftKey]);
 
   function selectStyle(style: string, checked: boolean) {
-    setSelectedStyles((current) => checked
-      ? [...current, style]
-      : current.filter((selected) => selected !== style));
+    const selected = checked ? [...selectedStyles, style] : selectedStyles.filter(value => value !== style);
+    setSelectedStyles(selected);
+    try {
+      localStorage.setItem(draftKey, JSON.stringify({ base: JSON.stringify(savedStyles), selected }));
+    } catch { /* Saving the form still persists choices to the account. */ }
     setSaveError("");
   }
 
@@ -64,13 +80,14 @@ export default function ConfirmStylePage() {
     setSaveError("");
 
     try {
-      const response = await fetch("/api/profile", {
+      const response = await privateFetch("/api/profile", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ styles: selectedStyles }),
+        body: JSON.stringify({ styles: selectedStyles, setupStage: "ready" }),
       });
 
       if (response.ok) {
+        try { localStorage.removeItem(draftKey); } catch { /* Storage may be disabled. */ }
         router.push("/profile/ready");
         return;
       }
@@ -88,15 +105,15 @@ export default function ConfirmStylePage() {
   return (
     <main className="flex-1 bg-selected px-5 py-10 text-text sm:px-8 sm:py-14">
       <div className="mx-auto max-w-2xl">
-        <header className="border-b border-divider pb-7">
-          <Link className="text-sm font-semibold text-secondary hover:underline" href="/wardrobe/confirm">
+        {status === "ready" && <header className="border-b border-divider pb-7">
+          <Link className="text-sm font-semibold text-secondary hover:underline" href="/wardrobe/confirm?from=onboarding">
             <span aria-hidden="true">← </span>Confirm items
           </Link>
           <h1 className="mt-5 text-4xl font-semibold tracking-tight sm:text-5xl">Confirm style</h1>
           <p className="mt-3 max-w-lg leading-relaxed text-supporting">
-            Choose the styles you like to wear regularly. You can update your choices in Settings.
+            Choose the styles to start with for each new outfit. You can adjust them for an occasion or update your defaults in Settings.
           </p>
-        </header>
+        </header>}
 
         {status === "loading" && <p className="py-8" role="status">Loading style preferences…</p>}
         {status === "error" && (

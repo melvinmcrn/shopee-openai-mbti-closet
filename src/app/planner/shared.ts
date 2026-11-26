@@ -1,11 +1,13 @@
+import { privateFetch } from "../private-fetch.mjs";
 import type { CatalogProduct } from "./enhancement";
 
 export type Garment = { id: string; name: string; color: string; category: string; imageRef: string };
 export const occasionLookLabel = "Styled for your occasion";
 type LookKind = "occasion";
 export type Look = { kind?: LookKind; id: string; profileRef?: string; occasion: string; explanation: string; slots: Record<string, string> };
-export type CompletedLook = Look & { imageRef: string; products: CatalogProduct[]; effectiveSlots?: Record<string, string>; useProfilePhoto?: boolean };
-export type Brief = { id?: string; occasion: string; timing: string; location: string; formality: string; comfort: string; preferences: string[] };
+export type PhotoClothes = { profile: string[]; original: string[] };
+export type CompletedLook = Look & { imageRef: string; products: CatalogProduct[]; photoClothes?: PhotoClothes; effectiveSlots?: Record<string, string>; useProfilePhoto?: boolean };
+export type Brief = { id?: string; version?: string; occasion: string; timing: string; location: string; formality: string; comfort: string; preferences: string[]; styles?: string[] };
 export type WearSummary = { id: string; date: string };
 export type SavedLookSummary = { id: string; occasion: string; wear?: WearSummary | null };
 export type SavedLook = SavedLookSummary & { kind?: LookKind; enhancements: CatalogProduct[]; optionId: string; useProfilePhoto: boolean; previewRef: string | null; hasPinnedPreview?: boolean; explanation: string; createdAt: string; slots: Record<string, Garment>; originalSlots: Record<string, Garment> };
@@ -21,7 +23,7 @@ export class PlannerApiError extends Error {
 }
 
 export async function api<T>(action: string, input: object = {}, signal?: AbortSignal): Promise<T> {
-  const response = await fetch("/api/planner", {
+  const response = await privateFetch("/api/planner", {
     method: "POST",
     cache: "no-store",
     signal,
