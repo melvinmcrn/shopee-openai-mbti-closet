@@ -203,22 +203,22 @@ export default function PlannerPage() {
     setReload(count => count + 1);
   }
 
-  const pendingOpen = useRef<string | null>(null);
+  // A saved detail reached from Save or wear feedback is part of that action.
+  // All other visits, including bookmarks and history, count after detail loads.
+  const skipReopen = useRef<string | null>(null);
   useEffect(() => {
-    if (screen !== "saved/" + pendingOpen.current) pendingOpen.current = null;
+    const [view, lookId, wearId] = screen.split("/");
+    if (view === "saved" && wearId) skipReopen.current = lookId;
+    else if (screen !== "saved/" + skipReopen.current) skipReopen.current = null;
   }, [screen]);
   const reportOpened = useCallback((id: string) => {
-    if (pendingOpen.current !== id) return;
-    pendingOpen.current = null;
+    if (skipReopen.current === id || window.location.hash !== "#saved/" + id) return;
+    skipReopen.current = id;
     window.dispatchEvent(new Event("closet:saved-look-reopened"));
   }, []);
 
-  function openSavedLook(id: string) {
-    pendingOpen.current = id;
-    go("saved/" + id);
-  }
   const savedNavigation = {
-    onOpen: openSavedLook,
+    onOpen: (id: string) => go("saved/" + id),
     onWear: (lookId: string, entryId: string) => go("saved/" + lookId + "/" + entryId),
   };
   const [view, routeId, wearId] = screen.split("/");
@@ -243,7 +243,7 @@ export default function PlannerPage() {
     onEdit={() => void step("style")} onChoose={choose} />;
   else if (look) content = <Refine key={look.id} look={look} garments={garments} draftVersion={brief.version}
     onBack={backToCompare} onStale={() => void refreshStaleLook(look)}
-    onSaved={id => { writeForm(accountId, null); setLastSavedId(id); go("saved/" + id); }} />;
+    onSaved={id => { writeForm(accountId, null); setLastSavedId(id); skipReopen.current = id; go("saved/" + id); }} />;
   else if (option) content = <RestoreReview key={option.id} look={option} loadTryOn={loadTryOn} onReady={remember} onBack={backToCompare} />;
   else content = <>{comparisonNotice && <p role="status">{comparisonNotice}</p>}
     <PlannerHome garments={garments} savedNavigation={savedNavigation} occasion={lastSavedId ? undefined : brief.occasion.trim()} onNew={() => void reset(true)}
