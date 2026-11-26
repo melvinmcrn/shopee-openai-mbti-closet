@@ -13,6 +13,8 @@ const productionOrigin = "https://mbti-closet.stonyimpala.chatgpt.site";
 const localOrigin = "http://localhost:3000";
 const authPath = "/api/auth";
 const accountPath = "/api/account";
+const journeyPath = "/api/journey";
+const activities = new Set(["open", "setup", "planner", "reopen", "wear"]);
 const filesPath = "/api/files";
 
 export function authOrigin(env) {
@@ -146,7 +148,7 @@ export async function handleApi(request, env, ctx) {
   const fileRoute = pathname === filesPath || pathname.startsWith(filesPath + "/");
   const wardrobeRoute = pathname.startsWith("/api/wardrobe/") || pathname === "/api/profile" || pathname === "/api/profile/photo";
   if (pathname === "/api/planner") return servePlanner(request, env);
-  if (!authRoute && !fileRoute && !wardrobeRoute && pathname !== accountPath) {
+  if (!authRoute && !fileRoute && !wardrobeRoute && pathname !== accountPath && pathname !== journeyPath) {
     return privateResponse(new Response(null, { status: 404 }));
   }
   if (url.origin !== origin) {
@@ -176,8 +178,19 @@ export async function handleApi(request, env, ctx) {
   if (authRoute) return privateResponse(await auth(request, env));
   try {
     if (pathname === accountPath) return privateResponse(await serveAccount(request, env, ctx));
+    const receivedAt = Math.floor(Date.now() / 1000);
     const account = await resolveAccount(request, env);
     if (!account) return privateResponse(new Response(null, { status: 401 }));
+    if (pathname === journeyPath) {
+      const input = await request.json().catch(() => null);
+      if (!activities.has(input?.activity)) return privateResponse(new Response(null, { status: 400 }));
+      if (input.accountId !== String(account.id)) return privateResponse(new Response(null, { status: 403 }));
+      await env.DB.prepare(`
+        INSERT INTO journey_activity(user_id, observed_s, activity) VALUES (?, ?, ?)
+        ON CONFLICT DO NOTHING
+      `).bind(account.id, receivedAt, input.activity).run();
+      return privateResponse(new Response(null, { status: 204 }));
+    }
     if (wardrobeRoute) return privateResponse(await wardrobeApi(request, env, account.id));
     const fileId = pathname.slice(filesPath.length + 1);
     if (!fileId || fileId.includes("/")) return privateResponse(new Response(null, { status: 404 }));
