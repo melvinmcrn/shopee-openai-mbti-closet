@@ -698,6 +698,47 @@ def check_occasion_look(browser, device, base, session):
     context.close()
 
 
+def check_deferred_photo(browser, device, base):
+    context, page = mobile_session(browser, device, base, "empty-closet")
+    assert context.request.delete(base + "/api/profile/photo", headers={"Origin": base}).ok
+    assert context.request.patch(base + "/api/profile", headers={"Origin": base},
+                                 data={"setupCompletedAt": None}).ok
+    page.goto(base)
+    expect_heading(page, "Add wardrobe photos")
+    assert urlparse(page.url).query == "from=onboarding"
+    page.goto(base + "/profile/details/")
+    expect_heading(page, "Add wardrobe photos")
+    page.goto(base + "/profile/ready/")
+    page.get_by_role("button", name="Open planner").tap()
+    expect_heading(page, "Outfit planner")
+    assert context.request.get(base + "/api/profile").json()["facePhotoUrl"] is None
+    page.get_by_role("button", name="Plan a new outfit").tap()
+    page.get_by_role("textbox", name="Occasion", exact=True).fill("Sunday lunch")
+    page.get_by_role("button", name="Continue").tap()
+    page.get_by_role("button", name="Loose fit").tap()
+    create = page.get_by_role("button", name="Create looks with my profile photo")
+    create.tap()
+    expect_heading(page, "Add your try-on photo")
+    expect(page.get_by_text(re.compile("OpenAI uses"))).to_be_visible()
+    page.get_by_role("button", name="Not now").tap()
+    expect_heading(page, "Today’s style")
+    expect(page.get_by_role("button", name="Loose fit")).to_have_attribute("aria-pressed", "true")
+    assert context.request.get(base + "/api/profile").json()["facePhotoUrl"] is None
+    create.tap()
+    picture = page.get_by_label("Choose a photo")
+    picture.set_input_files({"name": "broken.jpg", "mimeType": "image/jpeg", "buffer": b"invalid"})
+    page.get_by_role("button", name="Save photo and create looks").tap()
+    expect(page.get_by_role("main").get_by_role("alert")).to_contain_text("could not be read")
+    assert context.request.get(base + "/api/profile").json()["facePhotoUrl"] is None
+    picture.set_input_files(Path(__file__).resolve().parents[1] / "public/google-sign-in.png")
+    page.get_by_role("button", name="Save photo and create looks").tap()
+    expect_heading(page, "Compare looks")
+    assert context.request.get(base + "/api/profile").json()["facePhotoUrl"]
+    page.goto(base)
+    expect_heading(page, "Outfit planner")
+    context.close()
+
+
 def main():
     root = Path(__file__).resolve().parent.parent
     output = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root / "out"
@@ -726,6 +767,7 @@ def main():
                     check_automatic_cutout_retry(browser, device, base)
                     check_occasion_look(browser, device, base, "returning-session")
                     check_occasion_look(browser, device, base, "empty-closet")
+                    check_deferred_photo(browser, device, base)
                 finally:
                     browser.close()
         finally:
