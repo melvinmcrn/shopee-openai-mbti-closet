@@ -117,6 +117,9 @@ def check_shared_navigation(browser, device, base):
     expect_navigation(page, "Profile")
     assert initial_header.evaluate("node => node.isConnected"), "Navigating replaced the header"
     assert initial_footer.evaluate("node => node.isConnected"), "Navigating replaced the footer"
+    page.goto(f"{base}/missing-app-route?q=2#saved")
+    expect(page.get_by_role("heading", name="404", exact=True)).to_be_visible()
+    assert page.url == f"{base}/missing-app-route?q=2#saved"
     context.close()
 
     # The static document paints before JavaScript can confirm an account.
@@ -134,9 +137,15 @@ def check_shared_navigation(browser, device, base):
     expect(page.get_by_role("contentinfo")).to_have_count(0)
     expect(page.get_by_role("link", name="Closet home")).to_have_attribute("href", "/")
 
+    for resource in ("/auth/missing", "/missing-image.svg"):
+        page.goto(base + resource)
+        expect(page.get_by_role("heading", name="404", exact=True)).to_be_visible()
+        assert page.url == base + resource
+
     for destination in (
         "/account", "/closet", "/profile/details", "/profile/style", "/profile/ready",
-        "/profile/settings", "/wardrobe/add", "/wardrobe/confirm?batch=3%2C5", "/planner#saved",
+        "/profile/settings", "/wardrobe/add", "/wardrobe/confirm?batch=3%2C5",
+        "/missing-app-route?q=2#saved", "/planner#saved",
     ):
         page.goto(base + destination)
         expect(page.get_by_role("button", name="Sign in to get started")).to_be_visible()
@@ -162,6 +171,36 @@ def check_shared_navigation(browser, device, base):
     expect(page.get_by_role("button", name="Sign in to get started")).to_be_visible()
     expect(page.get_by_role("contentinfo")).to_have_count(0)
     context.close()
+
+
+def check_session_invalidation(browser, device, base):
+    for reason in ("expiry", "signout"):
+        context, page = mobile_session(browser, device, base, "returning-session")
+        page.clock.install()
+        expired = page.evaluate("new Date(Date.now() + 60000).toISOString()")
+        def shorten_session(route):
+            body = route.fetch().json()
+            body["expires"] = expired
+            route.fulfill(json=body)
+        page.route("**/api/account", shorten_session, times=1)
+        page.goto(f"{base}/account")
+        expect(page.get_by_label("Height (cm)")).to_be_visible()
+        context.clear_cookies()
+        # Keep the next account check pending and inspect the UI before it resolves.
+        pending = []
+        page.route("**/api/account", lambda route: pending.append(route), times=1)
+        with page.expect_request(lambda req: req.url.endswith("/api/account")):
+            if reason == "expiry":
+                page.clock.fast_forward(61000)
+            else:
+                other_tab = context.new_page()
+                other_tab.goto(f"{base}/offline.html")
+                other_tab.evaluate("localStorage.setItem('closet:session-ended', String(Date.now()))")
+        expect(page.get_by_label("Height (cm)")).to_have_count(0)
+        expect(page.get_by_role("contentinfo")).to_have_count(0)
+        pending[0].fulfill(body="null", content_type="application/json")
+        expect(page.get_by_role("button", name="Sign in to get started")).to_be_visible()
+        context.close()
 
 
 def compare_photo(page, choice):
@@ -659,6 +698,48 @@ def check_failed_photo_removal(browser, device, base):
     context.close()
 
 
+def check_wardrobe_session_expiry(browser, device, base):
+    context, page = mobile_session(browser, device, base, "other-account")
+    photo = Path(__file__).resolve().parents[1] / "public/sample-wardrobe/studio-model.webp"
+    def require_signin():
+        expect(page.get_by_role("button", name="Sign in to get started")).to_be_visible()
+        expect(page.get_by_role("contentinfo")).to_have_count(0)
+
+    def restore_session():
+        context.add_cookies([{"name": "planner-fixture", "value": "other-account", "url": base}])
+
+    def saved_manual_upload(route):
+        draft = route.fetch().json()["items"][0]
+        draft["extraction"] = {"status": "manual", "code": "extraction_failed", "nextAction": "manual_review"}
+        route.fulfill(json={"items": [draft]})
+
+    page.goto(f"{base}/wardrobe/add?from=closet")
+    page.route("**/api/wardrobe/upload", saved_manual_upload, times=1)
+    page.get_by_label("Choose photos").set_input_files(photo)
+    page.get_by_role("button", name="Upload photos").tap()
+    expect(page.get_by_text("Ready for manual review", exact=True)).to_be_visible()
+    context.clear_cookies()
+    page.get_by_role("button", name=f"Remove {photo.name}").tap()
+    require_signin()
+
+    restore_session()
+    page.goto(f"{base}/wardrobe/confirm?from=closet")
+    discard = page.get_by_role("button", name="Discard item").first
+    expect(discard).to_be_visible()
+    context.clear_cookies()
+    discard.tap()
+    require_signin()
+
+    restore_session()
+    def expire_setup_lookup(route):
+        context.clear_cookies()
+        route.fulfill(status=401)
+    page.route("**/api/profile", expire_setup_lookup, times=1)
+    page.goto(f"{base}/wardrobe/add")
+    require_signin()
+    context.close()
+
+
 def refresh_stale_choice(page, context, base, image_url, other_image, choice):
     evict_photo(context, base, image_url)
     requests = []
@@ -846,6 +927,7 @@ def main():
                 try:
                     device = playwright.devices["iPhone 13"]
                     check_shared_navigation(browser, device, base)
+                    check_session_invalidation(browser, device, base)
                     run_flow(browser, device, base)
                     check_two_catalog_basics(browser, device, base, "other-account")
                     check_two_catalog_basics(browser, device, base, "profile-only")
@@ -855,6 +937,7 @@ def main():
                     check_failed_photo_removal(browser, device, base)
                     check_occasion_look(browser, device, base, "returning-session")
                     check_occasion_look(browser, device, base, "empty-closet")
+                    check_wardrobe_session_expiry(browser, device, base)
                     check_wardrobe_return(browser, device, base)
                 finally:
                     browser.close()

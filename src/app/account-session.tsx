@@ -21,7 +21,7 @@ export function useAccountSession() {
 export function AccountSession({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const segment = useSelectedLayoutSegment();
-  const protectedPage = segment !== null && segment !== "_not-found";
+  const protectedPage = segment !== null;
   const [snapshot, setSnapshot] = useState<{ pathname: string; session: Session } | null>(null);
   const [attempt, setAttempt] = useState(0);
   // Layouts persist across Next navigations. Withhold each page until its check succeeds.
@@ -34,16 +34,17 @@ export function AccountSession({ children }: { children: ReactNode }) {
     function signedOut() {
       request?.abort();
       window.clearTimeout(timer);
-      setSnapshot({ pathname, session: { status: "signed-out", user: null } });
-      if (protectedPage) {
-        const destination = returnDestination(window.location.href, window.location.origin);
-        window.location.replace(destination ? "/?" + new URLSearchParams({ returnTo: destination }) : "/");
+      const destination = returnDestination(window.location.href, window.location.origin);
+      if (destination) {
+        setSnapshot(null);
+        window.location.replace("/?" + new URLSearchParams({ returnTo: destination }));
+      } else {
+        setSnapshot({ pathname, session: { status: "signed-out", user: null } });
       }
     }
 
     async function verify() {
       request?.abort();
-      window.clearTimeout(timer);
       request = new AbortController();
       const { signal } = request;
       try {
@@ -54,9 +55,14 @@ export function AccountSession({ children }: { children: ReactNode }) {
         const data = await response.json();
         if (signal.aborted) return;
         if (!data?.user) return signedOut();
-        setSnapshot({ pathname, session: { status: "signed-in", user: data.user } });
         const expiresIn = Date.parse(data.expires) - Date.now();
-        if (Number.isFinite(expiresIn)) timer = window.setTimeout(verify, Math.max(1000, expiresIn));
+        if (expiresIn <= 0) return signedOut();
+        setSnapshot({ pathname, session: { status: "signed-in", user: data.user } });
+        window.clearTimeout(timer);
+        if (Number.isFinite(expiresIn)) timer = window.setTimeout(() => {
+          setSnapshot(null);
+          void verify();
+        }, expiresIn);
       } catch {
         if (!signal.aborted) setSnapshot({ pathname, session: { status: "unavailable", user: null } });
       }
@@ -76,7 +82,7 @@ export function AccountSession({ children }: { children: ReactNode }) {
       if (event.persisted) void verify();
     }
     function onStorage(event: StorageEvent) {
-      if (event.key === sessionEnded) void verify();
+      if (event.key === sessionEnded && event.newValue) signedOut();
     }
 
     void verify();
@@ -96,13 +102,14 @@ export function AccountSession({ children }: { children: ReactNode }) {
       window.removeEventListener("storage", onStorage);
       window.removeEventListener(sessionEnded, signedOut);
     };
-  }, [pathname, protectedPage, attempt]);
+  }, [pathname, attempt]);
 
   const checkedUser = snapshot?.session.user;
+  const publicNotFound = segment === "_not-found" && session.status === "signed-out";
   return (
     <AccountContext.Provider value={session}>
       <AppHeader signedIn={Boolean(checkedUser)} />
-      {!protectedPage || session.user ? <Fragment key={session.user?.id}>{children}</Fragment> : (
+      {!protectedPage || publicNotFound || session.user ? <Fragment key={session.user?.id}>{children}</Fragment> : (
         <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col items-start gap-3 px-5 py-7">
           {session.status === "unavailable" ? <>
             <p role="status">We couldn’t check your sign-in.</p>
