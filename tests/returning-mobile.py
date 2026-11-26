@@ -774,6 +774,43 @@ def check_outfit_upload(browser, device, base):
     context.close()
 
 
+def check_stale_draft_reviews(browser, device, base):
+    context, batch = mobile_session(browser, device, base, "other-account")
+    batch.goto(f"{base}/wardrobe/add/?from=closet")
+    photo = Path(__file__).resolve().parents[1] / "public/sample-wardrobe/studio-model.webp"
+    batch.get_by_label("Choose photos").set_input_files(photo)
+    batch.get_by_role("button", name="Upload photos").tap()
+    batch.get_by_role("link", name="Review 3 items").tap()
+    expect(batch.get_by_role("article")).to_have_count(3)
+    first, second, third = map(int, parse_qs(urlparse(batch.url).query)["batch"][0].split(","))
+
+    single = context.new_page()
+    def open_item(item_id):
+        single.goto(f"{base}/wardrobe/confirm/?from=closet&item={item_id}")
+    open_item(999999)
+    expect(single.get_by_text("No items to review", exact=True)).to_be_visible()
+    open_item(first)
+    expect(single.get_by_role("article")).to_have_count(1)
+    single.get_by_role("button", name="Save 1 selected item and continue").tap()
+    expect_heading(single, "Closet")
+    def patch(item_id, data):
+        return context.request.patch(f"{base}/api/wardrobe/items/{item_id}", headers={"Origin": base}, data=data)
+    assert patch(first, {"name": "Updated in Closet"}).ok
+    assert patch(second, {"discard": True}).ok
+    open_item(first)
+    expect(single.get_by_text("No items to review", exact=True)).to_be_visible()
+
+    # The original tab still shows all three. Keep the newer name, skip the
+    # discarded draft, and finish saving the one that remains pending.
+    batch.get_by_role("button", name="Save 3 selected items and continue").tap()
+    expect_heading(batch, "Closet")
+    active = {row["id"]: row for row in context.request.get(f"{base}/api/wardrobe/items").json()["items"]}
+    assert active[first]["name"] == "Updated in Closet"
+    assert second not in active
+    assert third in active
+    context.close()
+
+
 def check_wardrobe_return(browser, device, base):
     context, page = mobile_session(browser, device, base, "profile-only")
     page.goto(f"{base}/wardrobe/add/?from=onboarding")
@@ -1155,6 +1192,8 @@ def check_deferred_photo(browser, device, base):
     page.get_by_role("button", name="Continue").tap()
     page.get_by_role("button", name="Loose fit").tap()
     create = page.get_by_role("button", name="Create looks with my profile photo")
+    disclosure = re.compile(r"send your saved profile photo to OpenAI.*ask for one first")
+    expect(create).to_have_accessible_description(disclosure)
     create.tap()
     expect_heading(page, "Add your try-on photo")
     expect(page.get_by_text(re.compile("OpenAI uses"))).to_be_visible()
@@ -1174,6 +1213,12 @@ def check_deferred_photo(browser, device, base):
     assert context.request.get(base + "/api/profile").json()["facePhotoUrl"]
     page.goto(base)
     expect_heading(page, "Outfit planner")
+    page.get_by_role("button", name="Plan a new outfit").tap()
+    page.get_by_role("textbox", name="Occasion", exact=True).fill("Another lunch")
+    page.get_by_role("button", name="Continue").tap()
+    expect(create).to_have_accessible_description(disclosure)
+    create.tap()
+    expect_heading(page, "Compare looks")
     context.close()
 
 
@@ -1313,6 +1358,7 @@ def main():
                     check_journey_recovery(browser, device, base)
                     check_setup_recovery(browser, device, base)
                     check_saved_shortcuts(browser, device, base)
+                    check_stale_draft_reviews(browser, device, base)
                 finally:
                     browser.close()
         finally:
