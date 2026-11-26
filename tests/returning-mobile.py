@@ -210,7 +210,7 @@ def compare_photo(page, choice):
 
 
 def expect_photo_overview(page):
-    expect(page.get_by_role("group", name="Selected wardrobe photos")).to_have_count(0)
+    expect(page.get_by_role("article").first).to_be_visible()
     expect(page.get_by_role("link", name=re.compile("Buy on Shopee"))).to_have_count(0)
     expect(page.get_by_text("Elevate your look", exact=True)).to_have_count(0)
 
@@ -291,6 +291,8 @@ def run_flow(browser, device, base):
     expect_photo_overview(page)
     choices = page.get_by_role("button", name=re.compile("^Choose "))
     expect(choices).to_have_count(0)
+    first_card = page.get_by_role("article").filter(has=page.get_by_role("heading", name="Look 1", exact=True))
+    expect(first_card.get_by_role("img", name="Silk blouse")).to_be_visible()
 
     stalled = []
     def stall_preview(route):
@@ -306,6 +308,8 @@ def run_flow(browser, device, base):
         retry.tap()
     expect(page.get_by_role("status")).to_contain_text("Creating")
     expect(choices).to_have_count(0)
+    expect(first_card.get_by_text("3 owned pieces · 1 Shopee item", exact=True)).to_be_visible()
+    expect(first_card.get_by_text(re.compile(r"THB|฿"))).to_be_visible()
     page.clock.fast_forward(5 * 60 * 1000)
     expect(page.get_by_text(re.compile("took too long", re.I))).to_be_visible()
     expect(retry).to_be_visible()
@@ -440,6 +444,65 @@ def run_flow(browser, device, base):
     context.close()
 
 
+def check_comparison_pieces(browser, device, base, capture=None):
+    context, page = mobile_session(browser, device, base, "first-session")
+    stalled = []
+    requests = []
+    fail_photos = True
+
+    def hold_photos(route):
+        payload = route.request.post_data_json
+        requests.append((payload["action"], payload["input"].get("optionId")))
+        if payload["action"] != "preview":
+            route.continue_()
+        elif fail_photos:
+            route.fulfill(json={"imageRef": None})
+        else:
+            stalled.append(route)
+
+    page.route("**/api/planner", hold_photos)
+    page.goto(f"{base}/planner/")
+    page.get_by_role("button", name="Plan a new outfit").tap()
+    page.get_by_role("textbox", name="Occasion", exact=True).fill("Dinner with friends")
+    page.get_by_role("button", name="Continue").tap()
+    page.get_by_role("button", name="Create looks with my profile photo").tap()
+    expect_heading(page, "Compare looks")
+    regular, dress = [page.get_by_role("article").filter(
+        has=page.get_by_role("heading", name=f"Look {n}", exact=True)) for n in (1, 2)]
+    expect(regular.get_by_role("img", name="Silk blouse")).to_be_visible()
+    expect(dress.get_by_text("All from your closet", exact=True)).to_be_visible()
+    expect(dress.get_by_role("img", name="Column dress")).to_be_visible()
+    choices = page.get_by_role("button", name=re.compile("^Choose "))
+    expect(choices).to_have_count(0)
+    retry = page.get_by_role("button", name="Retry photos", exact=True)
+    expect(retry).to_be_visible()
+    expect(dress.get_by_text("Try-on photo unavailable", exact=True)).to_be_visible()
+    fail_photos = False
+    retry.tap()
+    expect(regular.get_by_text("3 owned pieces · 1 Shopee item", exact=True)).to_be_visible()
+    expect(regular.get_by_text(re.compile(r"Shopee price · (THB|฿)"))).to_be_visible()
+    expect(dress.get_by_text("All from your closet", exact=True)).to_be_visible()
+    expect(regular.get_by_role("img", name="Walking flats")).to_be_visible()
+    expect(choices).to_have_count(0)
+    if capture:
+        capture(page)
+    for route in stalled:
+        has_top = "top" in route.request.post_data_json["input"]["slots"]
+        route.fulfill(json={"imageRef": "blouse" if has_top else None})
+    choose = regular.get_by_role("button", name="Choose look 1")
+    expect(choose).to_be_enabled()
+    expect(dress.get_by_text("Try-on photo unavailable", exact=True)).to_be_visible()
+    expect(choices).to_have_count(1)
+    before = list(requests)
+    choose.tap()
+    expect_heading(page, "Review your outfit")
+    expect(page.get_by_role("button", name="Save outfit")).to_be_visible()
+    page.get_by_role("button", name="Back to compare looks").tap()
+    expect(choose).to_be_enabled()
+    assert requests == before, "Reopening these comparison cards requested their selections or photos again"
+    context.close()
+
+
 def check_two_catalog_basics(browser, device, base, session):
     context, page = mobile_session(browser, device, base, session)
     product_photo = Path(__file__).resolve().parents[1] / "Shopee Database/clothes_image_database/b6326a099e743eebc194.jpg"
@@ -452,6 +515,9 @@ def check_two_catalog_basics(browser, device, base, session):
     page.get_by_role("button", name="Create looks with my profile photo").tap()
     expect_heading(page, "Compare looks")
     expect_photo_overview(page)
+    card = page.get_by_role("article").filter(has=page.get_by_role("button", name="Choose look 1"))
+    summary = "1 owned piece · 3 Shopee items" if session == "other-account" else "3 Shopee items"
+    expect(card.get_by_text(summary, exact=True)).to_be_visible()
     initial = choose_photo(page, "Choose look 1")
     if session == "other-account":
         expect(page.get_by_role("img", name="Private scarf")).to_be_visible()
@@ -1029,6 +1095,7 @@ def main():
                     check_wardrobe_deletion(browser, device, base)
                     check_outfit_upload(browser, device, base)
                     check_automatic_cutout_retry(browser, device, base)
+                    check_comparison_pieces(browser, device, base)
                     check_failed_photo_removal(browser, device, base)
                     check_occasion_look(browser, device, base, "returning-session")
                     check_occasion_look(browser, device, base, "empty-closet")
