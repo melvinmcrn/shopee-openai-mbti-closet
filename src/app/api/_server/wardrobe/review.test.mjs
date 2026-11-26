@@ -37,7 +37,15 @@ test("AI draft details are editable before explicit confirmation and private to 
     assert.equal((await patch({ name: "Indigo tee", category: "top", color: "Indigo", confirm: true })).status, 200);
     assert.deepEqual((await (await list("draft")).json()).items, []);
     assert.equal((await (await list("active")).json()).items[0].garmentType, "Cotton tee");
-    assert.equal((await (await patch({ garmentType: null })).json()).item.garmentType, null);
+    const latest = (await (await patch({ name: "Renamed in Closet", garmentType: null })).json()).item;
+    assert.equal(latest.garmentType, null);
+    const stale = { name: "Old draft name", color: "Red", category: "dress", confirm: true };
+    assert.equal((await patch(stale)).status, 404);
+    assert.equal((await patch(stale, 9)).status, 404);
+    assert.deepEqual((await (await list("active")).json()).items, [latest]);
+    assert.equal((await patch({ archive: true })).status, 204);
+    assert.equal((await patch(stale)).status, 404);
+    assert.deepEqual((await (await list("active")).json()).items, []);
   } finally {
     db.close();
   }
