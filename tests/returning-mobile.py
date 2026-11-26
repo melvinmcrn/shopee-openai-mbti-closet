@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 import subprocess
 import sys
-from urllib.parse import unquote, urljoin, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -119,11 +119,48 @@ def check_shared_navigation(browser, device, base):
     assert initial_footer.evaluate("node => node.isConnected"), "Navigating replaced the footer"
     context.close()
 
+    # The static document paints before JavaScript can confirm an account.
+    context = browser.new_context(**device, java_script_enabled=False)
+    page = context.new_page()
+    page.goto(f"{base}/account")
+    expect(page.get_by_role("heading", name="Account", exact=True)).to_have_count(0)
+    expect(page.get_by_role("contentinfo")).to_have_count(0)
+    context.close()
+
     context = browser.new_context(**device)
     page = context.new_page()
     page.goto(base)
     expect(page.get_by_role("button", name="Sign in to get started")).to_be_visible()
-    expect_navigation(page)
+    expect(page.get_by_role("contentinfo")).to_have_count(0)
+    expect(page.get_by_role("link", name="Closet home")).to_have_attribute("href", "/")
+
+    for destination in (
+        "/account", "/closet", "/profile/details", "/profile/style", "/profile/ready",
+        "/profile/settings", "/wardrobe/add", "/wardrobe/confirm?batch=3%2C5", "/planner#saved",
+    ):
+        page.goto(base + destination)
+        expect(page.get_by_role("button", name="Sign in to get started")).to_be_visible()
+        login = urlparse(page.url)
+        assert login.path == "/" and parse_qs(login.query)["returnTo"] == [destination]
+        expect(page.locator('input[name="callbackUrl"]')).to_have_value(destination)
+        expect(page.get_by_role("contentinfo")).to_have_count(0)
+
+    context.add_cookies([{"name": "planner-fixture", "value": "returning-session", "url": base}])
+    page.reload()
+    expect_heading(page, "Saved looks")
+    expect_navigation(page, "Saved")
+
+    page.get_by_role("link", name="Profile", exact=True).tap()
+    height = page.get_by_label("Height (cm)")
+    height.fill("179.5")
+    context.clear_cookies()
+    page.get_by_role("button", name="Save preferences").tap()
+    expect(page.get_by_role("button", name="Sign in to get started")).to_be_visible()
+    assert parse_qs(urlparse(page.url).query)["returnTo"] == ["/account"]
+    expect(page.get_by_role("contentinfo")).to_have_count(0)
+    page.go_back()
+    expect(page.get_by_role("button", name="Sign in to get started")).to_be_visible()
+    expect(page.get_by_role("contentinfo")).to_have_count(0)
     context.close()
 
 
@@ -494,6 +531,39 @@ def check_outfit_upload(browser, device, base):
     context.close()
 
 
+def check_wardrobe_return(browser, device, base):
+    context, page = mobile_session(browser, device, base, "profile-only")
+    page.goto(f"{base}/wardrobe/confirm/?from=onboarding")
+    page.get_by_role("link", name="Continue to style profile").tap()
+    expect_heading(page, "Confirm style")
+    page.get_by_role("checkbox", name="Classic").check()
+    page.get_by_role("button", name="Save and continue").tap()
+    page.get_by_role("button", name="Open planner").tap()
+    expect_heading(page, "Outfit planner")
+
+    page.get_by_role("link", name="Add new clothes to wardrobe").tap()
+    page.get_by_role("link", name="Review saved drafts").tap()
+    page.get_by_role("link", name="Return to planner").tap()
+    expect_heading(page, "Outfit planner")
+    page.get_by_role("navigation", name="Main navigation").get_by_role("link", name="Wardrobe").tap()
+    page.get_by_role("link", name="Add items").tap()
+    page.get_by_role("link", name="Review saved drafts").tap()
+    page.get_by_role("link", name="Return to closet").tap()
+    expect_heading(page, "Closet")
+
+    page.goto(f"{base}/wardrobe/confirm/?from=onboarding")
+    expect(page.get_by_role("link", name="Return to closet")).to_be_visible()
+    page.goto(f"{base}/profile/style/")
+    expect_heading(page, "Account")
+    expect(page.get_by_role("checkbox", name="Classic")).to_be_checked()
+    page.get_by_role("checkbox", name="Classic").uncheck()
+    page.get_by_role("button", name="Save preferences").tap()
+    expect(page.get_by_text("Preferences saved.")).to_be_visible()
+    page.reload()
+    expect(page.get_by_role("checkbox", name="Classic")).not_to_be_checked()
+    context.close()
+
+
 def check_automatic_cutout_retry(browser, device, base):
     photo = Path(__file__).resolve().parents[1] / "public/sample-wardrobe/studio-model.webp"
     for action, succeeds in [("extract_primary", True), ("extract_primary", False), ("manual_review", False)]:
@@ -529,6 +599,64 @@ def check_automatic_cutout_retry(browser, device, base):
         expect(page.get_by_role("button", name="Retry failed photos")).to_have_count(0)
         assert requests == (["upload", "primary"] if action == "extract_primary" else ["upload"])
         context.close()
+
+
+def check_failed_photo_removal(browser, device, base):
+    context, page = mobile_session(browser, device, base, "other-account")
+    photo = Path(__file__).resolve().parents[1] / "public/sample-wardrobe/studio-model.webp"
+    def draft_ids():
+        response = context.request.get(f"{base}/api/wardrobe/items?status=draft")
+        assert response.ok
+        return {item["id"] for item in response.json()["items"]}
+
+    original_ids = draft_ids()
+    page.goto(f"{base}/wardrobe/add/")
+    page.get_by_label("Choose photos").set_input_files(photo)
+    page.get_by_role("button", name="Upload photos").tap()
+    review = page.get_by_role("link", name="Review 3 items")
+    expect(review).to_be_visible()
+    retained_ids = draft_ids()
+    assert len(retained_ids - original_ids) == 3
+
+    def manual_upload(route):
+        draft = route.fetch().json()["items"][0]
+        draft["extraction"] = {"status": "manual", "code": "extraction_failed", "nextAction": "manual_review"}
+        route.fulfill(json={"items": [draft]})
+
+    page.route("**/api/wardrobe/upload", manual_upload, times=1)
+    page.get_by_label("Choose more photos").set_input_files(photo)
+    page.get_by_role("button", name="Upload photos").tap()
+    remove = page.get_by_role("button", name=f"Remove {photo.name}")
+    expect(page.get_by_text("Ready for manual review", exact=True)).to_be_visible()
+    failed_names = ["first.webp", "second.webp"]
+    page.get_by_label("Choose more photos").set_input_files([
+        {"name": name, "mimeType": "image/webp", "buffer": photo.read_bytes()} for name in failed_names
+    ])
+    page.route("**/api/wardrobe/upload", lambda route: route.fulfill(status=413), times=1)
+    page.get_by_role("button", name="Upload photos").tap()
+    batch_error = page.get_by_role("alert").filter(has_text="The batch is too large to send")
+    expect(batch_error).to_be_visible()
+    page.route("**/api/wardrobe/upload?draftKey=*", lambda route: route.fulfill(status=503), times=1)
+    remove.tap()
+    expect(page.get_by_role("alert").filter(has_text="Couldn’t confirm removal")).to_be_visible()
+    remove.tap()
+    expect(remove).to_have_count(0)
+    expect(batch_error).to_be_visible()
+    page.get_by_role("button", name="Remove first.webp").tap()
+    expect(batch_error).to_be_visible()
+    page.get_by_role("button", name="Remove second.webp").tap()
+    expect(batch_error).to_have_count(0)
+    expect(review).to_be_visible()
+    assert draft_ids() == retained_ids
+
+    review.tap()
+    expect(page.get_by_text("3 items to review")).to_be_visible()
+    page.locator("form").first.get_by_role("button", name="Discard item").tap()
+    expect(page.get_by_text("2 items to review")).to_be_visible()
+    page.reload()
+    expect(page.get_by_text("2 items to review")).to_be_visible()
+    assert len(retained_ids - draft_ids()) == 1
+    context.close()
 
 
 def refresh_stale_choice(page, context, base, image_url, other_image, choice):
@@ -765,9 +893,11 @@ def main():
                     check_wardrobe_deletion(browser, device, base)
                     check_outfit_upload(browser, device, base)
                     check_automatic_cutout_retry(browser, device, base)
+                    check_failed_photo_removal(browser, device, base)
                     check_occasion_look(browser, device, base, "returning-session")
                     check_occasion_look(browser, device, base, "empty-closet")
                     check_deferred_photo(browser, device, base)
+                    check_wardrobe_return(browser, device, base)
                 finally:
                     browser.close()
         finally:

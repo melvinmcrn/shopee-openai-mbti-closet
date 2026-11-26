@@ -1,3 +1,4 @@
+import { privateFetch } from "../private-fetch.mjs";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { normalizeProfilePhoto, profilePhotoAccept, profilePhotoRequirements } from "../wardrobe/add/normalize-upload.mjs";
 import { api, type Brief } from "./shared";
@@ -50,7 +51,7 @@ export function Style({ brief, onNext, onBack }: StyleProps) {
         const file = await normalizeProfilePhoto(photo);
         const body = new FormData();
         body.set("image", file, "profile-photo.jpg");
-        const response = await fetch("/api/profile/photo", { method: "PUT", body });
+        const response = await privateFetch("/api/profile/photo", { method: "PUT", body });
         if (!response.ok) {
           const problem = await response.json().catch(() => ({}));
           throw new Error(problem.error || "Your photo could not be saved. Try again.");

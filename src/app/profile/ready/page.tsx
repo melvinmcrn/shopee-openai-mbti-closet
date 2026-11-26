@@ -1,5 +1,6 @@
 "use client";
 
+import { privateFetch } from "../../private-fetch.mjs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -82,7 +83,7 @@ function SetupSummary({ profile, items }: Setup) {
         ) : (
           <p className="mt-2 text-sm text-supporting">No styles selected</p>
         )}
-        <Link href="/profile/style" className={`mt-2 ${linkClass}`}>Edit style preferences</Link>
+        <Link href={profile.setupCompletedAt ? "/profile/settings" : "/profile/style"} className={`mt-2 ${linkClass}`}>Edit style preferences</Link>
       </section>
     </div>
   );
@@ -101,8 +102,8 @@ export default function ProfileReadyPage() {
       try {
         const options = { signal: controller.signal, cache: "no-store" as const };
         const [profileResponse, wardrobeResponse] = await Promise.all([
-          fetch("/api/profile", options),
-          fetch("/api/wardrobe/items", options),
+          privateFetch("/api/profile", options),
+          privateFetch("/api/wardrobe/items", options),
         ]);
         if (!profileResponse.ok || !wardrobeResponse.ok) {
           throw new Error("Unable to load setup");
@@ -128,7 +129,7 @@ export default function ProfileReadyPage() {
     setFinishing(true);
     setFinishError(false);
     try {
-      const response = await fetch("/api/profile", {
+      const response = await privateFetch("/api/profile", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ complete: true }),

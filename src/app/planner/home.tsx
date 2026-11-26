@@ -42,7 +42,7 @@ export function PlannerHome({ garments, onNew }: PlannerHomeProps) {
             Plan a new outfit
           </button>
           <Link
-            href="/wardrobe/add"
+            href="/wardrobe/add?from=planner"
             className="inline-flex min-h-12 items-center justify-center rounded-full border border-canvas/60 px-6 text-center font-semibold text-canvas transition-colors hover:bg-canvas/10 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-canvas"
           >
             Add new clothes to wardrobe
