@@ -266,13 +266,9 @@ test("the saved-look identity migration preserves existing IDs and rolls back wi
   assert.equal(next(), 65);
 });
 
-function previewReply(url, options) {
-  if (url.endsWith("/images/edits")) return Response.json({ data: [{ b64_json: "/9j/4A==" }] });
-  const { input } = JSON.parse(options.body);
-  const visible_items = input[0].content.filter(part => part.type === "input_text" && part.text.startsWith("{"))
-    .map(part => JSON.parse(part.text).reference);
-  return Response.json({ status: "completed", output: [{ type: "message", role: "assistant", status: "completed",
-    content: [{ type: "output_text", text: JSON.stringify({ full_body_try_on: true, visible_items }) }] }] });
+function previewReply(url) {
+  assert.equal(url, "https://api.openai.com/v1/images/edits");
+  return Response.json({ data: [{ b64_json: "/9j/4A==" }] });
 }
 
 test("preview sends the owned profile first and uses the final shoe", async (t) => {
@@ -298,7 +294,7 @@ test("preview sends the owned profile first and uses the final shoe", async (t) 
 
   const refs = preview.readImage.mock.calls.map(({ arguments: [reference] }) => reference);
   assert.deepEqual(refs, [profileRef, dress.imageRef, flats.imageRef]);
-  assert.equal(preview.fetch.mock.callCount(), 2);
+  assert.equal(preview.fetch.mock.callCount(), 1);
   const [endpoint, request] = preview.fetch.mock.calls[0].arguments;
   assert.equal(endpoint, "https://api.openai.com/v1/images/edits");
   assert.equal(request.body.get("output_format"), "jpeg");
@@ -310,7 +306,7 @@ test("preview sends the owned profile first and uses the final shoe", async (t) 
   assert.deepEqual(Buffer.from(await stored.arrayBuffer()), jpeg);
 });
 
-test("a profile photo and a jacket alone cannot supply a complete outfit", async t => {
+test("a profile photo and a jacket can generate an incomplete outfit preview", async t => {
   const jacket = { id: "13", category: "outerwear", name: "Denim jacket", imageRef: "jacket.png" };
   const preview = {
     profilePhotoRef: async () => "headshot.png",
@@ -323,8 +319,10 @@ test("a profile photo and a jacket alone cannot supply a complete outfit", async
   database.prepare(`INSERT INTO wardrobe_items (id, user_id, name, category, image_file_id, confirmed_at)
     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`).run(jacket.id, accountId, jacket.name, jacket.category, jacket.imageRef);
   const result = await dispatch("preview", { optionId, slots: { outerwear: jacket.id }, useProfilePhoto: true });
-  assert.equal(result.imageRef, null);
-  assert.equal(preview.fetch.mock.callCount(), 0);
+  assert.deepEqual(result, { imageRef: "full-body.jpg", useProfilePhoto: true });
+  assert.equal(preview.fetch.mock.callCount(), 1);
+  const { body } = preview.fetch.mock.calls[0].arguments[1];
+  assert.match(body.get("prompt"), /fill missing clothing with simple neutral basics/);
 });
 
 test("saved looks only expose a current portrait-keyed and outfit-matching cache", async t => {
