@@ -56,6 +56,15 @@ function clothingSlot(product) {
   return "accessory";
 }
 
+export function retainedPhotoClothes(garments, products, base) {
+  const taken = Object.fromEntries([...garments.map(item => item.category), ...products.map(clothingSlot)].map(slot => [slot, true]));
+  const worn = coverage => Object.entries(retainedBaseCategories(coverage, taken) ?? {})
+    .filter(([, visible]) => visible).map(([category]) => category);
+  const original = garments.some(item => item.category === "other") ? worn(base.original) : [];
+  for (const slot of original) taken[slot] = true;
+  return { original, profile: worn(base.profile) };
+}
+
 export class ProfilePhotoError extends Error {
   constructor(code, message) {
     super(message);
@@ -88,21 +97,10 @@ export async function generatePreview(env, finalGarments, deps, products = [], b
   };
   const original = finalGarments.find(item => item.category === "other");
   const garments = finalGarments.filter(item => item.category !== "other");
-  const selected = new Set([...garments.map(item => item.category), ...products.map(clothingSlot)]);
-  const retained = new Set();
-  const sources = [];
-  function sourcePhoto(label, ref, visible) {
-    const taken = Object.fromEntries([...selected, ...retained].map(slot => [slot, true]));
-    const keep = Object.entries(retainedBaseCategories(visible, taken) ?? {})
-      .filter(([, worn]) => worn).map(([slot]) => slot);
-    for (const slot of keep) retained.add(slot);
-    return {
-      label: keep.length ? label + ". Keep the worn " + keep.join(", ") : label,
-      read: () => deps.readImage(ref),
-    };
-  }
-  if (original) sources.push(sourcePhoto("Original outfit photo", original.imageRef, base.original));
-  sources.unshift({ ...sourcePhoto("Profile photo for identity and visible body", profileRef, base.profile), read: () => portrait });
+  const clothes = retainedPhotoClothes(finalGarments, products, base);
+  const label = (name, categories) => categories.length ? name + ". Keep the worn " + categories.join(", ") : name;
+  const sources = [{ label: label("Profile photo for identity and visible body", clothes.profile), read: () => portrait }];
+  if (original) sources.push({ label: label("Original outfit photo", clothes.original), read: () => deps.readImage(original.imageRef) });
 
   try {
     await requireCurrentProfile();

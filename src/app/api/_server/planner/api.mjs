@@ -6,7 +6,7 @@ import { wearAction } from "./wear.mjs";
 import { evaluateEnhancements, shoppingAction, suggestionsForLook } from "./shopping.mjs";
 import { readBaseCoverage } from "./base-coverage.mjs";
 import { combineBaseCoverage, effectiveWardrobeSlots } from "./wardrobe-completion.mjs";
-import { generatePreview, readProfileImage, ProfilePhotoError, profilePhotoRequired, profilePhotoChanged } from "./preview.mjs";
+import { generatePreview, retainedPhotoClothes, readProfileImage, ProfilePhotoError, profilePhotoRequired, profilePhotoChanged } from "./preview.mjs";
 import { previewFiles, previewSelection, profilePhotoRef, readPreviewImage } from "./preview-files.mjs";
 import { saveLook, listLooks, getLook, snapshotSlots } from "./saved.mjs";
 
@@ -116,16 +116,17 @@ export async function dispatchPlanner(env, accountId, action, input = {}, depend
       const base = source.kind === "occasion" ? {} : await basePhotos(ref, slots);
       const evaluate = dependencies.evaluateEnhancements ?? evaluateEnhancements;
       const products = await evaluate(env, accountId, source, slots, garments, dependencies.shoppingFetch, base.coverage);
-      if (action === "enhancements") return products;
       if (action === "enhancement") return products[0] ?? null;
-      if (!matchesRequestedProducts(input, products)) return { imageRef: null };
+      if (action === "enhancements" && !input.includePieces) return products;
       const effective = effectiveWardrobeSlots(slots, garments, base.coverage);
+      const effectiveSlots = Object.fromEntries(Object.entries(effective).map(([slot, item]) => [slot, String(item.id)]));
+      const pieces = input.includePieces ? { effectiveSlots, photoClothes: retainedPhotoClothes(Object.values(effective), products, base) } : {};
+      if (action === "enhancements") return { ...pieces, products };
+      if (!matchesRequestedProducts(input, products)) return { imageRef: null };
       const result = await render(source.id, slots, portrait, products, effective, base);
       if (!result.imageRef) return result;
       const added = Object.keys(effective).length !== Object.keys(slots).length;
-      return { ...result, useProfilePhoto: Boolean(ref), ...(added ? {
-        effectiveSlots: Object.fromEntries(Object.entries(effective).map(([slot, item]) => [slot, String(item.id)])),
-      } : {}) };
+      return { ...result, useProfilePhoto: Boolean(ref), ...(added ? { effectiveSlots } : {}), ...pieces };
     }
     case "shopping": case "hide":
       return shoppingAction(env, accountId, action, input, dependencies.shoppingFetch, wardrobe, savedCoverage);
