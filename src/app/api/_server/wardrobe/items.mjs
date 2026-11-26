@@ -92,7 +92,7 @@ async function updateItem(request, db, userId, itemId) {
         garment_type = CASE WHEN ? THEN ? ELSE garment_type END,
         color = CASE WHEN ? THEN ? ELSE color END,
         confirmed_at = CASE WHEN ? THEN COALESCE(confirmed_at, CURRENT_TIMESTAMP) ELSE confirmed_at END
-    WHERE user_id = ? AND id = ? AND archived_at IS NULL
+    WHERE user_id = ? AND id = ? AND archived_at IS NULL ${confirm ? "AND confirmed_at IS NULL" : ""}
     RETURNING ${itemColumns}
   `).bind(
     name?.trim() ?? null,
@@ -105,7 +105,8 @@ async function updateItem(request, db, userId, itemId) {
     userId,
     itemId,
   ).first();
-  return updated ? Response.json({ item: itemView(updated) }) : error("Wardrobe item not found.", 404);
+  return updated ? Response.json({ item: itemView(updated) })
+    : error(confirm ? "Pending wardrobe draft not found." : "Wardrobe item not found.", 404);
 }
 
 async function archiveItem(db, userId, itemId, draftOnly) {

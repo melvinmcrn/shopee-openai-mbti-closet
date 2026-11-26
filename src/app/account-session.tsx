@@ -5,7 +5,7 @@ import { createContext, Fragment, useContext, useEffect, useState, type ReactNod
 import { flushSync } from "react-dom";
 import { AppHeader, FooterNavigation } from "./app-navigation";
 import { sessionEnded } from "./private-fetch.mjs";
-import { returnDestination } from "./return-destination.mjs";
+import { isPublicResourcePath, returnDestination } from "./return-destination.mjs";
 
 type User = { id: number | string; name?: string; email?: string };
 type Session =
@@ -34,10 +34,11 @@ export function AccountSession({ children }: { children: ReactNode }) {
     function signedOut() {
       request?.abort();
       window.clearTimeout(timer);
-      const destination = returnDestination(window.location.href, window.location.origin);
-      if (destination) {
+      const publicResource = segment === "_not-found" && isPublicResourcePath(window.location.pathname);
+      if (segment !== null && !publicResource) {
+        const destination = returnDestination(window.location.href, window.location.origin);
         setSnapshot(null);
-        window.location.replace("/?" + new URLSearchParams({ returnTo: destination }));
+        window.location.replace(destination ? "/?" + new URLSearchParams({ returnTo: destination }) : "/");
       } else {
         setSnapshot({ pathname, session: { status: "signed-out", user: null } });
       }
@@ -102,7 +103,7 @@ export function AccountSession({ children }: { children: ReactNode }) {
       window.removeEventListener("storage", onStorage);
       window.removeEventListener(sessionEnded, signedOut);
     };
-  }, [pathname, attempt]);
+  }, [pathname, segment, attempt]);
 
   const checkedUser = snapshot?.session.user;
   const publicNotFound = segment === "_not-found" && session.status === "signed-out";

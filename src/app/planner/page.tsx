@@ -46,6 +46,7 @@ export default function PlannerPage() {
   const [comparison, setComparison] = useState<Comparison>();
   const [comparisonNotice, setComparisonNotice] = useState("");
   const [reviewed, setReviewed] = useState<CompletedLook[]>([]);
+  const savedOptions = useRef(new Map<string, string>());
   const [lastSavedId, setLastSavedId] = useState<string>();
   const [garments, setGarments] = useState<Garment[]>();
   const [loadError, setLoadError] = useState("");
@@ -131,7 +132,7 @@ export default function PlannerPage() {
     go(next, saved.id);
   }
 
-  async function change(next: Stage | "closed", selected?: string) {
+  async function change(next: Stage | "closed", selected?: string, previewRef?: string) {
     if (changing.current) return false;
     changing.current = true;
     setActionError("");
@@ -139,7 +140,7 @@ export default function PlannerPage() {
       let updated = brief;
       if (brief.id && !lastSavedId) {
         const { version } = await api<{ version: string }>("setDraftStage", {
-          briefId: brief.id, version: brief.version, stage: next, optionId: selected,
+          briefId: brief.id, version: brief.version, stage: next, optionId: selected, previewRef,
         });
         updated = { ...brief, version };
         setBrief(updated);
@@ -179,7 +180,9 @@ export default function PlannerPage() {
   }, []);
 
   async function choose(chosen: CompletedLook) {
-    if (!(await change("refine", chosen.id))) return;
+    const alreadySaved = savedOptions.current.get(chosen.id);
+    if (alreadySaved) { go("saved/" + alreadySaved); return; }
+    if (!(await change("refine", chosen.id, chosen.imageRef))) return;
     remember(chosen);
     setComparisonNotice("");
     go("refine/" + chosen.id, brief.id);
@@ -223,12 +226,15 @@ export default function PlannerPage() {
     onBack={() => void step("occasion")} onNext={saved => commit(saved, "compare")} />;
   else if (screen === "compare" && brief.id) content = <Compare comparison={comparison} notice={comparisonNotice} onComparison={setComparison} loadTryOn={loadTryOn} briefId={brief.id} garments={garments}
     onEdit={() => void step("style")} onChoose={choose} />;
-  else if (look) content = <Refine key={look.id} look={look} garments={garments} draftVersion={brief.version}
+  else if (view === "refine" && savedOptions.current.has(routeId)) content = <Detail id={savedOptions.current.get(routeId)!}
+    onWear={id => go("saved/" + savedOptions.current.get(routeId) + "/" + id)}
+    onBack={() => go("compare", brief.id)} />;
+  else if (look) content = <Refine key={look.id} look={look} garments={garments} draftVersion={lastSavedId ? undefined : brief.version}
     onBack={backToCompare} onStale={() => void refreshStaleLook(look)}
-    onSaved={id => { writeForm(accountId, null); setLastSavedId(id); go("saved/" + id); }} />;
-  else if (option) content = <RestoreReview key={option.id} look={option} loadTryOn={loadTryOn} onReady={remember} onBack={backToCompare} />;
+    onSaved={id => { savedOptions.current.set(look.id, id); writeForm(accountId, null); setLastSavedId(id); go("saved/" + id); }} />;
+  else if (option) content = <RestoreReview key={option.id} look={option} brief={brief} onReady={remember} onBack={backToCompare} />;
   else content = <>{comparisonNotice && <p role="status">{comparisonNotice}</p>}
-    <PlannerHome garments={garments} occasion={lastSavedId ? undefined : brief.occasion.trim()} onNew={() => void reset(true)}
+    <PlannerHome garments={garments} occasion={lastSavedId || !(brief.id || [brief.occasion, brief.timing, brief.location, brief.comfort, brief.formality].some(value => value.trim())) ? undefined : brief.occasion.trim()} onNew={() => void reset(true)}
       onResume={continuePlan} onDiscard={() => void reset(false)} /></>;
   return <main className="flex-1 bg-canvas px-5 py-6 text-text sm:px-10">
     <div className={screen === "compare" ? "mx-auto max-w-7xl" : "mx-auto max-w-4xl"}>

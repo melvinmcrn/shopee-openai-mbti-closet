@@ -156,7 +156,7 @@ function stalePreview() {
   return Object.assign(new Error("This try-on no longer matches the selected items. Reopen the outfit and try again."), { status: 409 });
 }
 
-async function verifyPreview(db, accountId, option, slots, garments, rendered) {
+export async function verifyPreview(db, accountId, option, slots, garments, rendered) {
   const { previewRef, catalogItemIds } = rendered;
   if (typeof previewRef !== "string" || !previewRef || !Array.isArray(catalogItemIds) ||
       catalogItemIds.some(id => typeof id !== "string") || new Set(catalogItemIds).size !== catalogItemIds.length) {
@@ -213,14 +213,20 @@ export async function saveLook(db, accountId, sourceOption, slots, garments, ren
       throw new TypeError("The catalog pieces for this outfit are unavailable.");
     }
   }
+  // The version and selected file must still match inside the atomic save batch.
+  // A stale claim yields NULL for the required owner and rolls back every write.
+  const guardedOwner = rendered?.draftVersion != null ? `(SELECT d.user_id FROM outfit_requests d
+    JOIN generation_runs r ON r.request_id = d.id JOIN outfit_options o ON o.run_id = r.id
+    WHERE d.user_id = ?1 AND o.id = ?2 AND d.resume_stage = 'refine'
+      AND d.resume_option_id = o.id AND d.resume_version = ?6 AND d.resume_preview_file_id = ?4)` : "?1";
   const writes = [
     db.prepare(`
       INSERT INTO saved_looks (id, user_id, source_option_id, name, saved_at${pin ? ", pinned_preview_file_id, pinned_preview_selection" : ""})
-      VALUES ((SELECT id FROM next_saved_look_id), ?1, ?2,
+      VALUES ((SELECT id FROM next_saved_look_id), ${guardedOwner}, ?2,
         (SELECT title FROM outfit_options WHERE user_id = ?1 AND id = ?2), ?3${pin ? ", ?4, ?5" : ""})
       RETURNING id
     `).bind(accountId, optionId, new Date().toISOString(),
-      ...(pin ? [pin.file, pin.selection] : [])),
+      ...(pin ? [pin.file, pin.selection] : []), ...(rendered?.draftVersion != null ? [rendered.draftVersion] : [])),
   ];
   if (pin?.products.length) {
     // The D1 catalog table is WITHOUT ROWID so this insert preserves the saved
@@ -255,7 +261,7 @@ export async function saveLook(db, accountId, sourceOption, slots, garments, ren
   );
   try {
     writes.push(db.prepare(`
-      UPDATE outfit_requests SET resume_stage = 'closed', resume_option_id = NULL, resume_version = NULL
+      UPDATE outfit_requests SET resume_stage = 'closed', resume_option_id = NULL, resume_preview_file_id = NULL, resume_version = NULL
       WHERE user_id = ? AND id = (SELECT r.request_id FROM generation_runs r JOIN outfit_options o ON o.run_id = r.id WHERE o.id = ?)
         AND resume_stage IS NOT NULL AND resume_stage <> 'closed'
         AND resume_after_run < (SELECT run_id FROM outfit_options WHERE id = ? AND user_id = ?)
@@ -264,6 +270,7 @@ export async function saveLook(db, accountId, sourceOption, slots, garments, ren
     const [insert] = await db.batch(writes);
     return getLook(db, accountId, String(insert.results[0].id));
   } catch (error) {
+    if (rendered?.draftVersion != null && /saved_looks\.user_id|null value in column "user_id" of relation "saved_looks"/i.test(error.message)) throw stalePreview();
     if (pin && /selected try-on has changed|Private file is unavailable|Selected garment changed|saved_look_catalog_items\.item_id|null value in column "item_id" of relation "saved_look_catalog_items"/i.test(error.message)) throw stalePreview();
     throw error;
   }

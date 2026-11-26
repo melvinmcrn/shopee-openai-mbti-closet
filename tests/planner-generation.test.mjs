@@ -94,6 +94,13 @@ test("evaluates dresses and separates together using only confirmed, active garm
   assert.match(result.looks[1].explanation, /Silk shirt.*Loafers.*Blazer.*dress code/u);
 });
 
+test("sends every selected profile style to the outfit decision", async () => {
+  const styles = [...Array.from({ length: 25 }, (_, i) => `Saved style ${i}`), "A".repeat(125)];
+  const provider = mockDecisions(question => responseAnswer(question, "preferences", 0.2));
+  await generateLooks(env, { ...brief, styles }, wardrobe, [], provider.request);
+  assert.deepEqual(provider.calls[0].body.input[1].content[0].data.brief.styles, styles);
+});
+
 test("prefers two fresh alternatives to a previously shown, higher-scoring look", async () => {
   const priorLook = { slots: { dress: dress.id, shoes: shoes.id }, explanation: "Prior look" };
   const provider = mockDecisions((question, slots) =>
