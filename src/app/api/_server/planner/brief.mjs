@@ -40,6 +40,33 @@ function readPreferences(value = []) {
   return [...new Set(value)];
 }
 
+function readStyles(value) {
+  if (!Array.isArray(value) || value.some(style => typeof style !== "string" || !style.trim())) {
+    throw new BriefValidationError("Styles must be an array of nonempty names.");
+  }
+  return [...new Set(value.map(style => style.trim()))];
+}
+
+// Snapshot the account defaults in the same write that creates the outfit.
+// An explicit empty array means the user chose to plan this outfit without styles.
+export function insertOutfitRequest(db, { id, accountId, occasion, timing, location, formality }, styles = null, stage, version) {
+  return db.prepare(`
+    INSERT INTO outfit_requests (id, user_id, occasion, planned_for, location_or_weather, formality, styles${stage ? ", resume_stage, resume_version" : ""})
+    SELECT ?, ?, ?, ?, ?, ?, COALESCE(?, (
+      SELECT json_group_array(style) FROM (
+        SELECT style FROM style_preferences WHERE user_id = ? ORDER BY style
+      ) AS sorted_styles
+    ))${stage ? `, ?, ? WHERE NOT EXISTS (SELECT 1 FROM outfit_requests
+      WHERE user_id = ? AND resume_stage IS NOT NULL AND resume_stage <> 'closed')` : ""}
+    RETURNING id
+  `).bind(id, accountId, occasion, timing, location, formality, styles, accountId, ...(stage ? [stage, version, accountId] : []));
+}
+
+export function stylesForGeneration(styles) {
+  if (!Array.isArray(styles)) return [];
+  return styles.filter(style => typeof style === "string").slice(0, 20).map(style => style.slice(0, 120));
+}
+
 function newBriefId() {
   // Carry the same safe integer into all statements of the D1 batch.
   const [high, low] = crypto.getRandomValues(new Uint32Array(2));
@@ -61,7 +88,7 @@ function selectBrief(db, accountId, id, version) {
       COALESCE(request.planned_for, '') AS timing,
       COALESCE(request.location_or_weather, '') AS location,
       COALESCE(request.formality, '') AS formality,
-      ${comfortForRequest} AS comfort,
+      ${comfortForRequest} AS comfort, request.styles,
       (
         SELECT json_group_array(category)
         FROM (
@@ -78,7 +105,7 @@ function selectBrief(db, accountId, id, version) {
 
 function readBrief(row) {
   if (!row) return null;
-  return { ...row, preferences: JSON.parse(row.preferences) };
+  return { ...row, preferences: JSON.parse(row.preferences), styles: JSON.parse(row.styles) };
 }
 
 export async function saveBrief(db, accountId, input, stage) {
@@ -92,24 +119,21 @@ export async function saveBrief(db, accountId, input, stage) {
   const comfort = readText(input.comfort, "Comfort");
   const preferences = JSON.stringify(readPreferences(input.preferences));
 
+  const styles = input.styles === undefined ? null : JSON.stringify(readStyles(input.styles));
   const creating = input.id === undefined;
   const id = creating ? newBriefId() : readId(input.id);
   const nextVersion = stage ? crypto.randomUUID() : null;
   const versionGuard = stage ? " AND resume_version = ?" : "";
   const guardValues = stage ? [nextVersion] : [];
   const saveRequest = creating
-    ? db.prepare(`
-      INSERT INTO outfit_requests (id, user_id, occasion, planned_for, location_or_weather, formality${stage ? ", resume_stage, resume_version" : ""})
-      SELECT ?, ?, ?, ?, ?, ?${stage ? `, ?, ? WHERE NOT EXISTS (
-        SELECT 1 FROM outfit_requests WHERE user_id = ? AND resume_stage IS NOT NULL AND resume_stage <> 'closed')` : ""}
-    `).bind(id, accountId, occasion, timing, location, formality, ...(stage ? [stage, nextVersion, accountId] : []))
+    ? insertOutfitRequest(db, { id, accountId, occasion, timing, location, formality }, styles, stage, nextVersion)
     : db.prepare(`
       UPDATE outfit_requests
-      SET occasion = ?, planned_for = ?, location_or_weather = ?, formality = ?
+      SET occasion = ?, planned_for = ?, location_or_weather = ?, formality = ?, styles = COALESCE(?, styles)
         ${stage ? `, resume_stage = ?, resume_version = ?, resume_option_id = NULL,
           resume_after_run = COALESCE((SELECT MAX(r.id) FROM generation_runs r WHERE r.request_id = outfit_requests.id), 0)` : ""}
       WHERE user_id = ? AND id = ? ${stage ? "AND resume_stage <> 'closed' AND resume_version IS ?" : ""}
-    `).bind(occasion, timing, location, formality, ...(stage ? [stage, nextVersion] : []), accountId, id, ...(stage ? [input.version ?? null] : []));
+    `).bind(occasion, timing, location, formality, styles, ...(stage ? [stage, nextVersion] : []), accountId, id, ...(stage ? [input.version ?? null] : []));
 
   const statements = [saveRequest];
   if (!creating) {

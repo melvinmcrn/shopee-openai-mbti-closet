@@ -19,6 +19,9 @@ export function readForm(accountId: string, server: Brief | undefined): FormDraf
       if (typeof data.brief[field] !== "string" || data.brief[field].length > 500) return null;
       brief[field] = data.brief[field];
     }
+    if (Array.isArray(data.brief.styles) && data.brief.styles.every((item: unknown) => typeof item === "string")) {
+      brief.styles = data.brief.styles;
+    }
     return { stage: data.stage, brief };
   } catch {
     return null;

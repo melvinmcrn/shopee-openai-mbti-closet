@@ -64,6 +64,50 @@ function migrate(database) {
   }
 }
 
+test("style defaults belong to one outfit and remain separate from legacy garment choices", async () => {
+  await withDatabase(":memory:", async database => {
+    migrate(database);
+    database.exec(`
+      INSERT INTO users (id, auth_provider, auth_subject) VALUES (1, 'google', 'first'), (2, 'google', 'second');
+      INSERT INTO style_preferences (user_id, style) VALUES (1, 'Classic'), (1, 'Coastal'), (2, 'Sporty');
+      INSERT INTO outfit_requests (id, user_id, occasion) VALUES (1, 1, 'Old occasion');
+      INSERT INTO request_clothing_choices (request_id, category, garment_type) VALUES (1, 'top', 'blouse');
+    `);
+    const DB = d1Binding(database);
+    const save = input => dispatchPlanner({ DB }, 1, "saveBrief", input);
+    const initial = await save({ occasion: "Lunch", preferences: ["dress"] });
+    assert.deepEqual(initial.styles, ["Classic", "Coastal"]);
+    assert.deepEqual((await save({ occasion: "A different look", styles: [] })).styles, []);
+    database.exec("UPDATE style_preferences SET style = 'Minimalist' WHERE user_id = 1 AND style = 'Classic'");
+    const resaved = await save({ id: initial.id, occasion: "Dinner", preferences: ["dress"] });
+    assert.deepEqual(resaved.styles, initial.styles);
+    const edited = await save({ ...resaved, styles: ["Vintage", "Vintage"] });
+    assert.deepEqual(edited.styles, ["Vintage"]);
+    assert.deepEqual(edited.preferences, ["dress"]);
+    const captured = [];
+    await dispatchPlanner({ DB }, 1, "generate", { briefId: initial.id }, {
+      generateLooks: async (_env, brief) => {
+        captured.push(brief.styles);
+        return { status: "insufficient" };
+      },
+      generateOccasionLook: async (_env, brief) => {
+        captured.push(brief.styles);
+        return null;
+      },
+    });
+    assert.deepEqual(captured, [["Vintage"], ["Vintage"]]);
+    const cleared = await save({ ...edited, styles: [] });
+    assert.deepEqual(cleared.styles, []);
+    assert.deepEqual((await save({ occasion: "Tomorrow" })).styles, ["Coastal", "Minimalist"]);
+    const legacy = await save({ id: "1", occasion: "Old occasion", preferences: ["top"] });
+    assert.deepEqual(legacy.styles, []);
+    await save({ ...legacy, styles: ["Classic"] });
+    assert.equal(database.prepare("SELECT garment_type FROM request_clothing_choices WHERE request_id = 1").get().garment_type, "blouse");
+    await assert.rejects(save({ ...edited, styles: "Classic" }), /styles/i);
+    await assert.rejects(dispatchPlanner({ DB }, 2, "saveBrief", { ...edited, styles: ["Sporty"] }), { status: 404 });
+  });
+});
+
 const blouse = { id: "9", name: "Silk blouse", category: "top", color: "Cream", imageRef: "wardrobe/blouse.jpg" };
 const trousers = { id: "10", name: "Wool trousers", category: "bottom", color: "Navy", imageRef: "wardrobe/trousers.jpg" };
 const heels = { id: "11", name: "Leather heels", category: "shoes", color: "Black", imageRef: "wardrobe/heels.jpg" };
@@ -199,7 +243,7 @@ test("a shoe swap survives a reopened planner session and stays private to its a
 
     const brief = await dispatch("saveBrief", briefInput);
     assert.equal(typeof brief.id, "string");
-    assert.deepEqual(brief, { id: brief.id, ...briefInput });
+    assert.deepEqual(brief, { id: brief.id, styles: [], ...briefInput });
 
     const generated = await dispatch("generate", { briefId: brief.id });
     assert.equal(generated.status, "ready");

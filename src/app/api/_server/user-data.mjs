@@ -1,4 +1,5 @@
 import { isOwnedPrivateFileId } from "./private-files.mjs";
+import { insertOutfitRequest } from "./planner/brief.mjs";
 
 const wardrobeColumns = `
   id, name, category, garment_type AS garmentType, color,
@@ -8,7 +9,7 @@ const wardrobeColumns = `
 const activeWardrobe = "confirmed_at IS NOT NULL AND archived_at IS NULL";
 const requestColumns = `
   id, occasion, planned_for AS plannedFor, location_or_weather AS locationOrWeather,
-  formality, created_at AS createdAt
+  formality, styles, created_at AS createdAt
 `;
 const runColumns = `
   id, request_id AS requestId, status, model, prompt_version AS promptVersion,
@@ -211,10 +212,9 @@ export function userData(db, userId) {
       const [high, low] = crypto.getRandomValues(new Uint32Array(2));
       const requestId = (high & 0x1fffff) * 0x100000000 + low || 1;
       const [created] = await db.batch([
-        statement(`
-          INSERT INTO outfit_requests (id, user_id, occasion, planned_for, location_or_weather, formality)
-          VALUES (?, ?, ?, ?, ?, ?) RETURNING ${requestColumns}
-        `, requestId, userId, occasion, plannedFor, locationOrWeather, formality),
+        insertOutfitRequest(db, {
+          id: requestId, accountId: userId, occasion, timing: plannedFor, location: locationOrWeather, formality,
+        }),
         statement(`
           INSERT INTO request_comfort_choices (request_id, choice)
           SELECT ?, value FROM json_each(?)
@@ -245,6 +245,7 @@ export function userData(db, userId) {
       ]);
       return request.results.length ? {
         ...request.results[0],
+        styles: JSON.parse(request.results[0].styles),
         comfortChoices: comfort.results.map(({ choice }) => choice),
         clothingChoices: clothing.results,
       } : null;

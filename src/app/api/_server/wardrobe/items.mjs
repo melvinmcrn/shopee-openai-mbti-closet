@@ -21,18 +21,28 @@ function error(message, status) {
 }
 
 async function listItems(request, db, userId) {
-  const status = new URL(request.url).searchParams.get("status") ?? "active";
+  const params = new URL(request.url).searchParams;
+  const status = params.get("status") ?? "active";
   if (status !== "active" && status !== "draft") {
     return error("Invalid wardrobe status.", 400);
   }
 
   const confirmation = status === "active" ? "IS NOT NULL" : "IS NULL";
-  const { results } = await db.prepare(`
+  const list = db.prepare(`
     SELECT ${itemColumns}
     FROM wardrobe_items
     WHERE user_id = ? AND archived_at IS NULL AND confirmed_at ${confirmation}
     ORDER BY id DESC
-  `).bind(userId).all();
+  `).bind(userId);
+  if (status === "active" && params.get("includeDraftCount") === "1") {
+    const count = db.prepare(`
+      SELECT COUNT(*) AS total FROM wardrobe_items
+      WHERE user_id = ? AND archived_at IS NULL AND confirmed_at IS NULL
+    `).bind(userId);
+    const [active, drafts] = await db.batch([list, count]);
+    return Response.json({ items: active.results.map(itemView), draftCount: drafts.results[0].total });
+  }
+  const { results } = await list.all();
   return Response.json({ items: results.map(itemView) });
 }
 

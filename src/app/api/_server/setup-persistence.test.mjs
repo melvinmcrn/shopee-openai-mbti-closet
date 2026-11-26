@@ -120,6 +120,23 @@ async function jsonSuccess(response) {
   return response.json();
 }
 
+test("the closet can count pending drafts when it has no confirmed items", async (t) => {
+  const { env, signIn } = setup(t);
+  const owner = client(env, await signIn("closet-owner", "owner@example.com"));
+  const other = client(env, await signIn("other-owner", "other@example.com"));
+  const { user } = await jsonSuccess(await owner("/api/account", { method: "POST" }));
+  await env.DB.prepare("INSERT INTO private_files (file_id, user_id, state) VALUES ('photo', ?, 'ready')")
+    .bind(user.id).run();
+  const insert = env.DB.prepare(`
+    INSERT INTO wardrobe_items (user_id, name, category, archived_at, image_file_id) VALUES (?, ?, 'top', ?, 'photo')
+  `);
+  await insert.bind(user.id, "Pending shirt", null).run();
+  await insert.bind(user.id, "Archived draft", "archived").run();
+  const path = "/api/wardrobe/items?includeDraftCount=1";
+  assert.deepEqual(await jsonSuccess(await owner(path)), { items: [], draftCount: 1 });
+  assert.deepEqual(await jsonSuccess(await other(path)), { items: [], draftCount: 0 });
+});
+
 test("setup saves three pieces and styles without a photo, then persists a later photo across Google sessions", async (t) => {
   const { env, signIn } = setup(t);
   const firstCookie = await signIn("google-owner", "before@example.com");

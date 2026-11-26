@@ -2,6 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { privateFetch } from "../private-fetch.mjs";
 import { wardrobeDestination, wardrobeOrigin } from "./flow.mjs";
 
 export function useWardrobeFlow(stage: "add" | "confirm") {
@@ -16,7 +17,7 @@ export function useWardrobeFlow(stage: "add" | "confirm") {
     const controller = new AbortController();
     async function loadSetupStatus() {
       try {
-        const response = await fetch("/api/profile", { cache: "no-store", signal: controller.signal,
+        const response = await privateFetch("/api/profile", { cache: "no-store", signal: controller.signal,
           ...(origin.from === "onboarding" && { method: "PATCH", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ setupStage: stage }) }) });
         if (!response.ok) throw new Error("Profile unavailable");

@@ -1,6 +1,7 @@
 import { privateFetch } from "../private-fetch.mjs";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { normalizeProfilePhoto, profilePhotoAccept, profilePhotoRequirements } from "../wardrobe/add/normalize-upload.mjs";
+import { styleOptions } from "../profile/style-options";
 import { api, type Brief } from "./shared";
 
 type PreparedTryOn = { status: "ready"; brief: Brief } | { status: "photo_required"; brief: Brief };
@@ -22,7 +23,8 @@ const actionClass =
   "min-h-11 rounded-lg px-3 text-sm font-semibold text-secondary hover:bg-selected focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:opacity-60";
 
 export function Style({ brief, needsPhoto, onPhoto, onStyle, onChange, onNext, onBack }: StyleProps) {
-  const { formality, comfort } = brief;
+  const { formality, comfort, styles = [] } = brief;
+  const options = [...new Set([...styleOptions, ...styles])];
   const setFormality = (formality: string) => onChange({ ...brief, formality });
   const setComfort = (comfort: string) => onChange({ ...brief, comfort });
   const [saving, setSaving] = useState(false);
@@ -67,7 +69,7 @@ export function Style({ brief, needsPhoto, onPhoto, onStyle, onChange, onNext, o
         trackDraft: true,
         formality: formality.trim(),
         comfort: comfort.trim(),
-        preferences: [],
+        styles,
       });
       if (result.status === "photo_required") {
         onPhoto(result.brief);
@@ -97,6 +99,28 @@ export function Style({ brief, needsPhoto, onPhoto, onStyle, onChange, onNext, o
       </header>
 
       <form onSubmit={save} className="mt-6 rounded-2xl border border-divider bg-surface p-5 sm:p-7">
+        <fieldset disabled={saving} hidden={needsPhoto} aria-describedby="outfit-styles-help" className="mb-6 border-b border-divider pb-5">
+          <legend className="font-semibold">Styles for this outfit</legend>
+          <p id="outfit-styles-help" className="mt-1 text-sm text-supporting">
+            New outfits start with your profile styles. Choose any that fit this occasion.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {options.map(style => (
+              <label key={style} className="flex min-h-11 max-w-full cursor-pointer items-center gap-2 rounded-full border border-divider px-3 text-sm has-checked:border-secondary has-checked:bg-selected">
+                <input
+                  type="checkbox"
+                  className="accent-primary"
+                  checked={styles.includes(style)}
+                  onChange={event => {
+                    const checked = event.currentTarget.checked;
+                    onChange({ ...brief, styles: checked ? [...styles, style] : styles.filter(name => name !== style) });
+                  }}
+                />
+                <span className="wrap-anywhere">{style}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
         <fieldset disabled={saving} hidden={needsPhoto} className="grid gap-5 sm:grid-cols-2">
           <div>
             <label className="text-sm font-semibold">
