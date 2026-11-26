@@ -31,6 +31,11 @@ def mobile_session(browser, device, base, session):
     return context, page
 
 
+def journey_recorded(page, activity):
+    return page.expect_response(lambda response: response.url.endswith("/api/journey") and response.status == 204
+                                and response.request.post_data_json["activity"] == activity)
+
+
 def expect_heading(page, name):
     expect(page.get_by_role("heading", name=name, level=1, exact=True)).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth === window.innerWidth"), (
@@ -109,7 +114,8 @@ def check_saved_shortcuts(browser, device, base, capture=None):
         capture(page, "before")
     assert not files
     assert provider_calls(context, base) == calls
-    recent.get_by_role("button", name="Wore today").tap()
+    with journey_recorded(page, "wear"):
+        recent.get_by_role("button", name="Wore today").tap()
     confirm = recent.get_by_role("status")
     expect(confirm).to_have_text("Logged for Nov 25, 2026.")
     expect(confirm.locator("time")).to_have_attribute("datetime", "2026-11-25")
@@ -165,7 +171,8 @@ def check_saved_shortcuts(browser, device, base, capture=None):
     expect_heading(page, look["occasion"])
     assert page.evaluate("window.closetEvents")[-1] == "closet:saved-look-reopened"
     page.get_by_role("navigation", name="Main navigation").get_by_role("link", name="Home").tap()
-    recent.get_by_role("button", name="Open saved look for " + look["occasion"]).tap()
+    with journey_recorded(page, "reopen"):
+        recent.get_by_role("button", name="Open saved look for " + look["occasion"]).tap()
     expect_heading(page, look["occasion"])
     assert page.evaluate("window.closetEvents").count("closet:saved-look-reopened") == 2
     context.close()
@@ -1181,7 +1188,8 @@ def check_setup_recovery(browser, device, base):
         "image": {"name": "piece.png", "mimeType": "image/png", "buffer": photo.read_bytes()},
     })
     assert upload.ok, upload.text()
-    page.goto(base)
+    with journey_recorded(page, "setup"):
+        page.goto(base)
     expect(page).to_have_url(re.compile(r"/wardrobe/confirm/?\?from=onboarding$"))
     page.goto(base + "/profile/style/")
     page.get_by_role("checkbox", name="Classic").check()
@@ -1245,7 +1253,8 @@ def check_journey_recovery(browser, device, base, screenshot=None):
     if screenshot:
         page.screenshot(path=screenshot)
     before = provider_calls(context, base)
-    resume.tap()
+    with journey_recorded(page, "planner"):
+        resume.tap()
     expect_heading(page, "Review your outfit")
     expect(page.get_by_role("img", name="Full-body try-on of your selected look")).to_have_js_property("src", photo)
     assert provider_calls(context, base) == before
