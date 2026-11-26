@@ -175,6 +175,19 @@ def check_saved_shortcuts(browser, device, base, capture=None):
         recent.get_by_role("button", name="Open saved look for " + look["occasion"]).tap()
     expect_heading(page, look["occasion"])
     assert page.evaluate("window.closetEvents").count("closet:saved-look-reopened") == 2
+
+    bookmark = page.url
+    page.goto("about:blank")
+    with journey_recorded(page, "reopen"):
+        page.goto(bookmark)
+    expect_heading(page, look["occasion"])
+    assert page.evaluate("window.closetEvents") == ["closet:saved-look-reopened"]
+    page.get_by_role("button", name="Saved looks", exact=True).tap()
+    expect_heading(page, "Saved looks")
+    with journey_recorded(page, "reopen"):
+        page.go_back()
+    expect_heading(page, look["occasion"])
+    assert page.evaluate("window.closetEvents") == ["closet:saved-look-reopened"] * 2
     context.close()
 
 
@@ -1188,7 +1201,9 @@ def check_setup_recovery(browser, device, base):
         "image": {"name": "piece.png", "mimeType": "image/png", "buffer": photo.read_bytes()},
     })
     assert upload.ok, upload.text()
-    with journey_recorded(page, "setup"):
+    # Navigation can detach the document before Chromium reports the keepalive response.
+    with page.expect_request(lambda request: request.url.endswith("/api/journey")
+                             and request.method == "POST" and request.post_data_json["activity"] == "setup"):
         page.goto(base)
     expect(page).to_have_url(re.compile(r"/wardrobe/confirm/?\?from=onboarding$"))
     page.goto(base + "/profile/style/")
