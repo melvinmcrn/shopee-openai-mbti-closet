@@ -203,15 +203,33 @@ export default function PlannerPage() {
     setReload(count => count + 1);
   }
 
+  const pendingOpen = useRef<string | null>(null);
+  useEffect(() => {
+    if (screen !== "saved/" + pendingOpen.current) pendingOpen.current = null;
+  }, [screen]);
+  const reportOpened = useCallback((id: string) => {
+    if (pendingOpen.current !== id) return;
+    pendingOpen.current = null;
+    window.dispatchEvent(new Event("closet:saved-look-reopened"));
+  }, []);
+
+  function openSavedLook(id: string) {
+    pendingOpen.current = id;
+    go("saved/" + id);
+  }
+  const savedNavigation = {
+    onOpen: openSavedLook,
+    onWear: (lookId: string, entryId: string) => go("saved/" + lookId + "/" + entryId),
+  };
   const [view, routeId, wearId] = screen.split("/");
   const look = view === "refine" && reviewed.find(item => item.id === routeId);
   const option = view === "refine" && comparison?.looks.find(item => item.id === routeId);
   const backToCompare = () => void step("compare");
   let content;
-  if (screen === "saved") content = <SavedList onOpen={id => go("saved/" + id)} onNew={() => void reset(true)} />;
+  if (screen === "saved") content = <SavedList {...savedNavigation} onNew={() => void reset(true)} />;
   else if (view === "saved" && routeId) content = wearId
     ? <WearEntry id={wearId} onBack={() => go("saved/" + routeId)} />
-    : <Detail id={routeId} onWear={id => go("saved/" + routeId + "/" + id)} onBack={() => go("saved")}
+    : <Detail id={routeId} onOpened={reportOpened} onWear={id => go("saved/" + routeId + "/" + id)} onBack={() => go("saved")}
         onCompare={lastSavedId === routeId && comparison ? () => go("compare", brief.id) : undefined} />;
   else if (!garments) content = loadError
     ? <div className="text-danger" role="alert">{loadError} <Link className="underline" href="/account">Account</Link> · <button onClick={() => {setLoadError(""); setReload(n => n + 1);}}>Retry</button></div>
@@ -228,7 +246,7 @@ export default function PlannerPage() {
     onSaved={id => { writeForm(accountId, null); setLastSavedId(id); go("saved/" + id); }} />;
   else if (option) content = <RestoreReview key={option.id} look={option} loadTryOn={loadTryOn} onReady={remember} onBack={backToCompare} />;
   else content = <>{comparisonNotice && <p role="status">{comparisonNotice}</p>}
-    <PlannerHome garments={garments} occasion={lastSavedId ? undefined : brief.occasion.trim()} onNew={() => void reset(true)}
+    <PlannerHome garments={garments} savedNavigation={savedNavigation} occasion={lastSavedId ? undefined : brief.occasion.trim()} onNew={() => void reset(true)}
       onResume={continuePlan} onDiscard={() => void reset(false)} /></>;
   return <main className="flex-1 bg-canvas px-5 py-6 text-text sm:px-10">
     <div className={screen === "compare" ? "mx-auto max-w-7xl" : "mx-auto max-w-4xl"}>

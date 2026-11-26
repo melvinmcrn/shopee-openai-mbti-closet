@@ -3,13 +3,13 @@ import { resumePlanner, setDraftStage } from "./resume.mjs";
 import { getGarments } from "./garments.mjs";
 import { saveBrief, getBrief } from "./brief.mjs";
 import { readOption, generateOptions } from "./options.mjs";
-import { wearAction } from "./wear.mjs";
+import { requireWearDate, wearAction } from "./wear.mjs";
 import { evaluateEnhancements, shoppingAction, suggestionsForLook } from "./shopping.mjs";
 import { readBaseCoverage } from "./base-coverage.mjs";
 import { combineBaseCoverage, effectiveWardrobeSlots } from "./wardrobe-completion.mjs";
 import { generatePreview, retainedPhotoClothes, readProfileImage, ProfilePhotoError, profilePhotoRequired, profilePhotoChanged } from "./preview.mjs";
 import { previewFiles, previewSelection, profilePhotoRef, readPreviewImage } from "./preview-files.mjs";
-import { saveLook, listLooks, getLook, snapshotSlots } from "./saved.mjs";
+import { saveLook, listLooks, recentLook, getLook, snapshotSlots } from "./saved.mjs";
 
 export { getGarments };
 
@@ -167,7 +167,8 @@ export async function dispatchPlanner(env, accountId, action, input = {}, depend
       const rendered = input.previewRef === undefined ? undefined : { previewRef: input.previewRef, draftVersion: input.draftVersion, catalogItemIds: input.catalogItemIds };
       return saveLook(db, accountId, source, requestedSlots(source, input), await wardrobe(), rendered);
     }
-    case "list": return listLooks(db, accountId);
+    case "recentLook": return recentLook(db, accountId, requireWearDate(input.date));
+    case "list": return listLooks(db, accountId, input.date === undefined ? undefined : requireWearDate(input.date));
     case "detail": return found(await getLook(db, accountId, input.id));
     default: throw new PlannerError(400, "Unknown planner action.");
   }

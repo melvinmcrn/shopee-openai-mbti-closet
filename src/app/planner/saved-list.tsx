@@ -1,11 +1,12 @@
 import { EnhancementProduct } from "./enhancement";
+import { SavedLookActions, type SavedLookNavigation } from "./saved-look-actions";
+import { useLocalDate } from "./wear-date";
 import { SavedPhoto } from "./saved-photo";
 import { WardrobePhotos } from "./wardrobe-photos";
 import { useEffect, useState } from "react";
 import { api, occasionLookLabel, type SavedLook } from "./shared";
 
-type SavedListProps = {
-  onOpen: (id: string) => void;
+type SavedListProps = SavedLookNavigation & {
   onNew: () => void;
 };
 
@@ -22,14 +23,15 @@ const secondaryButton =
 
 const dateFormat = new Intl.DateTimeFormat("en", { dateStyle: "medium" });
 
-export function SavedList({ onOpen, onNew }: SavedListProps) {
+export function SavedList({ onOpen, onWear, onNew }: SavedListProps) {
+  const today = useLocalDate();
   const [state, setState] = useState<SavedListState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let active = true;
 
-    void api<SavedLook[]>("list").then(
+    void api<SavedLook[]>("list", { date: today }).then(
       (looks) => {
         if (active) setState({ status: "ready", looks });
       },
@@ -46,7 +48,7 @@ export function SavedList({ onOpen, onNew }: SavedListProps) {
     return () => {
       active = false;
     };
-  }, [attempt]);
+  }, [attempt, today]);
 
   function retry() {
     setState({ status: "loading" });
@@ -84,11 +86,14 @@ export function SavedList({ onOpen, onNew }: SavedListProps) {
           {state.looks.map((look) => (
             <li key={look.id} className="min-w-0">
               <article className="flex h-full flex-col rounded-2xl border border-divider bg-surface p-5 shadow-sm">
-                <SavedPhoto look={look} catalogItemIds={look.enhancements.map(product => product.id)} />
-                <h2 className="mt-3 break-words font-heading text-2xl">{look.occasion}</h2>
+                <h2 className="break-words font-heading text-2xl">{look.occasion}</h2>
                 <time dateTime={look.createdAt} className="mt-1 text-sm text-supporting">
                   {dateFormat.format(new Date(look.createdAt))}
                 </time>
+                <SavedLookActions look={look} today={today} onOpen={onOpen} onWear={onWear} />
+                <div className="mt-4">
+                  <SavedPhoto look={look} catalogItemIds={look.enhancements.map(product => product.id)} />
+                </div>
                 <div className="mt-4">
                   <WardrobePhotos garments={Object.values(look.slots)} />
                   {look.enhancements.map(product => (
@@ -98,14 +103,6 @@ export function SavedList({ onOpen, onNew }: SavedListProps) {
                 <p className="mt-5 flex-1 text-sm leading-relaxed text-supporting">
                   <strong>{look.kind === "occasion" ? occasionLookLabel : "Original suggestion"}</strong> · {look.explanation}
                 </p>
-                <button
-                  type="button"
-                  aria-label={`Open saved look for ${look.occasion}`}
-                  onClick={() => onOpen(look.id)}
-                  className={`mt-4 self-start ${secondaryButton}`}
-                >
-                  Open look
-                </button>
               </article>
             </li>
           ))}
