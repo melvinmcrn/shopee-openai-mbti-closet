@@ -83,7 +83,7 @@ function SetupSummary({ profile, items }: Setup) {
         ) : (
           <p className="mt-2 text-sm text-supporting">No styles selected</p>
         )}
-        <Link href="/profile/style" className={`mt-2 ${linkClass}`}>Edit style preferences</Link>
+        <Link href={profile.setupCompletedAt ? "/profile/settings" : "/profile/style"} className={`mt-2 ${linkClass}`}>Edit style preferences</Link>
       </section>
     </div>
   );

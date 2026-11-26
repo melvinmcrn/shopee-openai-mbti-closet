@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { normalizeProfilePhoto, profilePhotoAccept, profilePhotoRequirements } from "../../wardrobe/add/normalize-upload.mjs";
 
-const nextStep = "/wardrobe/add";
+const nextStep = "/wardrobe/add?from=onboarding";
 
 const secondaryButton = "rounded-full border border-divider px-4 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60";
 const primaryButton = "rounded-full bg-primary px-4 py-2 text-sm font-semibold text-on-primary hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:cursor-not-allowed disabled:opacity-60";

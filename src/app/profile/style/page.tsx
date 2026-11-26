@@ -33,8 +33,12 @@ export default function ConfirmStylePage() {
         }
         if (!response.ok) throw new Error("Style preferences unavailable");
 
-        const data = (await response.json()) as { styles?: unknown };
+        const data = (await response.json()) as { styles?: unknown; setupCompletedAt: string | null };
         if (controller.signal.aborted) return;
+        if (data.setupCompletedAt) {
+          router.replace("/profile/settings");
+          return;
+        }
         if (!Array.isArray(data.styles) || !data.styles.every((style) => typeof style === "string")) {
           throw new Error("Invalid style preferences");
         }
@@ -48,7 +52,7 @@ export default function ConfirmStylePage() {
 
     void loadStyles();
     return () => controller.abort();
-  }, [loadCount]);
+  }, [loadCount, router]);
 
   function selectStyle(style: string, checked: boolean) {
     setSelectedStyles((current) => checked
@@ -89,15 +93,15 @@ export default function ConfirmStylePage() {
   return (
     <main className="flex-1 bg-selected px-5 py-10 text-text sm:px-8 sm:py-14">
       <div className="mx-auto max-w-2xl">
-        <header className="border-b border-divider pb-7">
-          <Link className="text-sm font-semibold text-secondary hover:underline" href="/wardrobe/confirm">
+        {status === "ready" && <header className="border-b border-divider pb-7">
+          <Link className="text-sm font-semibold text-secondary hover:underline" href="/wardrobe/confirm?from=onboarding">
             <span aria-hidden="true">← </span>Confirm items
           </Link>
           <h1 className="mt-5 text-4xl font-semibold tracking-tight sm:text-5xl">Confirm style</h1>
           <p className="mt-3 max-w-lg leading-relaxed text-supporting">
             Choose the styles you like to wear regularly. You can update your choices in Settings.
           </p>
-        </header>
+        </header>}
 
         {status === "loading" && <p className="py-8" role="status">Loading style preferences…</p>}
         {status === "error" && (

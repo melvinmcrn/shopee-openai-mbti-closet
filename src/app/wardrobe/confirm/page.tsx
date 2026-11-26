@@ -4,6 +4,8 @@ import { privateFetch } from "../../private-fetch.mjs";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { wardrobeHref } from "../flow.mjs";
+import { useWardrobeFlow } from "../use-wardrobe-flow";
 
 const categories = [
   ["top", "Top"],
@@ -34,11 +36,13 @@ const secondaryButton = "inline-flex min-h-11 items-center justify-center rounde
 const fieldClass = "mt-1 block min-h-11 w-full rounded-lg border border-divider bg-surface px-3 py-2 text-base text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-secondary disabled:opacity-60";
 
 export default function ConfirmWardrobeItemsPage() {
+  const { origin, destination, error: flowError, retry: retryFlow } = useWardrobeFlow();
   const [items, setItems] = useState<DraftItem[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "signed-out" | "error">("loading");
   const [manualItemIds, setManualItemIds] = useState<Set<string>>(() => new Set());
   const [reloads, setReloads] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [discardingId, setDiscardingId] = useState<number | null>(null);
   const [savedCount, setSavedCount] = useState(0);
   const [errors, setErrors] = useState<Record<number, string>>({});
   const savingRef = useRef(false);
@@ -97,6 +101,35 @@ export default function ConfirmWardrobeItemsPage() {
     setErrors((current) => ({ ...current, [id]: "" }));
   }
 
+  async function discardItem(item: DraftItem) {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    setDiscardingId(item.id);
+    setErrors((current) => ({ ...current, [item.id]: "" }));
+    try {
+      const response = await fetch(`/api/wardrobe/items/${item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ discard: true }),
+      });
+      if (response.status === 204) {
+        setItems((current) => current.filter(({ id }) => id !== item.id));
+      } else {
+        const message = response.status === 401 ? "Sign in again to discard this draft."
+          : response.status === 409 ? "This item has already been confirmed. Refresh to see your remaining drafts."
+          : "Couldn’t discard this draft. Try again.";
+        setErrors((current) => ({ ...current, [item.id]: message }));
+      }
+    } catch {
+      setErrors((current) => ({ ...current, [item.id]: "Couldn’t confirm removal. Try discarding this draft again." }));
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+      setDiscardingId(null);
+    }
+  }
+
   async function confirmItems(drafts: DraftItem[]) {
     if (savingRef.current) return;
     savingRef.current = true;
@@ -144,7 +177,7 @@ export default function ConfirmWardrobeItemsPage() {
     <main className="flex-1 bg-selected px-5 py-10 text-text sm:px-8 sm:py-14">
       <div className="mx-auto max-w-5xl">
         <header className="border-b border-divider pb-7">
-          <Link className="text-sm font-semibold text-secondary hover:underline" href="/wardrobe/add">
+          <Link className="text-sm font-semibold text-secondary hover:underline" href={wardrobeHref("/wardrobe/add", origin)}>
             <span aria-hidden="true">← </span>Add items
           </Link>
           <h1 className="mt-5 text-4xl font-semibold tracking-tight sm:text-5xl">Confirm items</h1>
@@ -191,7 +224,7 @@ export default function ConfirmWardrobeItemsPage() {
                   disabled={saving}
                   onClick={() => void confirmItems(items)}
                 >
-                  {saving ? "Confirming…" : "Confirm all"}
+                  {saving && discardingId === null ? "Confirming…" : "Confirm all"}
                 </button>
               )}
             </div>
@@ -267,7 +300,10 @@ export default function ConfirmWardrobeItemsPage() {
                       </label>
                       {errors[item.id] && <p className="text-sm text-danger" role="alert">{errors[item.id]}</p>}
                       <button type="submit" className={`${primaryButton} w-full`}>
-                        {saving ? "Confirming…" : "Confirm item"}
+                        {saving && discardingId === null ? "Confirming…" : "Confirm item"}
+                      </button>
+                      <button type="button" className={secondaryButton} onClick={() => void discardItem(item)}>
+                        {discardingId === item.id ? "Discarding…" : "Discard item"}
                       </button>
                     </fieldset>
                   </form>
@@ -275,11 +311,12 @@ export default function ConfirmWardrobeItemsPage() {
               </div>
             )}
 
-            <nav aria-label="Wardrobe setup" className="mt-5 flex flex-wrap gap-3 border-t border-divider pt-6">
-              <Link className={secondaryButton} href="/wardrobe/add">Add more items</Link>
-              <Link className={primaryButton} href="/profile/style">
-                Continue to style profile<span aria-hidden="true" className="ml-2">→</span>
-              </Link>
+            <nav aria-label="Wardrobe" className="mt-5 flex flex-wrap gap-3 border-t border-divider pt-6">
+              <Link className={secondaryButton} href={wardrobeHref("/wardrobe/add", origin)}>Add more items</Link>
+              {destination && <Link className={primaryButton} href={destination.href}>
+                {destination.label}<span aria-hidden="true" className="ml-2">→</span>
+              </Link>}
+              {flowError && <p role="alert">Couldn’t load your setup. <button className="underline" type="button" onClick={retryFlow}>Try again</button></p>}
             </nav>
           </>
         )}
