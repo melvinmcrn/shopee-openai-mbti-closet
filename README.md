@@ -1,18 +1,18 @@
 # Closet
 
-A Next.js App Router project initialized with the official `create-next-app` CLI. It uses TypeScript and Tailwind CSS. OpenAI Sites serves the Next.js static export and runs Google sign-in in a Worker.
+A Next.js App Router project initialized with the official `create-next-app` CLI. It uses TypeScript and Tailwind CSS. It is hosted on Vercel with Supabase (PostgreSQL and private storage); Google sign-in runs in the Next.js Route Handler.
 
 ## Local development
 
 ```bash
 npm install
-npm run dev
+npm run dev:vercel
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
-`npm run dev` builds the app, applies D1 migrations to the local database, and starts the Worker with local D1 and R2 bindings. Restart it after source changes. For frontend hot reload, use `npm run dev:frontend`. That command serves the Next.js UI only.
+`npm run dev:vercel` runs the Vercel/Supabase target locally (see below). For frontend hot reload only, use `npm run dev:frontend`, which serves the Next.js UI without the API.
 
-To enable local sign-in, create an untracked `.dev.vars` file in the project root:
+To enable local sign-in, create an untracked `.env.local` file in the project root:
 
 ```dotenv
 GOOGLE_CLIENT_ID=<local Google OAuth web client ID>
@@ -24,7 +24,7 @@ Add `http://localhost:3000/api/auth/callback/google` under **Authorized redirect
 
 ## Wardrobe photo extraction
 
-Set `OPENAI_API_KEY` as a server-only Sites runtime secret (or in the ignored `.dev.vars` for local Worker development). Vercel development uses the same secret in its server environment. The API project must have access to GPT-6 Luna, Fast tier, and the built-in image generation tool.
+Set `OPENAI_API_KEY` as a server-only environment variable in Vercel (or in the ignored `.env.local` for local development). The API project must have access to GPT-6 Luna, Fast tier, and the built-in image generation tool.
 
 Wardrobe extraction sends a normalized photo or a contact sheet of up to 20 photos in one OpenAI Responses request using `gpt-6-luna`, High reasoning, and Fast service. Luna identifies each visible garment and accessory, keeping a matched pair of shoes together. It uses `gpt-image-2.5-flare` to return transparent cutouts in the same order as each photo’s item list. The backend validates the layout and saves each cutout privately as a separate draft with an editable name, category, garment type, and color. A photo with missing or ambiguous cutouts stays available for manual review.
 
@@ -33,10 +33,10 @@ Wardrobe extraction sends a normalized photo or a contact sheet of up to 20 phot
 ## Production build
 
 ```bash
-npm run build
+npm run build:vercel
 ```
 
-The app exports to `out/` and is bundled with the Sites Worker at `dist/server/index.js`. The build uses Webpack because Turbopack's CSS worker cannot bind its local IPC port in some restricted environments.
+The build uses Webpack because Turbopack's CSS worker cannot bind its local IPC port in some restricted environments.
 
 ## PWA files
 
@@ -47,17 +47,17 @@ The app exports to `out/` and is bundled with the Sites Worker at `dist/server/i
 
 ## Google sign-in
 
-Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and an independent random `AUTH_SECRET` in the Sites runtime settings. Register the exact callback URL below on the Google OAuth web client under **Authorized redirect URIs**. The browser redirects through the server, so the Google client needs no JavaScript origin for this flow.
+Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and an independent random `AUTH_SECRET` in the Vercel project's environment variables. Register the exact callback URL below on the Google OAuth web client under **Authorized redirect URIs**. The browser redirects through the server, so the Google client needs no JavaScript origin for this flow.
 
 ```text
-https://mbti-closet.stonyimpala.chatgpt.site/api/auth/callback/google
+https://<your-vercel-domain>/api/auth/callback/google
 ```
 
-Visitors must first have access to the private Site. The Google account session is separate from Sites access, and Google sign-out ends only the app session.
+Google sign-out ends only the app session.
 
 ## Vercel development with Supabase
 
-Vercel uses `npm run build:vercel` from `vercel.json`. Its Next.js Route Handler serves the account, profile, wardrobe, private file, and planner APIs directly from `src/app/api/_server/`. The Sites Worker adapts requests to those same handlers and serves the static export. The default `npm run build` still produces the Sites export and Worker with D1 and R2 bindings.
+Vercel uses `npm run build:vercel` from `vercel.json`. Its Next.js Route Handler serves the account, profile, wardrobe, private file, and planner APIs directly from `src/app/api/_server/`.
 
 1. Create a separate Supabase development project and apply the SQL in `supabase/migrations/` there. Use the [Supabase CLI migration workflow](https://supabase.com/docs/guides/deployment/database-migrations) to link the development project and run `supabase db push`. Keep the `app` schema out of Supabase's exposed schemas.
 2. Create a **private** Storage bucket named `closet-private`. The app checks file ownership before it reads or serves an object. Give the backend the project URL and a [Supabase secret key](https://supabase.com/docs/guides/api/api-keys), available only in server environment variables.
@@ -100,14 +100,9 @@ For a shoe swap, keep the original option's shoes ID and pass the replacement sh
 
 ## Closet journey report
 
-Operators can run one read-only aggregate query against either deployment. The arguments are UTC dates, with the start included and the end excluded. For local D1, run
+Operators can run one read-only aggregate query against the PostgreSQL deployment. The arguments are UTC dates, with the start included and the end excluded.
 
-```sh
-node scripts/closet-journeys.mjs d1 2026-12-01 2026-12-08 > /tmp/closet-journeys.sql
-npx wrangler d1 execute DB --local --config wrangler.local.jsonc --file /tmp/closet-journeys.sql
-```
-
-For PostgreSQL, use a configured read-only operator connection with SELECT access to `app.users` and `app.journey_activity`. The following uses the operator’s standard libpq connection settings.
+Use a configured read-only operator connection with SELECT access to `app.users` and `app.journey_activity`. The following uses the operator’s standard libpq connection settings.
 
 ```sh
 node scripts/closet-journeys.mjs postgres 2026-12-01 2026-12-08 | psql -X -v ON_ERROR_STOP=1

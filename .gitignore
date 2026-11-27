@@ -35,7 +35,6 @@ yarn-error.log*
 .env*
 !.env.vercel.example
 .dev.vars*
-/.wrangler/
 /supabase/.temp/
 client_secret*.json
 
