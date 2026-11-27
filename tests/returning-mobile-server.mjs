@@ -167,6 +167,7 @@ async function decisionsFixture(url, options) {
       assert.ok(product);
       assert.deepEqual(Buffer.from(await references[index].arrayBuffer()), listingJpeg(product.ocr_image));
     }
+    if (labels.some(piece => piece.selectedItem === "Column dress")) return new Response(null, { status: 503 });
     if (prompt.includes("Private scarf")) assert.equal(listings.length, 3);
     return Response.json({ data: [{ b64_json: listings.length ? enhancedTryOn : tryOnJpeg }] });
   }
@@ -188,20 +189,7 @@ async function decisionsFixture(url, options) {
       return Response.json({ status: "completed", output: [{ type: "message", role: "assistant", status: "completed",
         content: [{ type: "output_text", text: JSON.stringify(coverage) }] }] });
     }
-    const pieces = input[0].content.filter(part => part.type === "input_text" && part.text.startsWith("{"))
-      .map(part => JSON.parse(part.text));
-    for (const [i, part] of input[0].content.entries()) {
-      if (part.type !== "input_text" || !part.text.startsWith("{")) continue;
-      const piece = JSON.parse(part.text);
-      if (piece.source !== "catalog") continue;
-      const product = database.prepare("SELECT ocr_image FROM clothes_catalog WHERE name=? AND search_term=?").get(piece.name, piece.category);
-      assert.ok(product);
-      assert.equal(input[0].content[i + 1].image_url, "data:image/jpeg;base64," + listingJpeg(product.ocr_image).toString("base64"));
-    }
-    const visible_items = pieces.map(piece => piece.reference);
-    if (pieces.some(piece => piece.name === "Column dress")) visible_items.push("unlisted");
-    return Response.json({ status: "completed", output: [{ type: "message", role: "assistant", status: "completed",
-      content: [{ type: "output_text", text: JSON.stringify({ full_body_try_on: true, visible_items }) }] }] });
+    assert.fail("Unexpected response-model call: " + text?.format?.name);
   }
   assert.equal(url, "https://api.openai.com/v1/decisions");
   const { input, questions } = JSON.parse(options.body);
@@ -224,11 +212,11 @@ async function decisionsFixture(url, options) {
     return Response.json({ answers: [{ name: question.name, type: "choice", choice: value }] });
   }
   if (questions.length === 1 && questions[0].name === "shopee_product") {
-    const { outfit } = input[1].content[0].data;
+    const { outfit, occasion } = input[1].content[0].data;
     if (outfit.some(item => item.category === "dress")) {
       return Response.json({ answers: [{ name: "shopee_product", type: "choice", choice: "none" }] });
     }
-    if (outfit.some(item => item.name === "Walking flats") && enhancementRequests++ === 0) {
+    if (occasion === "Anniversary dinner" && outfit.some(item => item.name === "Walking flats") && enhancementRequests++ === 0) {
       return new Response(null, { status: 503 });
     }
     return Response.json({ answers: [{ name: "shopee_product", type: "choice", choice: questions[0].choices[0].value }] });

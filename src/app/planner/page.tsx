@@ -200,6 +200,22 @@ export default function PlannerPage() {
     loadTryOn.clear(chosen);
     setReviewed(previous => previous.filter(item => item.id !== chosen.id));
     setComparisonNotice("This outfit changed before it could be saved. Choose a current photo to continue.");
+    if (lastSavedId) {
+      // The first save closed the server draft. Keep this session's comparison
+      // and refresh the wardrobe without attempting to restore that closed draft.
+      const requested = window.location.href;
+      try {
+        const items = await api<Garment[]>("wardrobe");
+        if (window.location.href !== requested) return;
+        setGarments(items);
+        await step("compare");
+      } catch (error) {
+        if (window.location.href === requested) {
+          setActionError(error instanceof Error ? error.message : "Could not refresh your closet.");
+        }
+      }
+      return;
+    }
     await step("compare");
     setGarments(undefined);
     setLoadError("");

@@ -561,7 +561,10 @@ def run_flow(browser, device, base):
     context = browser.new_context(**device)
     page = context.new_page()
     page.goto(f"{base}/planner/")
-    expect(page.get_by_role("alert").filter(has_text="Sign in to open your planner.")).to_be_visible()
+    expect(page.get_by_role("button", name="Sign in to get started")).to_be_visible()
+    login = urlparse(page.url)
+    assert login.path == "/" and parse_qs(login.query)["returnTo"] == ["/planner"]
+    expect(page.get_by_role("contentinfo")).to_have_count(0)
     context.close()
 
 
@@ -1107,7 +1110,7 @@ def check_occasion_look(browser, device, base, session):
         expect(page.get_by_text("Studio model", exact=True)).to_have_count(0)
 
     if session == "returning-session":
-        # This fixture also produces a wardrobe-led photo, plus a dress rejected by its audit.
+        # This fixture also produces a wardrobe-led photo, plus a dress whose render fails.
         regular = compare_photo(page, "Choose look 1")
         expect(regular).to_be_visible()
         other_image = regular.evaluate("img => img.src")
@@ -1144,10 +1147,13 @@ def check_occasion_look(browser, device, base, session):
         assert occasion_review != first_review
         page.evaluate("history.go(-3)")
         expect(page).to_have_url(first_review)
-        reviewed = page.get_by_role("img", name="Full-body try-on of your selected look")
-        expect(reviewed).to_have_js_property("src", other_image)
+        # History for the first option now opens its saved detail instead of
+        # reopening a second save action for the same review.
+        expect(page.get_by_role("img", name="Full-body AI try-on for Charity gala")).to_have_js_property("src", other_image)
+        expect(page.get_by_role("button", name="Save outfit")).to_have_count(0)
         page.evaluate("history.go(3)")
         expect(page).to_have_url(occasion_review)
+        reviewed = page.get_by_role("img", name="Full-body try-on of your selected look")
         expect(reviewed).to_have_js_property("src", image_url)
     expect(page.get_by_text(heading, exact=True)).to_be_visible()
     if session == "returning-session":
@@ -1402,43 +1408,52 @@ def main():
     if not (output / "planner.html").is_file():
         raise SystemExit("Run npm run build before running the mobile browser test.")
 
-    with subprocess.Popen(
-        ["node", str(root / "tests/returning-mobile-server.mjs"), str(output)],
-        stdout=subprocess.PIPE,
-        text=True,
-    ) as server:
+    # Each journey starts with the same wardrobe. Only the deletion check depends
+    # on the look saved by run_flow, so those two run in one fixture.
+    cases = [
+        [(check_shared_navigation, ())],
+        [(check_session_invalidation, ())],
+        [(run_flow, ()), (check_wardrobe_deletion, ())],
+        [(check_two_catalog_basics, ("other-account",))],
+        [(check_two_catalog_basics, ("profile-only",))],
+        [(check_outfit_upload, ())],
+        [(check_automatic_cutout_retry, ())],
+        [(check_comparison_pieces, ())],
+        [(check_failed_photo_removal, ())],
+        [(check_occasion_look, ("returning-session",))],
+        [(check_occasion_look, ("empty-closet",))],
+        [(check_custom_outfit_styles, ())],
+        [(check_deferred_photo, ())],
+        [(check_wardrobe_session_expiry, ())],
+        [(check_wardrobe_return, ())],
+        [(check_journey_recovery, ())],
+        [(check_setup_recovery, ())],
+        [(check_saved_shortcuts, ())],
+        [(check_stale_draft_reviews, ())],
+    ]
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(executable_path=os.getenv("PLANNER_CHROMIUM"))
         try:
-            base = server.stdout.readline().strip()
-            if urlparse(base).hostname != "127.0.0.1":
-                raise RuntimeError("The planner test fixture did not start.")
-            with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(executable_path=os.getenv("PLANNER_CHROMIUM"))
-                try:
-                    device = playwright.devices["iPhone 13"]
-                    check_shared_navigation(browser, device, base)
-                    check_session_invalidation(browser, device, base)
-                    run_flow(browser, device, base)
-                    check_two_catalog_basics(browser, device, base, "other-account")
-                    check_two_catalog_basics(browser, device, base, "profile-only")
-                    check_wardrobe_deletion(browser, device, base)
-                    check_outfit_upload(browser, device, base)
-                    check_automatic_cutout_retry(browser, device, base)
-                    check_comparison_pieces(browser, device, base)
-                    check_failed_photo_removal(browser, device, base)
-                    check_occasion_look(browser, device, base, "returning-session")
-                    check_occasion_look(browser, device, base, "empty-closet")
-                    check_custom_outfit_styles(browser, device, base)
-                    check_deferred_photo(browser, device, base)
-                    check_wardrobe_session_expiry(browser, device, base)
-                    check_wardrobe_return(browser, device, base)
-                    check_journey_recovery(browser, device, base)
-                    check_setup_recovery(browser, device, base)
-                    check_saved_shortcuts(browser, device, base)
-                    check_stale_draft_reviews(browser, device, base)
-                finally:
-                    browser.close()
+            device = playwright.devices["iPhone 13"]
+            for journeys in cases:
+                with subprocess.Popen(
+                    ["node", str(root / "tests/returning-mobile-server.mjs"), str(output)],
+                    stdout=subprocess.PIPE,
+                    text=True,
+                ) as server:
+                    try:
+                        base = server.stdout.readline().strip()
+                        if urlparse(base).hostname != "127.0.0.1":
+                            raise RuntimeError("The planner test fixture did not start.")
+                        for check, args in journeys:
+                            check(browser, device, base, *args)
+                            print("PASS", check.__name__, *args, flush=True)
+                    finally:
+                        server.terminate()
+                        for context in browser.contexts:
+                            context.close()
         finally:
-            server.terminate()
+            browser.close()
     print("Returning-user mobile browser flow passed.")
 
 
