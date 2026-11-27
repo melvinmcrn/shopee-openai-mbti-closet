@@ -3,14 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "npm run build && npm start",
     "dev:frontend": "next dev",
     "dev:vercel": "CLOSET_TARGET=vercel next dev --webpack",
-    "build": "next build --webpack && node scripts/build-sites.mjs",
     "build:vercel": "CLOSET_TARGET=vercel next build --webpack",
     "start:vercel": "CLOSET_TARGET=vercel next start",
-    "prestart": "wrangler d1 migrations apply DB --local --config wrangler.local.jsonc",
-    "start": "wrangler dev --config wrangler.local.jsonc",
     "lint": "eslint",
     "test:storage": "node --test tests/storage-isolation.test.mjs"
   },
@@ -37,7 +33,6 @@
     "eslint-config-next": "16.4.6",
     "miniflare": "^4.20260730.0",
     "tailwindcss": "4.3.3",
-    "typescript": "^5",
-    "wrangler": "^4.166.0"
+    "typescript": "^5"
   }
 }
