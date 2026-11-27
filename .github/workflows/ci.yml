@@ -28,6 +28,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
+      # Generate Next route types (LayoutProps etc.) that tsc needs on a clean checkout
+      - run: npx next typegen
       - run: npm run typecheck
       - run: node --test
       - run: npm run build:vercel
