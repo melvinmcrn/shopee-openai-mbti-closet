@@ -97,3 +97,24 @@ Import `resolveAccount` from `src/app/api/_server/handle-api.mjs`, `userData` fr
 | Saved looks | Pass final selections to `saveLook({sourceOptionId, name, slots: [{slot, itemId}]})`. `getSavedLook(id)` returns the saved IDs and captured item names. `getOutfitOption(sourceOptionId)` returns the original slots. A missing or foreign source or an ineligible garment yields null. |
 
 For a shoe swap, keep the original option's shoes ID and pass the replacement shoes ID in the saved `shoes` slot. Reload both records in a fresh session to compare them.
+
+## Closet journey report
+
+Operators can run one read-only aggregate query against either deployment. The arguments are UTC dates, with the start included and the end excluded. For local D1, run
+
+```sh
+node scripts/closet-journeys.mjs d1 2026-12-01 2026-12-08 > /tmp/closet-journeys.sql
+npx wrangler d1 execute DB --local --config wrangler.local.jsonc --file /tmp/closet-journeys.sql
+```
+
+For PostgreSQL, use a configured read-only operator connection with SELECT access to `app.users` and `app.journey_activity`. The following uses the operator’s standard libpq connection settings.
+
+```sh
+node scripts/closet-journeys.mjs postgres 2026-12-01 2026-12-08 | psql -X -v ON_ERROR_STOP=1
+```
+
+- **First own look.** The denominator includes every account created during the window. An account succeeds when it saves a look containing at least one garment from its own wardrobe before the window ends. Starter samples, demo fixture cutouts and catalog pieces do not qualify. Time starts at account creation. The migration backfills existing saved looks. Future deletions preserve the first qualifying timestamp. Looks deleted before migration cannot be recovered.
+- **Returning visits.** A visit groups signed-in foreground page opens, planner navigation and recorded outcomes for one account across tabs and devices until 30 minutes of inactivity. Account creation anchors the initial visit. The report counts subsequent visits that start within the window and contain an observed open. Existing accounts returning after the inactivity threshold qualify on their first observed visit after rollout. Each visit can count once per outcome. The report shows setup and planner recovery separately and together. It also shows successful reopen, newly logged wear, and the first of reopen or wear.
+- **Reading the output.** `eligible` and `reached` are counts. `share_pct` is the percentage of eligible accounts or visits that reached the outcome by the exclusive end date. `median_seconds` uses successful accounts or visits only. An empty denominator or median appears as NULL. Visit times use the server’s first observation in the visit and have one-second resolution. Blocked or undelivered activity requests can leave visits or outcomes unobserved. Visit measurement starts at deployment.
+
+Activity records contain the internal account key, server time and a fixed activity type. The browser sends observations to the app’s own authenticated endpoint. The report outputs aggregates and runs through a database connection.

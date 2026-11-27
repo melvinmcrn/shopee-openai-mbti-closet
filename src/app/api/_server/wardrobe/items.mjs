@@ -21,18 +21,28 @@ function error(message, status) {
 }
 
 async function listItems(request, db, userId) {
-  const status = new URL(request.url).searchParams.get("status") ?? "active";
+  const params = new URL(request.url).searchParams;
+  const status = params.get("status") ?? "active";
   if (status !== "active" && status !== "draft") {
     return error("Invalid wardrobe status.", 400);
   }
 
   const confirmation = status === "active" ? "IS NOT NULL" : "IS NULL";
-  const { results } = await db.prepare(`
+  const list = db.prepare(`
     SELECT ${itemColumns}
     FROM wardrobe_items
     WHERE user_id = ? AND archived_at IS NULL AND confirmed_at ${confirmation}
     ORDER BY id DESC
-  `).bind(userId).all();
+  `).bind(userId);
+  if (status === "active" && params.get("includeDraftCount") === "1") {
+    const count = db.prepare(`
+      SELECT COUNT(*) AS total FROM wardrobe_items
+      WHERE user_id = ? AND archived_at IS NULL AND confirmed_at IS NULL
+    `).bind(userId);
+    const [active, drafts] = await db.batch([list, count]);
+    return Response.json({ items: active.results.map(itemView), draftCount: drafts.results[0].total });
+  }
+  const { results } = await list.all();
   return Response.json({ items: results.map(itemView) });
 }
 
@@ -46,11 +56,12 @@ async function updateItem(request, db, userId, itemId) {
   if (!data || typeof data !== "object" || Array.isArray(data)) {
     return error("Expected a JSON object.", 400);
   }
-  if (Object.hasOwn(data, "archive")) {
-    if (data.archive !== true || Object.keys(data).length !== 1) {
-      return error("Send archive by itself and set it to true.", 400);
+  if (Object.hasOwn(data, "archive") || Object.hasOwn(data, "discard")) {
+    const action = Object.hasOwn(data, "discard") ? "discard" : "archive";
+    if (data[action] !== true || Object.keys(data).length !== 1) {
+      return error(`Send ${action} by itself and set it to true.`, 400);
     }
-    return archiveItem(db, userId, itemId);
+    return archiveItem(db, userId, itemId, action === "discard");
   }
 
   const { name, category, garmentType, color, confirm } = data;
@@ -81,7 +92,7 @@ async function updateItem(request, db, userId, itemId) {
         garment_type = CASE WHEN ? THEN ? ELSE garment_type END,
         color = CASE WHEN ? THEN ? ELSE color END,
         confirmed_at = CASE WHEN ? THEN COALESCE(confirmed_at, CURRENT_TIMESTAMP) ELSE confirmed_at END
-    WHERE user_id = ? AND id = ? AND archived_at IS NULL
+    WHERE user_id = ? AND id = ? AND archived_at IS NULL ${confirm ? "AND confirmed_at IS NULL" : ""}
     RETURNING ${itemColumns}
   `).bind(
     name?.trim() ?? null,
@@ -94,18 +105,24 @@ async function updateItem(request, db, userId, itemId) {
     userId,
     itemId,
   ).first();
-  return updated ? Response.json({ item: itemView(updated) }) : error("Wardrobe item not found.", 404);
+  return updated ? Response.json({ item: itemView(updated) })
+    : error(confirm ? "Pending wardrobe draft not found." : "Wardrobe item not found.", 404);
 }
 
-async function archiveItem(db, userId, itemId) {
+async function archiveItem(db, userId, itemId, draftOnly) {
   // Keep outfit references and let a retry of the same archive succeed.
   const archived = await db.prepare(`
     UPDATE wardrobe_items
     SET archived_at = COALESCE(archived_at, CURRENT_TIMESTAMP)
-    WHERE user_id = ? AND id = ?
+    WHERE user_id = ? AND id = ? ${draftOnly ? "AND confirmed_at IS NULL" : ""}
     RETURNING id
   `).bind(userId, itemId).first();
-  return archived ? new Response(null, { status: 204 }) : error("Wardrobe item not found.", 404);
+  if (archived) return new Response(null, { status: 204 });
+  if (draftOnly && await db.prepare("SELECT id FROM wardrobe_items WHERE user_id = ? AND id = ? AND confirmed_at IS NOT NULL")
+    .bind(userId, itemId).first()) {
+    return error("This item has already been confirmed.", 409);
+  }
+  return error("Wardrobe item not found.", 404);
 }
 
 const affectedLookIds = `

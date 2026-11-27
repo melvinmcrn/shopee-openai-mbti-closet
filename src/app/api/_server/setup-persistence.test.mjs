@@ -120,7 +120,24 @@ async function jsonSuccess(response) {
   return response.json();
 }
 
-test("setup saves a private photo, three confirmed pieces, and optional styles across Google sessions", async (t) => {
+test("the closet can count pending drafts when it has no confirmed items", async (t) => {
+  const { env, signIn } = setup(t);
+  const owner = client(env, await signIn("closet-owner", "owner@example.com"));
+  const other = client(env, await signIn("other-owner", "other@example.com"));
+  const { user } = await jsonSuccess(await owner("/api/account", { method: "POST" }));
+  await env.DB.prepare("INSERT INTO private_files (file_id, user_id, state) VALUES ('photo', ?, 'ready')")
+    .bind(user.id).run();
+  const insert = env.DB.prepare(`
+    INSERT INTO wardrobe_items (user_id, name, category, archived_at, image_file_id) VALUES (?, ?, 'top', ?, 'photo')
+  `);
+  await insert.bind(user.id, "Pending shirt", null).run();
+  await insert.bind(user.id, "Archived draft", "archived").run();
+  const path = "/api/wardrobe/items?includeDraftCount=1";
+  assert.deepEqual(await jsonSuccess(await owner(path)), { items: [], draftCount: 1 });
+  assert.deepEqual(await jsonSuccess(await other(path)), { items: [], draftCount: 0 });
+});
+
+test("setup saves three pieces and styles without a photo, then persists a later photo across Google sessions", async (t) => {
   const { env, signIn } = setup(t);
   const firstCookie = await signIn("google-owner", "before@example.com");
   const owner = client(env, firstCookie);
@@ -184,16 +201,16 @@ test("setup saves a private photo, three confirmed pieces, and optional styles a
   assert.deepEqual(await jsonSuccess(await owner("/api/profile")), emptyProfile);
   assert.deepEqual(await jsonSuccess(await owner("/api/profile", setStyles)), { ...emptyProfile, styles });
   const completeSetup = { method: "PATCH", json: { complete: true } };
-  const blocked = await owner("/api/profile", completeSetup);
-  assert.equal(blocked.status, 409);
-  assert.equal((await blocked.json()).code, "profile_photo_required");
+  const withoutPhoto = await jsonSuccess(await owner("/api/profile", completeSetup));
+  assert.ok(Number.isFinite(Date.parse(withoutPhoto.setupCompletedAt)));
+  assert.deepEqual(withoutPhoto, { ...emptyProfile, styles, setupCompletedAt: withoutPhoto.setupCompletedAt });
 
   const photoForm = new FormData();
   photoForm.set("image", new Blob([png], { type: "image/png" }), "profile.png");
   const { facePhotoUrl } = await jsonSuccess(await owner("/api/profile/photo", { method: "PUT", form: photoForm }));
   assert.ok(facePhotoUrl.startsWith("/api/files/"));
   const completed = await jsonSuccess(await owner("/api/profile", completeSetup));
-  assert.ok(Number.isFinite(Date.parse(completed.setupCompletedAt)));
+  assert.equal(completed.setupCompletedAt, withoutPhoto.setupCompletedAt);
   assert.deepEqual(completed, { ...emptyProfile, styles, facePhotoUrl, setupCompletedAt: completed.setupCompletedAt });
 
   const records = userData(env.DB, originalSession.user.id);
@@ -263,4 +280,40 @@ test("setup saves a private photo, three confirmed pieces, and optional styles a
     assert.equal((await signedOut(path)).status, 401);
   }
   assert.equal((await signedOut("/api/profile", setStyles)).status, 401);
+});
+
+test("incomplete setup resumes saved drafts, style and ready in another session", async t => {
+  const { env, signIn } = setup(t);
+  const owner = client(env, await signIn("resume-owner", "owner@example.com"));
+  const resume = async () => (await jsonSuccess(await owner("/api/profile?resume=1"))).setupStage;
+  assert.equal(await resume(), "add");
+  const form = new FormData();
+  form.set("draftKey", crypto.randomUUID());
+  form.set("image", new Blob([png], { type: "image/png" }), "top.png");
+  await jsonSuccess(await owner("/api/wardrobe/upload", { method: "POST", form }));
+  assert.equal(await resume(), "confirm");
+  await jsonSuccess(await owner("/api/profile", { method: "PATCH", json: { setupStage: "style" } }));
+  assert.equal(await resume(), "style");
+  await jsonSuccess(await owner("/api/profile", { method: "PATCH", json: { styles: [], setupStage: "ready" } }));
+  const next = client(env, await signIn("resume-owner", "new@example.com"));
+  assert.equal((await jsonSuccess(await next("/api/profile?resume=1"))).setupStage, "ready");
+  const other = client(env, await signIn("resume-other", "other@example.com"));
+  assert.equal((await jsonSuccess(await other("/api/profile?resume=1"))).setupStage, "add");
+});
+
+test("journey activity accepts only signed-in same-origin observations for the current account", async t => {
+  const { env, signIn } = setup(t);
+  const owner = client(env, await signIn("journey-owner", "owner@example.com"));
+  const other = client(env, await signIn("journey-other", "other@example.com"));
+  const { user } = await jsonSuccess(await owner("/api/account", { method: "POST" }));
+  const url = "/api/journey";
+  const request = { method: "POST", json: { accountId: String(user.id), activity: "wear" } };
+  assert.equal((await client(env)(url, request)).status, 401);
+  assert.equal((await owner(url, { ...request, origin: "https://elsewhere.example" })).status, 403);
+  assert.equal((await other(url, request)).status, 403);
+  assert.equal((await owner(url, { ...request, json: { ...request.json, activity: "raw-user-content" } })).status, 400);
+  assert.equal((await owner(url, request)).status, 204);
+  assert.equal((await owner(url)).status, 405);
+  const { results } = await env.DB.prepare("SELECT user_id, activity FROM journey_activity").bind().all();
+  assert.deepEqual(results.map(row => ({ ...row })), [{ user_id: user.id, activity: "wear" }]);
 });

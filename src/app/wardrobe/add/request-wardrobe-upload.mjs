@@ -1,3 +1,5 @@
+import { checkSessionStatus, privateFetch } from "../../private-fetch.mjs";
+
 /**
  * @param {string} draftKey
  * @param {File} [image]
@@ -6,7 +8,7 @@ export function requestWardrobeUpload(draftKey, image) {
   const body = new FormData();
   body.set("draftKey", draftKey);
   if (image) body.set("image", image);
-  return fetch("/api/wardrobe/upload", { method: "POST", body });
+  return privateFetch("/api/wardrobe/upload", { method: "POST", body });
 }
 
 /** @typedef {{draftKey: string, image?: File}} BatchEntry */
@@ -51,6 +53,7 @@ export function requestWardrobeUploadBatch(entries, onProgress, signal) {
     xhr.upload.addEventListener("load", () => onProgress({ phase: "processing" }));
     xhr.addEventListener("load", () => {
       cleanup();
+      checkSessionStatus(xhr.status);
       resolve({ status: xhr.status, body: xhr.response });
     });
     xhr.addEventListener("error", () => fail("Wardrobe upload connection failed"));

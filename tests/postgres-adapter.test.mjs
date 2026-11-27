@@ -117,20 +117,41 @@ test("Postgres supports owner-scoped profiles, wardrobe items, and the planner",
     assert.equal((await owned.getActiveWardrobeItems(Object.values(garments).map(Number))).length, 3);
 
     const brief = await dispatchPlanner(env, owner.id, "saveBrief", {
-      occasion: "Dinner", comfort: "Loosely fitted", preferences: ["shoes", "top"],
+      occasion: "Dinner", comfort: "Loosely fitted", preferences: ["shoes", "top"], trackDraft: true,
     });
     assert.ok(Number.isSafeInteger(Number(brief.id)));
     assert.deepEqual(brief.preferences, ["shoes", "top"]);
+    assert.deepEqual(brief.styles, ["casual", "formal"]);
+    const edited = await dispatchPlanner(env, owner.id, "saveBrief", { ...brief, styles: [] });
+    assert.deepEqual(edited.styles, []);
+    assert.deepEqual(edited.preferences, brief.preferences);
     const extra = await owned.createOutfitRequest({
       occasion: "Lunch", comfortChoices: ["Warm"], clothingChoices: [{ category: "top", garmentType: "tee" }],
     });
+    assert.deepEqual(extra.styles, ["casual", "formal"]);
     assert.deepEqual(extra.comfortChoices, ["Warm"]);
     assert.deepEqual(extra.clothingChoices, [{ category: "top", garmentType: "tee" }]);
+    const revised = await dispatchPlanner(env, owner.id, "saveBrief", {
+      id: String(extra.id), occasion: extra.occasion, styles: ["Vintage"],
+    });
+    assert.deepEqual(revised.profileStyles, ["casual", "formal"]);
+    assert.deepEqual(revised.preferences, ["top"]);
+    assert.deepEqual((await owned.getOutfitRequest(extra.id)).clothingChoices, extra.clothingChoices);
+    assert.deepEqual((await dispatchPlanner(env, owner.id, "saveBrief", { ...revised, preferences: [] })).preferences, []);
 
+    const plannerDraft = await dispatchPlanner(env, owner.id, "resumePlanner");
+    assert.equal(plannerDraft.stage, "style");
+    assert.equal(await dispatchPlanner(env, visitor.id, "resumePlanner", { briefId: brief.id }), null);
+    const compare = await dispatchPlanner(env, owner.id, "setDraftStage", { briefId: brief.id, version: plannerDraft.version, stage: "compare" });
     const generated = await dispatchPlanner(env, owner.id, "generate", { briefId: brief.id }, {
       generateLooks: async () => ({ status: "ready", looks: [{ slots: garments, explanation: "A complete outfit" }] }),
     });
     const option = generated.looks[0];
+    const resumed = await dispatchPlanner(env, owner.id, "resumePlanner", { briefId: brief.id });
+    assert.deepEqual(resumed.looks.map(item => item.id), generated.looks.map(item => item.id));
+    await dispatchPlanner(env, owner.id, "setDraftStage", {
+      briefId: brief.id, stage: "refine", version: compare.version, optionId: option.id,
+    });
     assert.deepEqual((await dispatchPlanner(env, owner.id, "option", { id: option.id })).slots, garments);
     const look = await dispatchPlanner(env, owner.id, "save", { optionId: option.id, slots: garments });
     assert.equal(look.slots.shoes.id, garments.shoes);
@@ -146,7 +167,15 @@ test("Postgres supports owner-scoped profiles, wardrobe items, and the planner",
     const [hidden] = await dispatchPlanner(env, owner.id, "list");
     assert.deepEqual(hidden.enhancements, []);
     assert.deepEqual(await dispatchPlanner(env, visitor.id, "list"), []);
-    const wear = await dispatchPlanner(env, owner.id, "wearAdd", { lookId: look.id, date: "2026-11-21" });
+    const day = { date: "2026-11-21" };
+    const wears = await Promise.all(Array.from({ length: 8 },
+      () => dispatchPlanner(env, owner.id, "wearAdd", { lookId: look.id, ...day })));
+    const [wear] = wears;
+    assert.equal(new Set(wears.map(entry => entry.id)).size, 1);
+    assert.equal(wears.filter(entry => entry.created).length, 1);
+    assert.equal((await dispatchPlanner(env, owner.id, "wearList", { lookId: look.id })).length, 1);
+    assert.deepEqual((await dispatchPlanner(env, owner.id, "recentLook", day)).wear, { id: wear.id, ...day });
+    assert.equal(await dispatchPlanner(env, visitor.id, "recentLook", day), null);
     await dispatchPlanner(env, owner.id, "wearUpdate", { id: wear.id, rating: 5 });
     assert.equal((await dispatchPlanner(env, owner.id, "wearGet", { id: wear.id })).rating, 5);
 

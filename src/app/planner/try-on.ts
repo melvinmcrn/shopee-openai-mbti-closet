@@ -1,8 +1,9 @@
 import type { CatalogProduct } from "./enhancement";
 import { catalogListingKey } from "./catalog-listing.mjs";
-import { api, type CompletedLook, type Look } from "./shared";
+import { api, type CompletedLook, type Look, type PhotoClothes } from "./shared";
 
-export type TryOnResult = { imageRef: string | null; useProfilePhoto?: boolean; effectiveSlots?: Record<string, string> };
+export type OutfitPieces = { products: CatalogProduct[]; effectiveSlots: Record<string, string>; photoClothes: PhotoClothes };
+export type TryOnResult = { imageRef: string | null; photoClothes?: PhotoClothes; useProfilePhoto?: boolean; effectiveSlots?: Record<string, string> };
 
 export async function requestTryOn(action: "preview" | "savedPreview", input: object): Promise<TryOnResult> {
   const controller = new AbortController();
@@ -20,17 +21,20 @@ export async function requestTryOn(action: "preview" | "savedPreview", input: ob
   }
 }
 
-async function completeLook(look: Look): Promise<CompletedLook | null> {
-  const selection = { optionId: look.id, slots: look.slots };
-  const products = await api<CatalogProduct[]>("enhancements", selection, AbortSignal.timeout(270_000));
-  const photo = await requestTryOn("preview", {
-    ...selection, catalogItemIds: products.map(product => product.id), catalogListings: products.map(catalogListingKey),
+function prepareLook(look: Look) {
+  const selection = { optionId: look.id, slots: look.slots, includePieces: true };
+  const pieces = api<OutfitPieces>("enhancements", selection, AbortSignal.timeout(270_000));
+  const preview = pieces.then(async ({ products, effectiveSlots, photoClothes }): Promise<CompletedLook | null> => {
+    const photo = await requestTryOn("preview", {
+      ...selection, catalogItemIds: products.map(product => product.id), catalogListings: products.map(catalogListingKey),
+    });
+    return photo.imageRef ? { ...look, effectiveSlots, photoClothes, ...photo, imageRef: photo.imageRef, products } : null;
   });
-  return photo.imageRef ? { ...look, ...photo, imageRef: photo.imageRef, products } : null;
+  return { pieces, preview };
 }
 
 export function createTryOnLoader() {
-  const requests = new Map<string, Promise<CompletedLook | null>>();
+  const requests = new Map<string, ReturnType<typeof prepareLook>>();
   function key(look: Look) {
     return JSON.stringify([look.id, Object.entries(look.slots).sort(([a], [b]) => a.localeCompare(b))]);
   }
@@ -38,9 +42,7 @@ export function createTryOnLoader() {
     const selection = key(look);
     const existing = requests.get(selection);
     if (existing) return existing;
-    const request = completeLook(look).finally(() => {
-      if (requests.get(selection) === request) requests.delete(selection);
-    });
+    const request = prepareLook(look);
     requests.set(selection, request);
     return request;
   }

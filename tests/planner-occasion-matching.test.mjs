@@ -5,7 +5,7 @@ import test from "node:test";
 import { generateOccasionLook } from "../src/app/api/_server/planner/occasion-look.mjs";
 
 const brief = { occasion: "Gallery opening", timing: "Evening", location: "Indoors",
-  formality: "Smart casual", comfort: "Standing", preferences: ["top", "bottom"] };
+  formality: "Smart casual", comfort: "Standing", preferences: ["top", "bottom"], styles: ["Classic", "Vintage"] };
 const pieces = [
   { category: "top", description: "A navy ribbed sweater" },
   { category: "bottom", description: "Straight black trousers" },

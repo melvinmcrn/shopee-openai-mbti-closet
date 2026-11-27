@@ -1,13 +1,15 @@
 "use client";
 
+import { formatWearDate, localDate } from "./wear-date";
 import { SavedPhoto } from "./saved-photo";
 import { WardrobePhotos } from "./wardrobe-photos";
 import { EnhancementProduct, type CatalogProduct } from "./enhancement";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { api, occasionLookLabel, type SavedLook } from "./shared";
+import { addWear, api, occasionLookLabel, type SavedLook } from "./shared";
 
 type DetailProps = {
   onCompare?: () => void;
+  onOpened: (id: string) => void;
   id: string;
   onWear: (id: string) => void;
   onBack: () => void;
@@ -60,19 +62,6 @@ function SectionError({ error, retry, label }: { error: string; retry: () => voi
   );
 }
 
-function localDate() {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${now.getFullYear()}-${month}-${day}`;
-}
-
-function formatWearDate(date: string) {
-  const day = new Date(`${date}T00:00:00Z`);
-  if (Number.isNaN(day.getTime())) return date;
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(day);
-}
-
 function WearHistory({ lookId, onWear }: { lookId: string; onWear: DetailProps["onWear"] }) {
   const { result, retry } = useLookItems<Wear>("wearList", lookId);
   const [date, setDate] = useState(localDate);
@@ -95,7 +84,7 @@ function WearHistory({ lookId, onWear }: { lookId: string; onWear: DetailProps["
     setSaving(true);
     setSaveError("");
     try {
-      const entry = await api<Wear>("wearAdd", { lookId, date });
+      const entry = await addWear(lookId, date);
       if (active.current) onWear(entry.id);
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could not log this wear.");
@@ -238,7 +227,7 @@ function ShoppingSuggestions({ lookId, result, retry, suggestions, onHidden }: {
   );
 }
 
-function SavedDetail({ id, onWear, onBack, onCompare }: DetailProps) {
+function SavedDetail({ id, onOpened, onWear, onBack, onCompare }: DetailProps) {
   const [result, setResult] = useState<DetailResult>();
   const [attempt, setAttempt] = useState(0);
 
@@ -255,7 +244,10 @@ function SavedDetail({ id, onWear, onBack, onCompare }: DetailProps) {
     let active = true;
     api<SavedLook | null>("detail", { id })
       .then((look) => {
-        if (active) setResult(look ? { look } : { error: "This saved look is unavailable." });
+        if (active) {
+          setResult(look ? { look } : { error: "This saved look is unavailable." });
+          if (look) onOpened(id);
+        }
       })
       .catch((error: unknown) => {
         if (active) {
@@ -265,7 +257,7 @@ function SavedDetail({ id, onWear, onBack, onCompare }: DetailProps) {
     return () => {
       active = false;
     };
-  }, [id, attempt]);
+  }, [id, attempt, onOpened]);
 
   const catalogItemIds = suggestions?.map(item => item.catalogItemId);
   const error = result && "error" in result ? result.error : undefined;

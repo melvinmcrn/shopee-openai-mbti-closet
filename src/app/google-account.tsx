@@ -2,36 +2,44 @@
 
 import Image from "next/image";
 import { useEffect, useState } from "react";
+import { useAccountSession } from "./account-session";
+import { privateFetch } from "./private-fetch.mjs";
+import { returnDestination } from "./return-destination.mjs";
 import { SignOutButton } from "./sign-out-button";
 
 export function GoogleAccount() {
-  const [account, setAccount] = useState<{ name?: string; email?: string } | null>(null);
+  const { user: account, status: sessionStatus } = useAccountSession();
+  const [callbackUrl, setCallbackUrl] = useState("/");
   const [csrfToken, setCsrfToken] = useState("");
   const [status, setStatus] = useState<"loading" | "ready" | "unavailable">("loading");
 
   useEffect(() => {
+    if (sessionStatus === "checking" || sessionStatus === "unavailable") return;
     const controller = new AbortController();
     async function loadAccount() {
       try {
-        const response = await fetch("/api/account", {
-          method: "POST",
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if (!response.ok) throw new Error("Account endpoint unavailable");
-        const session = await response.json();
-        if (controller.signal.aborted) return;
-
-        if (session?.user) {
-          setAccount(session.user);
-          const profileResponse = await fetch("/api/profile", {
+        const url = new URL(window.location.href);
+        const destination = returnDestination(url.searchParams.get("returnTo"), url.origin);
+        if (account) {
+          if (destination) {
+            window.location.replace(destination);
+            return;
+          }
+          const profileResponse = await privateFetch("/api/profile?resume=1", {
             cache: "no-store",
             signal: controller.signal,
           });
           if (!profileResponse.ok) throw new Error("Profile endpoint unavailable");
           const profile = await profileResponse.json();
           if (!controller.signal.aborted) {
-            window.location.replace(profile.setupCompletedAt ? "/planner" : "/profile/details");
+            const destinations: Record<string, string> = {
+              confirm: "/wardrobe/confirm?from=onboarding", style: "/profile/style", ready: "/profile/ready",
+            };
+            const stage = profile.setupStage;
+            if (!profile.setupCompletedAt && Object.hasOwn(destinations, stage)) {
+              window.dispatchEvent(new CustomEvent("closet:journey-resumed", { detail: { journey: "setup", stage } }));
+            }
+            window.location.replace(profile.setupCompletedAt ? "/planner" : destinations[stage] ?? "/wardrobe/add?from=onboarding");
           }
           return;
         }
@@ -46,6 +54,7 @@ export function GoogleAccount() {
           throw new Error("Sign-in token unavailable");
         }
         if (controller.signal.aborted) return;
+        setCallbackUrl(destination ?? "/");
         setCsrfToken(csrfToken);
         setStatus("ready");
       } catch {
@@ -54,9 +63,9 @@ export function GoogleAccount() {
     }
     void loadAccount();
     return () => controller.abort();
-  }, []);
+  }, [account, sessionStatus]);
 
-  if (status === "loading") {
+  if (sessionStatus !== "unavailable" && status === "loading") {
     return (
       <p className="pt-4 text-center text-sm text-supporting" role="status">
         {account ? "Opening Closet…" : "Checking sign-in…"}
@@ -64,7 +73,7 @@ export function GoogleAccount() {
     );
   }
 
-  if (status === "unavailable") {
+  if (sessionStatus === "unavailable" || status === "unavailable") {
     return account ? (
       <div className="flex flex-col gap-2 rounded-2xl bg-selected p-4">
         <p className="text-sm text-text" role="status">Your profile is unavailable right now.</p>
@@ -81,6 +90,7 @@ export function GoogleAccount() {
   return (
     <form className="w-full" action="/api/auth/signin/google" method="post" target="_top">
       <input type="hidden" name="csrfToken" value={csrfToken} />
+      <input type="hidden" name="callbackUrl" value={callbackUrl} />
       <button
         aria-describedby="google-sign-in-note"
         className="flex min-h-[54px] w-full items-center justify-center gap-3 rounded-[9px] bg-primary px-5 py-3 text-xl font-bold text-on-primary shadow-sm transition hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-secondary focus-visible:ring-offset-2 focus-visible:ring-offset-canvas active:scale-[0.99]"

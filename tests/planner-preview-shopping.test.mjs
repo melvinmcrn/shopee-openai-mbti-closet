@@ -31,7 +31,7 @@ function d1Binding(database) {
             : params;
           return {
             async first() { return statement.get(...bindings) ?? null; },
-            async all() { return { results: statement.all(...bindings) }; },
+            all() { return { results: statement.all(...bindings) }; },
             async run() { return statement.run(...bindings); },
           };
         },
@@ -41,7 +41,7 @@ function d1Binding(database) {
       database.exec("BEGIN");
       try {
         const results = [];
-        for (const statement of statements) results.push(await statement.all());
+        for (const statement of statements) results.push(statement.all());
         database.exec("COMMIT");
         return results;
       } catch (error) {
@@ -121,6 +121,7 @@ async function startPlanner(t, preview, optionSlots = original, shoppingFetch, c
     formality: "",
     comfort: "",
     preferences: [],
+    styles: ["Minimalist"],
   });
   const { looks: [option] } = await dispatch("generate", { briefId: brief.id });
   return { dispatch, makeSession, optionId: option.id, database };
@@ -142,6 +143,35 @@ test("preparing a try-on keeps the brief editable until the account photo is rea
 
   bucket.get.mock.mockImplementation(async ref => ref === profileRef ? portrait() : null);
   assert.deepEqual(await dispatch("prepareTryOn", input), { status: "ready", brief: input });
+});
+
+test("Home returns only the latest owned look and its wear for the requested day", async t => {
+  const { dispatch, makeSession, optionId, database } = await startPlanner(t);
+  const day = { date: "2026-11-26" };
+  assert.equal(await dispatch("recentLook", day), null);
+  const first = await dispatch("save", { optionId, slots: original });
+  const second = await dispatch("save", { optionId, slots: refined });
+  database.prepare("UPDATE saved_looks SET saved_at = '2026-11-25 08:00:00'").run();
+  const summary = { id: second.id, occasion: second.occasion, wear: null };
+  assert.deepEqual(await dispatch("recentLook", day), summary);
+  assert.equal(await makeSession(2)("recentLook", day), null);
+  await assert.rejects(makeSession(2)("wearAdd", { lookId: second.id, ...day }), { status: 404 });
+  const entry = await dispatch("wearAdd", { lookId: second.id, ...day });
+  assert.equal(entry.created, true);
+  await dispatch("wearUpdate", { id: entry.id, rating: 4, note: "Wore it to lunch." });
+  const retry = await dispatch("wearAdd", { lookId: second.id, ...day });
+  assert.equal(retry.created, false);
+  assert.equal(retry.id, entry.id);
+  assert.equal(retry.note, "Wore it to lunch.");
+  assert.equal(retry.rating, 4);
+  const wear = { id: entry.id, ...day };
+  assert.deepEqual(await dispatch("recentLook", day), { ...summary, wear });
+  assert.deepEqual((await dispatch("list", day)).map(look => look.wear), [wear, null]);
+  assert.equal((await dispatch("recentLook", { date: "2026-11-27" })).wear, null);
+  database.prepare("UPDATE saved_looks SET saved_at = '2026-11-26T07:00:00.000Z' WHERE id = ?").run(second.id);
+  database.prepare("UPDATE saved_looks SET saved_at = '2026-11-26 18:00:00' WHERE id = ?").run(first.id);
+  assert.equal((await dispatch("recentLook", day)).id, first.id);
+  assert.equal((await dispatch("wearList", { lookId: second.id })).length, 1);
 });
 
 test("deleting a garment confirms exactly the saved looks containing its final slot", async (t) => {
@@ -306,7 +336,7 @@ test("preview sends the owned profile first and uses the final shoe", async (t) 
   assert.deepEqual(Buffer.from(await stored.arrayBuffer()), jpeg);
 });
 
-test("a profile photo and a jacket can generate an incomplete outfit preview", async t => {
+test("a profile photo and a jacket can render with neutral basics without inventing wardrobe pieces", async t => {
   const jacket = { id: "13", category: "outerwear", name: "Denim jacket", imageRef: "jacket.png" };
   const preview = {
     profilePhotoRef: async () => "headshot.png",
@@ -320,9 +350,10 @@ test("a profile photo and a jacket can generate an incomplete outfit preview", a
     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`).run(jacket.id, accountId, jacket.name, jacket.category, jacket.imageRef);
   const result = await dispatch("preview", { optionId, slots: { outerwear: jacket.id }, useProfilePhoto: true });
   assert.deepEqual(result, { imageRef: "full-body.jpg", useProfilePhoto: true });
+  const [edit] = preview.fetch.mock.calls.map(call => call.arguments[1].body);
   assert.equal(preview.fetch.mock.callCount(), 1);
-  const { body } = preview.fetch.mock.calls[0].arguments[1];
-  assert.match(body.get("prompt"), /fill missing clothing with simple neutral basics/);
+  assert.equal(edit.getAll("image[]").length, 2);
+  assert.match(edit.get("prompt"), /fill missing clothing with simple neutral basics/);
 });
 
 test("saved looks only expose a current portrait-keyed and outfit-matching cache", async t => {
@@ -414,6 +445,7 @@ test("Decisions selects a Shopee catalog product from the final outfit and the o
   assert.equal(payload.model, "gpt-6-luna");
   const evidence = payload.input[1].content[0].data;
   assert.equal(evidence.occasion, "Anniversary dinner");
+  assert.deepEqual(evidence.styles, ["Minimalist"]);
   assert.deepEqual(evidence.outfit.sort((a, b) => a.slot.localeCompare(b.slot)), [
     { slot: "dress", category: "dress", name: "Column dress", color: "midnight blue" },
     { slot: "shoes", category: "shoes", name: "Walking flats", color: "silver" },
@@ -714,6 +746,23 @@ test("a profile-only option can offer both missing categories from an empty clos
   assert.equal(new Set(products.map(product => product.id)).size, 2);
 });
 
+test("comparison discloses effective closet pieces, retained profile clothing and catalog prices before rendering", async t => {
+  const slots = { accessory: necklace.id };
+  const product = { id: "jacket", title: "Linen jacket", price: 350, currency: "THB", searchTerm: "men jacket" };
+  const evaluate = t.mock.fn(async () => [product]);
+  const { dispatch, optionId } = await startPlanner(t, undefined, slots, undefined, {
+    dependencies: {
+      readBaseCoverage: async () => ({ top: true, bottom: true, outerwear: true, dress: false, shoes: false }),
+      evaluateEnhancements: evaluate,
+    },
+  });
+  const pieces = await dispatch("enhancements", { optionId, slots, includePieces: true });
+  assert.deepEqual(pieces.effectiveSlots, { ...slots, shoes: heels.id });
+  assert.deepEqual(pieces.photoClothes, { profile: ["top", "bottom"], original: [] });
+  assert.deepEqual(pieces.products, [product]);
+  assert.equal(evaluate.mock.callCount(), 1);
+});
+
 test("a headshot is completed with the exact stored catalog images chosen by Elevate your look", async t => {
   const preview = {
     readImage: t.mock.fn(async ref => ref === profileRef ? portrait() : new Blob([ref], { type: "image/jpeg" })),
@@ -980,4 +1029,95 @@ test("a legacy saved photo stays hidden and cannot be pinned as a newly audited 
   const saved = await dispatch("save", { optionId, slots: refined });
   assert.equal(saved.previewRef, null);
   await assert.rejects(dispatch("save", { optionId, slots: refined, previewRef: "old-photo", catalogItemIds: [] }), { status: 409 });
+});
+
+test("planner recovery restores owned options and closes superseded and saved drafts", async t => {
+  const { dispatch, makeSession } = await startPlanner(t);
+  const brief = await dispatch("saveBrief", { occasion: "Sunday lunch", trackDraft: true });
+  const draft = await dispatch("resumePlanner");
+  assert.equal(draft?.brief.id, brief.id);
+  assert.equal(draft.stage, "style");
+  assert.equal(await makeSession(2)("resumePlanner", { briefId: brief.id }), null);
+  await dispatch("prepareTryOn", { ...brief, trackDraft: true, version: draft.version });
+  const { looks } = await dispatch("generate", { briefId: brief.id });
+  const comparison = await dispatch("resumePlanner", { briefId: brief.id });
+  assert.equal(comparison.stage, "compare");
+  assert.deepEqual(comparison.looks.map(look => look.id), looks.map(look => look.id));
+  await dispatch("setDraftStage", { briefId: brief.id, version: comparison.version, stage: "refine", optionId: looks[0].id });
+  const review = await dispatch("resumePlanner");
+  assert.equal(review.optionId, looks[0].id);
+  await assert.rejects(dispatch("setDraftStage", { briefId: brief.id, version: comparison.version, stage: "closed" }), error => error.status === 409);
+  await dispatch("save", { optionId: looks[0].id, slots: looks[0].slots });
+  assert.equal(await dispatch("resumePlanner"), null);
+  assert.equal(await dispatch("resumePlanner", { briefId: brief.id }), null);
+});
+
+test("an older wardrobe return can resume its original brief, while a current draft wins over old links", async t => {
+  const { dispatch, optionId } = await startPlanner(t);
+  const { briefId } = await dispatch("option", { id: optionId });
+  const original = await dispatch("resumePlanner", { briefId });
+  assert.equal(original.stage, "compare");
+  assert.equal(original.looks[0].id, optionId);
+  const selected = await dispatch("setDraftStage", { briefId, stage: "refine", optionId });
+  assert.equal((await dispatch("resumePlanner")).optionId, optionId);
+  await dispatch("setDraftStage", { briefId, stage: "closed", version: selected.version });
+  const next = await dispatch("saveBrief", { occasion: "Gallery", trackDraft: true });
+  assert.equal(await dispatch("resumePlanner", { briefId }), null);
+  assert.equal((await dispatch("resumePlanner")).brief.id, next.id);
+});
+
+test("editing a brief starts a new comparison without resurrecting options from its previous run", async t => {
+  const { dispatch } = await startPlanner(t);
+  const draft = await dispatch("saveBrief", { occasion: "Gallery", trackDraft: true });
+  const first = (await dispatch("prepareTryOn", { ...draft, trackDraft: true })).brief;
+  const { looks } = await dispatch("generate", { briefId: first.id });
+  const edited = (await dispatch("prepareTryOn", { ...first, comfort: "Loose fit", trackDraft: true })).brief;
+  assert.deepEqual((await dispatch("resumePlanner")).looks, []);
+  await assert.rejects(dispatch("setDraftStage", {
+    briefId: edited.id, stage: "refine", optionId: looks[0].id, version: edited.version,
+  }), error => error.status === 409);
+  await assert.rejects(dispatch("saveBrief", { ...first, comfort: "Stale", trackDraft: true }), error => error.status === 409);
+  assert.equal((await dispatch("resumePlanner")).brief.comfort, "Loose fit");
+});
+
+async function selectedDraft(t) {
+  const { previewSelection } = await import("../src/app/api/_server/planner/preview-files.mjs");
+  const { dispatch, makeSession, database } = await startPlanner(t);
+  const brief = await dispatch("saveBrief", { occasion: "Wedding", trackDraft: true });
+  const { looks: [look] } = await dispatch("generate", { briefId: brief.id });
+  const previewRef = "private/1/30000000-0000-4000-8000-000000000004";
+  const selection = previewSelection({ dress, shoes: heels }, true, [], profileRef);
+  database.prepare("INSERT INTO private_files(file_id,user_id,state) VALUES (?,1,'ready')").run(previewRef);
+  database.prepare("INSERT INTO planner_previews VALUES (1,?,?,?)").run(look.id, selection, previewRef);
+  const { version } = await dispatch("setDraftStage", { briefId: brief.id, stage: "refine", version: brief.version, optionId: look.id, previewRef });
+  return { dispatch, makeSession, database, brief, look, selection, version, previewRef, save: {
+    optionId: look.id, slots: look.slots, previewRef, catalogItemIds: [], draftVersion: version,
+  } };
+}
+
+test("a restored review reads the exact selected file and refuses an evicted or replaced photo", async t => {
+  const { dispatch, makeSession, database, brief, look, previewRef, version, selection } = await selectedDraft(t);
+  const input = { briefId: brief.id, optionId: look.id, version };
+  assert.equal((await dispatch("restoreReview", input)).imageRef, previewRef);
+  await assert.rejects(makeSession(2)("restoreReview", input), { status: 409 });
+  database.prepare("DELETE FROM planner_previews WHERE file_id=?").run(previewRef);
+  const replacement = "private/1/40000000-0000-4000-8000-000000000004";
+  database.prepare("INSERT INTO private_files(file_id,user_id,state) VALUES (?,1,'ready')").run(replacement);
+  database.prepare("INSERT INTO planner_previews VALUES (1,?,?,?)").run(look.id, selection, replacement);
+  await assert.rejects(dispatch("restoreReview", input), { status: 409 });
+});
+
+test("discarding a reviewed draft prevents a stale tab from saving its outfit", async t => {
+  const { dispatch, database, brief, version, save } = await selectedDraft(t);
+  await dispatch("setDraftStage", { briefId: brief.id, stage: "closed", version });
+  await assert.rejects(dispatch("save", save), { status: 409 });
+  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM saved_looks").get().count, 0);
+});
+
+test("two tabs saving one reviewed draft produce exactly one outfit", async t => {
+  const { dispatch, database, save } = await selectedDraft(t);
+  const results = await Promise.allSettled([dispatch("save", save), dispatch("save", save)]);
+  assert.equal(results.filter(item => item.status === "fulfilled").length, 1);
+  assert.equal(results.find(item => item.status === "rejected").reason.status, 409);
+  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM saved_looks").get().count, 1);
 });

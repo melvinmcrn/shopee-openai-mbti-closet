@@ -61,10 +61,24 @@ function selectSlots(table, lookKey, lookId) {
   )`;
 }
 
-async function readLooks(db, accountId, id, knownCoverage) {
+// The look in each outer query is already scoped to the signed-in account.
+const wearOnDate = `(SELECT CAST(wear.id AS TEXT) FROM wear_feedback AS wear
+  WHERE wear.saved_look_id = look.id AND substr(wear.worn_at, 1, 10) = ?
+  ORDER BY wear.id DESC LIMIT 1)`;
+
+export async function recentLook(db, accountId, date) {
+  const row = await db.prepare(`
+    SELECT CAST(look.id AS TEXT) AS id, look.name AS occasion, ${wearOnDate} AS wear_id
+    FROM saved_looks AS look WHERE look.user_id = ?
+    ORDER BY strftime('%Y-%m-%dT%H:%M:%fZ', look.saved_at) DESC, look.id DESC LIMIT 1
+  `).bind(date, accountId).first();
+  return row && { id: row.id, occasion: row.occasion, wear: row.wear_id ? { id: row.wear_id, date } : null };
+}
+
+async function readLooks(db, accountId, id, knownCoverage, wearDate) {
   // The optional photo mode is absent before migration 0109; the mapping treats it as null.
   const { results } = await db.prepare(`
-    SELECT look.*, photo.file_id AS profile_ref,
+    SELECT look.*, photo.file_id AS profile_ref, ${wearDate ? wearOnDate + " AS wear_id," : ""}
       (SELECT json_group_object(preview.selection, preview.file_id) FROM planner_previews AS preview
        WHERE preview.user_id = look.user_id AND preview.option_id = look.source_option_id) AS previews, look.name AS occasion, option.explanation,
       strftime('%Y-%m-%dT%H:%M:%fZ', look.saved_at) AS created_at,
@@ -79,7 +93,7 @@ async function readLooks(db, accountId, id, knownCoverage) {
     JOIN outfit_requests AS request ON request.user_id = look.user_id AND request.id = run.request_id
     WHERE look.user_id = ? ${id === undefined ? "" : "AND look.id = ?"}
     ORDER BY created_at DESC, look.id DESC
-  `).bind(...(id === undefined ? [accountId] : [accountId, id])).all();
+  `).bind(...(wearDate ? [wearDate] : []), accountId, ...(id === undefined ? [] : [id])).all();
 
   if (!results.length) return [];
   const selections = results.map(row => JSON.parse(row.slots));
@@ -143,6 +157,7 @@ async function readLooks(db, accountId, id, knownCoverage) {
       previewRef,
       enhancements,
       enhancement: enhancements[0] ?? null,
+      ...(wearDate && { wear: row.wear_id ? { id: row.wear_id, date: wearDate } : null }),
       occasion: row.occasion,
       slots,
       originalSlots,
@@ -156,7 +171,7 @@ function stalePreview() {
   return Object.assign(new Error("This try-on no longer matches the selected items. Reopen the outfit and try again."), { status: 409 });
 }
 
-async function verifyPreview(db, accountId, option, slots, garments, rendered) {
+export async function verifyPreview(db, accountId, option, slots, garments, rendered) {
   const { previewRef, catalogItemIds } = rendered;
   if (typeof previewRef !== "string" || !previewRef || !Array.isArray(catalogItemIds) ||
       catalogItemIds.some(id => typeof id !== "string") || new Set(catalogItemIds).size !== catalogItemIds.length) {
@@ -213,14 +228,20 @@ export async function saveLook(db, accountId, sourceOption, slots, garments, ren
       throw new TypeError("The catalog pieces for this outfit are unavailable.");
     }
   }
+  // The version and selected file must still match inside the atomic save batch.
+  // A stale claim yields NULL for the required owner and rolls back every write.
+  const guardedOwner = rendered?.draftVersion != null ? `(SELECT d.user_id FROM outfit_requests d
+    JOIN generation_runs r ON r.request_id = d.id JOIN outfit_options o ON o.run_id = r.id
+    WHERE d.user_id = ?1 AND o.id = ?2 AND d.resume_stage = 'refine'
+      AND d.resume_option_id = o.id AND d.resume_version = ?6 AND d.resume_preview_file_id = ?4)` : "?1";
   const writes = [
     db.prepare(`
       INSERT INTO saved_looks (id, user_id, source_option_id, name, saved_at${pin ? ", pinned_preview_file_id, pinned_preview_selection" : ""})
-      VALUES ((SELECT id FROM next_saved_look_id), ?1, ?2,
+      VALUES ((SELECT id FROM next_saved_look_id), ${guardedOwner}, ?2,
         (SELECT title FROM outfit_options WHERE user_id = ?1 AND id = ?2), ?3${pin ? ", ?4, ?5" : ""})
       RETURNING id
     `).bind(accountId, optionId, new Date().toISOString(),
-      ...(pin ? [pin.file, pin.selection] : [])),
+      ...(pin ? [pin.file, pin.selection] : []), ...(rendered?.draftVersion != null ? [rendered.draftVersion] : [])),
   ];
   if (pin?.products.length) {
     // The D1 catalog table is WITHOUT ROWID so this insert preserves the saved
@@ -254,16 +275,24 @@ export async function saveLook(db, accountId, sourceOption, slots, garments, ren
     `).bind(accountId, JSON.stringify(pin?.effective ?? snapshot)),
   );
   try {
+    writes.push(db.prepare(`
+      UPDATE outfit_requests SET resume_stage = 'closed', resume_option_id = NULL, resume_preview_file_id = NULL, resume_version = NULL
+      WHERE user_id = ? AND id = (SELECT r.request_id FROM generation_runs r JOIN outfit_options o ON o.run_id = r.id WHERE o.id = ?)
+        AND resume_stage IS NOT NULL AND resume_stage <> 'closed'
+        AND resume_after_run < (SELECT run_id FROM outfit_options WHERE id = ? AND user_id = ?)
+        ${rendered?.draftVersion ? "AND resume_version = ?" : ""}
+    `).bind(accountId, sourceOption.id, sourceOption.id, accountId, ...(rendered?.draftVersion ? [rendered.draftVersion] : [])));
     const [insert] = await db.batch(writes);
     return getLook(db, accountId, String(insert.results[0].id));
   } catch (error) {
+    if (rendered?.draftVersion != null && /saved_looks\.user_id|null value in column "user_id" of relation "saved_looks"/i.test(error.message)) throw stalePreview();
     if (pin && /selected try-on has changed|Private file is unavailable|Selected garment changed|saved_look_catalog_items\.item_id|null value in column "item_id" of relation "saved_look_catalog_items"/i.test(error.message)) throw stalePreview();
     throw error;
   }
 }
 
-export function listLooks(db, accountId) {
-  return readLooks(db, accountId);
+export function listLooks(db, accountId, wearDate) {
+  return readLooks(db, accountId, undefined, undefined, wearDate);
 }
 
 export async function getLook(db, accountId, id, knownCoverage) {

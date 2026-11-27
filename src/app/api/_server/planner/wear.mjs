@@ -17,7 +17,7 @@ function requireId(id) {
   return id;
 }
 
-function requireDate(date) {
+export function requireWearDate(date) {
   if (typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date) && !date.startsWith("0000")) {
     const parsed = new Date(date + "T00:00:00Z");
     if (Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date) {
@@ -50,17 +50,17 @@ async function listEntries(db, accountId, lookId) {
 }
 
 async function addEntry(db, accountId, lookId, date) {
-  await db.prepare(
+  const insert = db.prepare(
     `INSERT INTO wear_feedback (saved_look_id, worn_at)
      SELECT look.id, ? FROM saved_looks AS look
      WHERE look.id = ? AND look.user_id = ?
      AND NOT EXISTS (
        SELECT 1 FROM wear_feedback AS wear
        WHERE wear.saved_look_id = look.id AND substr(wear.worn_at, 1, 10) = ?
-     )`,
-  ).bind(date + " 00:00:00", lookId, accountId, date).run();
+     ) RETURNING id`,
+  ).bind(date + " 00:00:00", lookId, accountId, date);
 
-  return found(await db.prepare(
+  const lookup = db.prepare(
     `SELECT CAST(wear.id AS TEXT) AS id, CAST(wear.saved_look_id AS TEXT) AS lookId,
             substr(wear.worn_at, 1, 10) AS date, wear.rating, wear.note
      FROM wear_feedback AS wear
@@ -68,7 +68,10 @@ async function addEntry(db, accountId, lookId, date) {
      WHERE look.user_id = ? AND wear.saved_look_id = ? AND substr(wear.worn_at, 1, 10) = ?
      ORDER BY wear.id DESC
      LIMIT 1`,
-  ).bind(accountId, lookId, date).first());
+  ).bind(accountId, lookId, date);
+  // D1 serializes the batch. The Postgres adapter retries it at SERIALIZABLE.
+  const [added, existing] = await db.batch([insert, lookup]);
+  return { ...found(existing.results[0]), created: added.results.length === 1 };
 }
 
 async function getEntry(db, accountId, id) {
@@ -106,7 +109,7 @@ export async function wearAction(db, accountId, action, input = {}) {
     case "wearList":
       return listEntries(db, accountId, requireId(input.lookId));
     case "wearAdd":
-      return addEntry(db, accountId, requireId(input.lookId), requireDate(input.date));
+      return addEntry(db, accountId, requireId(input.lookId), requireWearDate(input.date));
     case "wearGet":
       return getEntry(db, accountId, requireId(input.id));
     case "wearUpdate":
