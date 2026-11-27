@@ -8,6 +8,7 @@
     "build:vercel": "CLOSET_TARGET=vercel next build --webpack",
     "start:vercel": "CLOSET_TARGET=vercel next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "test:storage": "node --test tests/storage-isolation.test.mjs"
   },
   "dependencies": {
